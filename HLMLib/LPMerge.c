@@ -3,33 +3,36 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/* main authors: Valtcho Valtchev, Steve Young,                */
-/*               Julian Odell, Gareth Moore                    */
+/* main authors:                                               */
+/*           Valtcho Valtchev, Steve Young,                    */
+/*           Julian Odell, Gareth Moore                        */
+/*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*                                                             */
-/*          1994-2002 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            1994-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*      File: LPMerge.c: probability merging                   */
+/*             File: LPMerge.c  probability merging            */
 /* ----------------------------------------------------------- */
 
-char *lpmerge_version = "!HVER!LPMerge:   3.4.1 [CUED 12/03/09]";
+char *lpmerge_version = "!HVER!LPMerge:   3.5.0 [CUED 12/10/15]";
 char *lpmerge_vc_id = "$Id: LPMerge.c,v 1.1.1.1 2006/10/11 09:54:43 jal58 Exp $";
 
 #include "HShell.h"     /* HMM ToolKit Modules */
@@ -147,7 +150,8 @@ static BackOffLM *InitTargetModel(MemHeap *heap, int nSize, WordMap *wList)
 /* InitialiseMerge: create lookup tables */
 static void InitialiseMerge(MemHeap *heap, MergeInfo *mi)
 {
-   int i,j,nw;
+   int i,nw;
+   long int j;
    LMInfo *li;
    Boolean inLM;
    LabId  lid, *lip;
@@ -168,7 +172,7 @@ static void InitialiseMerge(MemHeap *heap, MergeInfo *mi)
       na = (int *) New(heap,(nWords+2)*sizeof(NameId));
       for (lip = mi->wList->id, j=1; j<=nWords; j++, lip++) {
 	 nid = GetNameId(li->lm->htab, (*lip)->name, FALSE);
-	 na[j] = (nid==NULL) ? 0 : (int) nid->aux; 
+	 na[j] = (nid==NULL) ? 0 : (int)(long int)nid->aux; 
       }
       l2nId[i] = na;
    }
@@ -180,7 +184,7 @@ static void InitialiseMerge(MemHeap *heap, MergeInfo *mi)
       la = (int *) New(heap,(nw+2)*sizeof(int));
       for (nip=li->lm->binMap+1,j=1; j<=nw; j++,nip++) {
 	 lid = GetLabId((*nip)->name, FALSE);
-	 la[j] = (lid==NULL) ? 0 : (int) lid->aux;
+	 la[j] = (lid==NULL) ? 0 : (int)(long int)lid->aux;
       }
       n2lId[i] = la;
    }
@@ -192,7 +196,7 @@ static void InitialiseMerge(MemHeap *heap, MergeInfo *mi)
    /* ensure words present at least in one model */
    for (lip = mi->wList->id, j=0; j<nWords; j++, lip++) {
       for (inLM=FALSE,i=0; i<nLModel; i++, li++)
-	 if (l2nId[i][(int) ((*lip)->aux)]!=0)
+	 if (l2nId[i][(int)(long int)((*lip)->aux)]!=0)
 	    inLM = TRUE;
       if (!inLM)
 	 HError(15620,"InitialiseMerge: Unable to find word %s in any model\n",(*lip)->name);
@@ -420,28 +424,11 @@ BackOffLM *MergeModels(MemHeap *heap, LMInfo *lmInfo, int nLModel,
 
 /* ---------------------- Normalisation  -------------------- */
 
-static void NormaliseFE(FLEntry *tgtFE)
-{
-   int i;
-   double psum;
-   FLEntry *fe;
-   SMEntry *se;
-
-   psum = 0.0;
-   for (se=tgtFE->sea,i=0; i<tgtFE->nse; i++,se++)
-      psum += se->prob;
-   for (se=tgtFE->sea,i=0; i<tgtFE->nse; i++,se++)
-      se->prob = se->prob/psum;
-   for (fe=tgtFE->fea,i=0; i<tgtFE->nfe; i++,fe++)
-      NormaliseFE(fe);
-}
-
 /* EXPORT->NormaliseLM: normalise probs and calculate back-off weights */
 void NormaliseLM(BackOffLM *lm) 
 {
    FLEntry *context[LM_NSIZE];
 
-   /* NormaliseFE(&lm->root); */
    context[0] = &lm->root;
    CalcBackOff(lm,context,0);
 }

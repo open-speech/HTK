@@ -1,0 +1,136 @@
+#!/bin/bash
+############################################################
+# Step 3: Tied Mixture Monophones
+############################################################
+source environment
+# 3.1  Tied Mixture Initialisation
+
+# The models created in step 2 will be converted to a set of
+# tied-mixture models using HHEd.  This conversion is performed in
+# three phases.  First the set of Gaussians that represent the models
+# are pooled by choosing those with the highest weights.  Then the
+# models are rebuilt to share these Gaussians and the mixture weights
+# recalculated.  Finally the representation of the models changed to
+# TIEDHS.
+
+# First create the directory to hold the tied mixture monophones and
+# copy over the HTE file.
+
+if [ ! -d  $RMWORK/R3/ml ]
+then
+	mkdir -p $RMWORK/R3/ml
+fi
+
+cd $RMWORK
+
+# Create an HHEd edit file in $RMWORK/R3/ml called tied.hed containing
+# the following commands.
+
+cat<<EOF > $RMWORK/R3/ml/tied.hed
+JO 128 2.0
+TI MIX_ {*.state[2-4].stream[1].mix}
+HK TIEDHS
+EOF
+
+# Create a directory for the initial tied mixture models and run HHEd.
+
+cd $RMWORK/R3/ml
+mkdir hmm0
+HHEd -A -D -V -T 1 -H $RMWORK/R2/ml/hmm4/MODELS -w hmm0/MODELS tied.hed \
+	     $RMLIB/mlists/mono.list
+
+# 3.2  Tied Mixture training and testing
+
+# In the HTE file the line
+
+cat <<__EOF__ > $RMWORK/R3/ml/HTE
+#---------------------------------------------------------------#
+# HTK RM Environment File                08/09/95               #
+#                                                               #
+# This version is for:                                          #
+#                                                               #
+#         Baseline - Monophones                                 #
+#         39th Order MFCC_E_D_A Data (data in MFCC_E format)    #
+#         1 Mixture/Diagonal/3 State no Skip + sp model         #
+#                                                               #
+#---------------------------------------------------------------#
+
+# Set priority at which processes are run
+set NICE = 5
+
+# Define the rmwork and rmdata areas
+set rmwork=\$RMWORK
+set rmdata=\$RMDATA
+set rmlib=\$RMLIB
+
+# define input filters
+setenv HNETFILTER 'gzip -d -c $.gz'          # Networks compress well
+
+# Define input configuration files
+setenv HECONFIG \$rmlib/configs/config.basic  # Basic configuration
+setenv HVCONFIG \$rmlib/configs/config.basic  # Basic configuration
+
+# Define HMMs - should reflect current models set
+set HMMLIST=\$rmlib/mlists/mono.list # ****** #
+
+# Define Training Data and Label files for current models
+set TRAINDATALIST=\$rmlib/flists/ind_trn109.scp
+set TRAINMLF=\$rmlib/labs/mono.mlf   # ****** #
+
+# Define Test Data
+# Note that TESTSET is defined by htestrm before sourcing HTE
+set SETLIST=(feb89 oct89 feb91 sep92)
+if (\$?TESTSET) then
+   set TESTDATALIST=\$rmlib/flists/ind_\${TESTSET}.scp
+   set TESTMLF=\$rmlib/wlabs/ind_tst.mlf
+endif
+
+# HERest Program Options
+set HETRACE=1
+set HEMINWEIGHT=2.0
+set HETMTHRESH=20.0    # Only needs to be same order as numerical accuracy
+set HEPRUNE=600.0      # 250==VERY TIGHT, 500==TIGHT, 1000==LOOSE #
+set HESTATS=stats      # stats files aren't always needed but are interesting #
+set HEMINEG=0          # Potentially bad choice for unclustered models
+#set HEUPD=
+
+# Define possible test conditions
+set TYPELIST=(ng wp)
+
+# HVite Network Defn & Program Options
+set HVTRACE=1
+set HVNET=(\$rmlib/nets/net.ng \$rmlib/nets/net.wp)
+set HVVOC=(\$rmlib/dicts/mono.dct \$rmlib/dicts/mono.dct)
+set HVPRUNE=(150.0 100.0)
+set HVMAXACTIVE=(0 0)
+set HVGSCALE=(2.0 2.0)
+set HVIMPROB=(0.0 0.0)
+
+# HResults Results Analysis
+set WORDLIST=\$rmlib/wordlist
+set HREQSETS=(\$rmlib/eq.ng \$rmlib/eq.wp)
+set HRNIST
+
+set TMTHRESH=20
+
+#---------------------------------------------------------------#
+#                END OF ENVIRONMENT DEFINITION                  #
+#---------------------------------------------------------------#
+__EOF__
+
+
+# now controls tied mixture as well as forward pass mixture pruning.
+# Finally build the models
+
+cd $RMWORK/R3/ml
+hbuild 1 4
+
+# and then test them with HVite (recognition settings will need
+# adjusting.  Try setting the grammar scale to 2.0 rather than 7.0 and
+# speed things up a little by changing the pruning beam width from
+# 200.0 to 100.0).
+
+cd $RMWORK/R3/ml
+htestrm HTE wp feb89 hmm4
+
+echo step 3 complete

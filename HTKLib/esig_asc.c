@@ -7,24 +7,23 @@
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* author:                                                     */
+/*           Rod Johnson                                       */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
+/*              File: esig_asc.c Esignal Ascii I/O             */
+/* ----------------------------------------------------------- */
 
-
-/*
- * Example programs for Esignal public external file format.
- * Ascii I/O.
- *
- * Author:  Rod Johnson
- */
-
+/* !HVER!esig_asc:   3.5.0 [CUED 12/10/15] */
 
 #include "esignal.h"
 #include <ctype.h>
@@ -2022,7 +2021,10 @@ ReadAsciiEscape(unsigned long   *val,
       case '6':
       case '7':
          ungetc(ch, file);
-         fscanf(file, "%3lo", val);
+         if(fscanf(file, "%3lo", val)!=1){
+	   printf("Failed to read value from file");
+	   return FALSE;
+	 }
          break;
       default:
          return FALSE;
@@ -3196,3 +3198,6 @@ ApproxWidth(int type)
          }
       }
 }
+
+/* ------------------------- End of esig_asc.c --------------------------- */
+

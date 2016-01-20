@@ -1,0 +1,10 @@
+# DATATYPE = MFCC
+# DATADIFF = _E_D_A_Z
+# DATADIM  = 13 * 3
+TARGETKIND              = MFCC_E_D_A_Z    #   Basic parameterisation
+
+HPARM: VARSCALEDIR      = cvn
+HPARM: VARSCALEMASK     = '*.%%%'
+HPARM: VARSCALEPATHMASK = '*.%%%'
+HPARM: VARSCALEFN       = ident_MFCC_E_D_A_Z_cvn
+

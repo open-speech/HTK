@@ -3,33 +3,38 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*                                                             */
-/*              2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: Arc.h -- Routines used in HFwdBkwdLat.c       */
+/*         File: HArc.h -- Routines used in HFBLat.c           */
 /*         An alternative kind of lattice format used there.   */
 /* ----------------------------------------------------------- */
 
-/* !HVER!HArc:   3.4.1 [CUED 12/03/09] */
+/* !HVER!HArc:   3.5.0 [CUED 12/10/15] */
 
+/* cz277 - cuda fblat */
+#ifdef CUDA
+#include "HCUDA.h"
+#endif
 
 /*
    Turns a Lattice into Arc structure.  
@@ -91,7 +96,6 @@ struct _CorrN{
   double *beta; /* [starti..endi]. */
 };
 
-
 typedef struct _Acoustic{
   HArc *myArc; 
  
@@ -108,8 +112,8 @@ typedef struct _Acoustic{
   DVector alphat; /* 1..Nq */
   DVector alphat1; /* 1..Nq  [for time t-1] */
   DVector *betaPlus;  /* [myArc->t_start..myArc->t_end][1..Nq] */
+  DVector *alphaPlus;	/* cz277 - cuda fblat */	/* [myArc->t_start..myArc->t_end][1..Nq] */
   float ****otprob; /* [myArc->t_start..myArc->t_end][0..(S>1?S:0)][2..Nq-1][0..(M>1)?M:0] */
-
 } Acoustic;  /* for calculating acoustic likelihoods... */
 
 typedef struct _MPEStruct{
@@ -160,7 +164,11 @@ struct _Arc{
 };
 
 
-#define MAXLATS 10
+/*#define MAXLATS 10*/
+
+/* cz277 - ANN */
+#define MAXLATS 2000
+
 /*Will usually be only 1 or 2-- i.e, recognised lat plus aligned correct-transcription lattice.*/
 
 typedef struct ArcInfoStruct{
@@ -181,9 +189,25 @@ typedef struct ArcInfoStruct{
   Acoustic *ac; /* 1..Q */
   int *qLo;     /* [t], lowest q active at time t */
   int *qHi;     /* [t], highest q active at time t */
+
+    /* cz277 - cuda fblat */
+#ifdef CUDA
+    AcousticDev *acDev; 	/* 1 ... Q */
+    int *qLoDev;		/* 1 ... T */
+    int *qHiDev;		/* 1 ... T */
+#endif  
+    Boolean FBLatCUDA;          /* from FBInfo->FBLatCUDA */
+
 }ArcInfo;
 
-
+/* cz277 - cuda fblat */
+#ifdef CUDA
+void InitAcousticDev(Acoustic *ac, AcousticDev *acDev);
+void ClearAcousticDev(AcousticDev *acDev);
+void SyncAcousticDev2HostBeta(AcousticDev *acDev, Acoustic *ac, MemHeap *mem);
+void SyncAcousticHost2DevAlpha(Acoustic *ac, AcousticDev *acDev);
+void SyncAcousticDev2HostAlpha(AcousticDev *acDev, Acoustic *ac);
+#endif
 
 void ArcFromLat(ArcInfo *aInfo,  HMMSet *hset); 
 /*Takes a ArcInfo with the 'nLats', 'lat' and 'mem' in place, and creates the arcs .*/
@@ -206,8 +230,6 @@ int TimeToNFrames(float time, ArcInfo *aInfo);
    as the first and last frames of the phone).
  */
 
-/* ------------------------- End of Arc.h --------------------------- */
-
 void AttachMPEInfo(ArcInfo *aInfo); /* attaches the "mpe" fields  */
 
 Boolean LatInLat(Lattice *numLat, Lattice *denLat);
@@ -216,3 +238,7 @@ Boolean LatInLat(Lattice *numLat, Lattice *denLat);
 #define EndOfWord(a) (a->pos == a->parentLarc->nAlign-1)
 
 void InitArc(void);
+
+/* ------------------------- End of Arc.h --------------------------- */
+
+

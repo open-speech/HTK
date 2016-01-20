@@ -3,32 +3,33 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Machine Intelligence Laboratory                        */
-/*      Department of Engineering                              */
-/*      University of Cambridge                                */
-/*      http://mi.eng.cam.ac.uk/                               */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2002-2003  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLVmodel.c Model handling for HTK LV Decoder  */
+/*      File: HLVModel.c  Model handling for HTK LV decoder    */
 /* ----------------------------------------------------------- */
 
-char *hlvmodel_version = "!HVER!HLVmodel:   3.4.1 [GE 12/03/09]";
-char *hlvmodel_vc_id = "$Id: HLVModel.c,v 1.1.1.1 2006/10/11 09:54:55 jal58 Exp $";
+char *hlvmodel_version = "!HVER!HLVModel:   3.5.0 [CUED 12/10/15]";
+char *hlvmodel_vc_id = "$Id: HLVModel.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 
 #include "HShell.h"
@@ -39,16 +40,14 @@ char *hlvmodel_vc_id = "$Id: HLVModel.c,v 1.1.1.1 2006/10/11 09:54:55 jal58 Exp 
 #include "HAudio.h"
 #include "HParm.h"
 #include "HDict.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h"
-
 #include "HLVModel.h"
-
-
-#include "config.h"
-
+#include "lvconfig.h"
 #include <assert.h>
-
+/* cz277 - ANN */
+#include "HLVRec.h"
 
 /* ----------------------------- Trace Flags ------------------------- */
 
@@ -229,52 +228,64 @@ void PrintState_lv (StateInfo_lv *si,  unsigned short s)
 }
 
 /* EXPORT-> OutP_lv: returns log prob for state s of observation x */
-LogFloat OutP_lv (StateInfo_lv *si,  unsigned short s, float *x)
+LogFloat OutP_lv (StateInfo_lv *si, unsigned short s, float *x)
 {
-   int m, i;
-   LogDouble bx;
-   LogFloat px;
-   float *base;
-   float *mean;
-   float *invVar;
-   int nMix;
-   LogFloat mixw, xmm;
+    int m, i;
+    LogDouble bx;
+    LogFloat px;
+    float *base;
+    float *mean;
+    float *invVar;
+    int nMix;
+    LogFloat mixw, xmm;
 
-   base = HLVMODEL_BLOCK_BASE(si, s);
-   nMix = HLVMODEL_BLOCK_NMIX(si,base);
-   mean = base + HLVMODEL_BLOCK_MEAN_OFFSET(si);
-   invVar = base + HLVMODEL_BLOCK_INVVAR_OFFSET(si);
+    base = HLVMODEL_BLOCK_BASE(si, s);
+    nMix = HLVMODEL_BLOCK_NMIX(si,base);
+    mean = base + HLVMODEL_BLOCK_MEAN_OFFSET(si);
+    invVar = base + HLVMODEL_BLOCK_INVVAR_OFFSET(si);
 
-   bx = LZERO;                   /* Multi Mixture Case */
-   for (m = 1; m <= nMix; m++) {
-      mixw = HLVMODEL_BLOCK_MIXW(si,base);
+    bx = LZERO;                   /* Multi Mixture Case */
+    for (m = 1; m <= nMix; m++) {
+        mixw = HLVMODEL_BLOCK_MIXW(si,base);
 
-      px = HLVMODEL_BLOCK_GCONST(si,base);
-      for (i = 0; i < si->nDim; ++i) {
-         xmm = x[i] - mean[i];
-         px += xmm*xmm * invVar[i];
-      }
-      px = -0.5 * px;;
+        px = HLVMODEL_BLOCK_GCONST(si,base);
+        for (i = 0; i < si->nDim; ++i) {
+            xmm = x[i] - mean[i];
+            px += xmm * xmm * invVar[i];
+        }
+        px = -0.5 * px;;
       
-      bx = LAdd (bx, mixw + px);
+        bx = LAdd (bx, mixw + px);
 
-      base += si->floatsPerMix;
-      mean += si->floatsPerMix;
-      invVar += si->floatsPerMix;
+        base += si->floatsPerMix;
+        mean += si->floatsPerMix;
+        invVar += si->floatsPerMix;
       
-   }
-   return bx;
+    }
+    return bx;
 }
 
-
-void OutPBlock (StateInfo_lv *si, Observation **obsBlock, 
-                int n, int sIdx, float acScale, LogFloat *outP)
+void OutPBlock (StateInfo_lv *si, Observation **obsBlock, int n, int sIdx, float acScale, LogFloat *outP, Ptr dec)
 {
    int i;
+   DecoderInst *decPtr = (DecoderInst *) dec;
 
-   for (i = 0; i < n; ++i) {
-      outP[i] = OutP_lv (si, sIdx, &obsBlock[i]->fv[1][1]);
+   /* cz277 - ANN */
+   switch (decPtr->decodeKind) {
+      case NORMALDK:
+         for (i = 0; i < n; ++i) {
+            outP[i] = OutP_lv (si, sIdx, &obsBlock[i]->fv[1][1]);
+         }
+         break;
+      case TANDEMDK:
+         assert(n === 1);
+         outP[0] = OutP_lv (si, sIdx, decPtr->cacheVec[decPtr->cacheVecIdx][1] + 1);
+         break;
+      case HYBRIDDK:
+      default:
+         HError(90, "OutPBlock: Unsupported DecodeKind");
    }
+
 
    /* acoustic scaling */
    if (acScale != 1.0)
@@ -282,8 +293,6 @@ void OutPBlock (StateInfo_lv *si, Observation **obsBlock,
          outP[i] *= acScale;
 }
 
-/*  CC-mode style info for emacs
- Local Variables:
- c-file-style: "htk"
- End:
-*/
+
+/* ------------------------ End of HLVModel.c ----------------------- */
+

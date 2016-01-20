@@ -1,0 +1,63 @@
+#---------------------------------------------------------------#
+# HTK RM Environment File                05/09/15               #
+#                                                               #
+# This version is for:                                          #
+#                                                               #
+#   HTE.align.trn - logical triphone state train set alignment  #
+#   for std./Tandem GMM-HMM & DNN-HMM systems                   #
+#                                                               #
+#---------------------------------------------------------------#
+
+# Set priority at which processes are run
+set NICE=5
+
+# Define the rmwork and rmdata areas
+set rmwork=$RMWORK
+set rmdata=$RMDATA
+set rmlib=$RMLIB
+
+# define input filters
+setenv HNETFILTER 'gzip -d -c $.gz'          # Networks compress well
+
+# Define input configuration files
+setenv HECONFIG $rmlib/configs/config.basic  # Basic configuration
+setenv HVCONFIG $rmlib/configs/config.logxwrd  # Basic configuration
+setenv HEXFORMCONFIG $rmlib/configs/config.cmllr
+
+# Define HMMs - should reflect current models set
+set HMMLIST=$rmlib/mlists/treeg.list # ****** #
+
+# Define Test Data 
+# training set SCP and MLF
+set SETLIST=( trn109 )
+if ($?TESTSET) then
+   set TESTDATALIST=$rmlib/flists/ind_${TESTSET}.scp
+   set TESTMLF=$rmlib/wlabs/ind_${TESTSET}.mlf
+endif
+
+# Define possible test conditions (to fit htestrm conventions)
+set TYPELIST=( ind )
+
+# HVite Network Defn & Program Options
+set HVTRACE=1
+set HVVOC=($rmlib/dicts/mono.dct $rmlib/dicts/mono.dct)
+set HVPRUNE=(200.0 300.0)
+set HVMAXACTIVE=(0 0)
+set HVGSCALE=(7.0 7.0)
+set HVIMPROB=(0.0 0.0)
+
+# The alignment information
+set HVALIGN
+set HVSTATEALIGN	# for state to frame alignment
+if ($?TESTSET) then
+   set ALIGNMLF=$TESTMLF
+endif
+
+# HVite adaptation options
+set HVSPKRMASK      = '*/%%%%%%_*.mfc'
+set HVINXFORMEXT    = cmllr2
+set HVFORCEXFORMDIR = (hmm0 hmm2/cmllr2)
+
+#---------------------------------------------------------------#
+#                END OF ENVIRONMENT DEFINITION                  #
+#---------------------------------------------------------------#

@@ -3,30 +3,35 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/* author:                                                     */
+/*           M.J.F. Gales <mjfg@eng.cam.ac.uk>                 */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*                                                             */
-/*              2003  M.J.F. Gales and                         */
-/*                    Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2003-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HAdapt.h      Adaptation Library module       */
+/*           File: HAdapt.h  Adaptation Library module         */
 /* ----------------------------------------------------------- */
+
+/* !HVER!HAdapt:   3.5.0 [CUED 12/10/15] */
 
 #ifndef _HADAPT_H_
 #define _HADAPT_H_
@@ -36,6 +41,12 @@ extern "C" {
 #endif
 
 typedef struct {
+  /* cz277 - xform */
+  int nSpkr;
+  char *curOutSpkr;
+  char *curInSpkr;
+  char *curPaSpkr;
+
   char *outSpkrPat;
   char *inSpkrPat;
   char *paSpkrPat;
@@ -60,7 +71,10 @@ typedef struct {
 
 /* -------------------- Initialisation Functions -------------------------- */
 
-void InitAdapt(XFInfo *xfinfo);
+/* cz277 - xform */
+void InitAdapt();
+void InitXFInfo(XFInfo *xfinfo);
+
 /*
    Initialise configuration parameters
 */
@@ -195,4 +209,4 @@ void UpdateProjectModels(HMMSet *hset, char *dir);
 
 #endif  /* _HADAPT_H_ */
 
-/* ---------------------------- END HAdapt.h ------------------------------ */
+/* ---------------------- End of HAdapt.h ------------------------ */

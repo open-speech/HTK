@@ -3,36 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*              2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HInit.c: HMM initialisation program           */
+/*          File: HInit.c  HMM initialisation program          */
 /* ----------------------------------------------------------- */
 
-char *hinit_version = "!HVER!HInit:   3.4.1 [CUED 12/03/09]";
+char *hinit_version = "!HVER!HInit:   3.5.0 [CUED 12/10/15]";
 char *hinit_vc_id = "$Id: HInit.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $";
 
 /*
@@ -63,6 +66,7 @@ char *hinit_vc_id = "$Id: HInit.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $";
 #include "HVQ.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h"
 #include "HTrain.h"
@@ -504,7 +508,8 @@ void ShowSeqMat(Sequence **seqMat)
    state n and store in seqMat[n][s]*/
 void UCollectData(Sequence **seqMat)
 {
-   int i,j,n,s,numSegs,segLen;
+   int i,j,s,numSegs,segLen;
+   long int n;
    float obsPerState;
    Observation obs;
    Ptr p;
@@ -517,10 +522,10 @@ void UCollectData(Sequence **seqMat)
          HError(2122,"UCollectData: segment too short[%d]",segLen);
       for (j=1;j<=segLen;j++) {
          obs = GetSegObs(segStore,i,j);
-         n = (int)(((float)(j-1)/obsPerState)+2);
+         n = (long int)(((float)(j-1)/obsPerState)+2);
          for (s=1; s<=nStreams; s++){
             if (hset.hsKind==DISCRETEHS){
-               p = (Ptr)((int)obs.vq[s]);
+               p = (Ptr)((long int)obs.vq[s]);
                StoreItem(seqMat[n][s],p);
             }else
                StoreItem(seqMat[n][s],obs.fv[s]);
@@ -534,7 +539,8 @@ void UniformSegment(void)
 {
    Sequence **seqMat;   /* Matrix [2..numStates-1][1..numStreams]*/
    Sequence seq;
-   int count,size,i,vqidx,s,n,m,M,j,k;
+   int count,size,i,s,n,m,M,j,k;
+   long int vqidx;
    ClusterSet *cset;
    Cluster *c;
    StreamElem *ste;
@@ -610,9 +616,9 @@ void UniformSegment(void)
             count = 0; dw = ste->spdf.dpdf;
             ZeroShortVec(dw);             
             for (i=1; i<=seq->nItems; i++){
-               vqidx = (int)GetItem(seq,i);
+               vqidx = (long int)GetItem(seq,i);
                if (vqidx<1 || vqidx>M)
-                  HError(2170,"UniformSegment: vqidx out of range[%d]",vqidx);
+                  HError(2170,"UniformSegment: vqidx out of range[%ld]",vqidx);
                ++dw[vqidx]; ++count;
             }
             for (m=1; m<=M; m++){
@@ -1255,8 +1261,4 @@ void SaveModel(char *outfn)
 /* ----------------------------------------------------------- */
 /*                      END:  HInit.c                         */
 /* ----------------------------------------------------------- */
-
-
-
-
 

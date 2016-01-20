@@ -3,36 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*              2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HRest.c: HMM initialisation program           */
+/*          File: HRest.c  HMM initialisation program          */
 /* ----------------------------------------------------------- */
 
-char *hrest_version = "!HVER!HRest:   3.4.1 [CUED 12/03/09]";
+char *hrest_version = "!HVER!HRest:   3.5.0 [CUED 12/10/15]";
 char *hrest_vc_id = "$Id: HRest.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $";
 
 /*
@@ -71,6 +74,7 @@ char *hrest_vc_id = "$Id: HRest.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $";
 #include "HVQ.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HTrain.h"
 #include "HUtil.h"
@@ -756,13 +760,11 @@ void SetOccr(LogDouble pr, int seg)
 {
    int i,t;
    DVector alpha_i,beta_i;
-   Vector a_i;
    LogDouble x;
    
    occr[1] = 1.0;
    for (i=2;i<nStates;i++) {
       alpha_i = alpha[i]; beta_i = beta[i];
-      a_i = hmm->transP[i];
       x=LZERO ;
       for (t=1;t<=T;t++)
          x=LAdd(x,alpha_i[t]+beta_i[t]);

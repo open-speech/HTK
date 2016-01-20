@@ -3,32 +3,33 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*                                                             */
-/*              2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HFBLat.c   Lattice Forward Backward routines  */
+/*         File: HFBLat.c   Lattice forward backward routines  */
 /* ----------------------------------------------------------- */
 
-char *hfblat_version = "!HVER!HFBLat:   3.4.1 [CUED 12/03/09]";
-char *hfblat_vc_id = "$Id: HFBLat.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Exp $";
+char *hfblat_version = "!HVER!HFBLat:   3.5.0 [CUED 12/10/15]";
+char *hfblat_vc_id = "$Id: HFBLat.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 /*
   Performs forward/backward alignment
@@ -43,6 +44,7 @@ char *hfblat_vc_id = "$Id: HFBLat.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Exp $";
 #include "HAudio.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HTrain.h"
 #include "HUtil.h"
@@ -56,6 +58,10 @@ char *hfblat_vc_id = "$Id: HFBLat.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Exp $";
 
 #include <math.h>
 #include <stdlib.h>
+
+/*#ifdef CUDA
+#include "HCUDA.h"
+#endif*/
 
 #if 0
 float _exp(float x){
@@ -81,6 +87,8 @@ float _exp(float x){
 static float minFrwdP = 10.0;            /* mix prune threshold */
 static int trace     =  1;            /* Trace level */
 
+static Boolean matchMPETone = FALSE;        /* use variable length informatiln in MPE cost */
+static char *matchMPEMask = NULL;           /* mask to use on fixed length information */
 static Boolean PhoneMEE = TRUE;      /*IMPORTANT*/           /* If true and the MPE routines are called, do MPE, else MWE (word level) */
 static Boolean CalcAsError = FALSE;   /* if TRUE, new way of calc'ing error... */ 
 static Boolean PhoneMEEUseContext = FALSE;                  /*Compare phones-in-context.  I doubt you would want this true, anyway it makes little difference.*/
@@ -126,6 +134,13 @@ static FBLatInfo *fbInfo; /* current fbInfo, so don't have to pass it around. */
 static ConfParam *cParm[MAXGLOBS];  /* config parameters */
 static int nParm = 0;
 
+/* Local stack to allow storage of internal structrures */
+static MemHeap infoStack;
+
+/* cz277 - cuda fblat */
+#ifdef CUDA
+static Boolean FBLatCUDA = FALSE;
+#endif
 
 /*    some macros and definitions..      */
 
@@ -165,13 +180,15 @@ typedef struct _CorrectArcList{
 /* returns phone (with no context) as an identifying int.  Turns a-b+c --> b and makes it into an integer. */
 
 int GetNoContextPhone(LabId phone, int *nStates_quinphone/*actually,number of HMMs per phone*/, int *state_quinphone, HArc *a, int *frame_end){ 
-   char _buf[MAXSTRLEN], *buf=_buf,*tmp; int i,len;
+   char _buf[MAXSTRLEN], *buf=_buf,*tmp, *posSt, *tonSt; 
+   int i,len;
+   char cntxt[MAXSTRLEN], mpeCntxt[MAXSTRLEN];
    int ans;
    char *lab = phone->name;
 
    if(PhoneMEEUseContext){
-      if(Quinphone) HError(1, "Quinphone not compatible with context phones...");
-      return (int) phone;
+      if(Quinphone) HError(8401, "Quinphone not compatible with context phones...");
+      return (int) (unsigned long int)phone;
    }
    strcpy(buf,lab);
 #ifdef SUPPORT_QUINPHONE
@@ -185,24 +202,60 @@ int GetNoContextPhone(LabId phone, int *nStates_quinphone/*actually,number of HM
          } else {   /* x_n_nnn */
             int i;
             *tmp='\0';
-            if(!(tmp = strchr(buf,'_'))) HError(1, "Unrecognised quinphone %s", phone->name); 
+            if(!(tmp = strchr(buf,'_'))) HError(8420, "Unrecognised quinphone %s", phone->name); 
             *tmp='\0';
             *nStates_quinphone = 3;
-            if (  (*state_quinphone = i = tmp[1]-(int)'0') < 2 || i > 4) /* 2,3,4 */ HError(1, "Unrecognised quinphone %s [maybe more states than expected? Just change this line].", phone->name); 
+            if (  (*state_quinphone = i = tmp[1]-(int)'0') < 2 || i > 4) /* 2,3,4 */ HError(8420, "Unrecognised quinphone %s [maybe more states than expected? Just change this line].", phone->name); 
             if(i==2 && frame_end!=NULL){ 
-               if(!a || !a->follTrans || !a->follTrans->end->follTrans) HError(1, "Problem with arc structure in quinphones...");
+               if(!a || !a->follTrans || !a->follTrans->end->follTrans) HError(8420, "Problem with arc structure in quinphones...");
 
                *frame_end=a->follTrans->end->follTrans->end->t_end; /*set frame_end*/  
 
             }
             goto get_id;/*return GetId(buf);*/
          }
-      } else HError(1, "Unrecognised quinphone %s", phone->name); 
+      } else HError(8420, "Unrecognised quinphone %s", phone->name); 
    }
 #endif
    if((tmp=strchr(buf,'-'))){ buf=tmp+1; }
    if((tmp=strchr(buf,'+'))){ *tmp='\0'; }
  get_id:
+   /* Need to include options for taking into account additional context information */
+   posSt=strchr(buf,'^');
+   tonSt=strchr(buf,';');
+   if ((posSt != NULL) || (tonSt != NULL)) {
+      if ((posSt != NULL) && (matchMPEMask != NULL)) { 
+         tmp = posSt+1; i=0;
+         while ((*tmp != ';') && (*tmp != '\0')) {
+            cntxt[i] = *tmp;
+            i++; tmp++;
+         }
+         cntxt[i] = '\0';
+         if (!(MaskMatch(matchMPEMask,mpeCntxt,cntxt))) {
+            HError(8490,"Can't match MPE mask with context");
+         }       
+         /* copy the context back in */
+         tmp = posSt+1; i=0;
+         while (mpeCntxt[i] != '\0') {
+            *tmp = mpeCntxt[i];
+            tmp++; i++;
+         }
+      } else {
+         if (posSt == NULL) tmp=tonSt;
+         else tmp=posSt;
+      }
+      if ((matchMPETone == FALSE) || (tonSt == NULL)) {
+         *tmp = '\0';
+      } else {
+         *tmp = ';';
+         tmp++; tonSt++;
+         while (*tonSt != '\0') {
+            *tmp = *tonSt;
+            tmp++; tonSt++;
+         }
+         *tmp = '\0';
+      }
+   }
    ans=0; tmp=buf;
    for(i=1,len=0;*buf;buf++,i<<=8,len++){
       ans =  ((int)ans + i * *buf);
@@ -210,7 +263,7 @@ int GetNoContextPhone(LabId phone, int *nStates_quinphone/*actually,number of HM
    /* Want to return an integer identifier for the string.  Put the string into an integer
       if it is <4 chars long, otherwise call GetLabId.  Calling GetLabId too much can be
       inefficient so I use this approach instead for short phones. */
-   if(len > sizeof(int)) return (int) GetLabId(tmp, TRUE);
+   if(len > sizeof(int)) return (int) (unsigned long int)GetLabId(tmp, TRUE);
    else return ans;
 }
 
@@ -230,9 +283,11 @@ static void SetCorrectness(FBLatInfo *fbInfo, Lattice *numLat){
    int t;
    int larcid;
    CorrectArcList **correctArc;
+
    correctArc=New(&fbInfo->tempStack, sizeof(CorrectArcList*)*(fbInfo->T+1));
    ResetObsCache();
-   if(!numLat) HError(-1, "MEE mode and no numLat provided.  FBLat needs to be given both lattices in this mode.");
+
+   if(!numLat) HError(-8421, "MEE mode and no numLat provided.  FBLat needs to be given both lattices in this mode.");
    for(t=1;t<=fbInfo->T;t++)    correctArc[t]  = NULL;
 
    {
@@ -252,7 +307,7 @@ static void SetCorrectness(FBLatInfo *fbInfo, Lattice *numLat){
                {
                   LabId label = numLat->larcs[larcid].lAlign[seg].label; 
                   if(!PhoneMEEUseContext) i_label = GetNoContextPhone(label,&quinphone_nstates,&quinphone_state,NULL,NULL); 
-                  else i_label = (int)label; /* Use address of LabId. */
+                  else i_label = (int)(unsigned long int)label; /* Use address of LabId. */
                }
 
                end_time = start_time + numLat->larcs[larcid].lAlign[seg].dur;
@@ -263,12 +318,12 @@ static void SetCorrectness(FBLatInfo *fbInfo, Lattice *numLat){
                      seg++; /* Use one more state.. */
                      label  = numLat->larcs[larcid].lAlign[seg].label; 
                      if(seg>=numLat->larcs[larcid].nAlign){ /*outer loop condition not still true..*/
-                        HError(1, "Confused about quinphones...[first quinphone of model was %s", name);
+                        HError(8420, "Confused about quinphones...[first quinphone of model was %s", name);
                      }
                      end_time += numLat->larcs[larcid].lAlign[seg].dur; 
                      /* Confirm correct phone + pos: */
                      if(!(i_label == GetNoContextPhone(label,&dummy,&quinphone_newstate,NULL,NULL) && quinphone_newstate == quinphone_state+1))
-                        HError(1, "Confused about quinphones...[first quinphone of model was %s", name);
+                        HError(8420, "Confused about quinphones...[first quinphone of model was %s", name);
                      quinphone_state = quinphone_newstate;
                   }
                }
@@ -301,7 +356,7 @@ static void SetCorrectness(FBLatInfo *fbInfo, Lattice *numLat){
 #endif
             ca = New(&fbInfo->tempStack, sizeof(CorrectArc));
             ca->start = i_start; ca->end = i_end; 
-            ca->i_label = (int)numLat->larcs[larcid].end->word->wordName;
+            ca->i_label = (int)(unsigned long int)numLat->larcs[larcid].end->word->wordName;
 
             for(i=i_start;i<=i_end;i++){
                CorrectArcList *cal = New(&fbInfo->tempStack, sizeof(CorrectArcList));
@@ -309,8 +364,9 @@ static void SetCorrectness(FBLatInfo *fbInfo, Lattice *numLat){
             }
 	 }
       }
+
 #ifdef SUPPORT_QUINPHONE
-      if(PhoneMEEUseContext&&Quinphone) HError(1, "Context and quinphone not compatible.");
+      if(PhoneMEEUseContext&&Quinphone) HError(8420, "Context and quinphone not compatible.");
 #endif
       /*now set the correctness field (for MPE). */
       if(PhoneMEE){
@@ -331,7 +387,7 @@ static void SetCorrectness(FBLatInfo *fbInfo, Lattice *numLat){
                /*get phone start&end times.*/
                i_start=a->t_start;i_end=a->t_end;
                if(!PhoneMEEUseContext)  iphone = GetNoContextPhone(phone,&quinphone_nstates,&quinphone_state, a, &i_end);
-               else iphone = (int)phone;
+               else iphone = (int)(unsigned long int)phone;
 #ifdef SUPPORT_QUINPHONE
                if(Quinphone && quinphone_nstates>1 && quinphone_state > 2){ ZeroCorrectness = TRUE; }
 #endif
@@ -386,7 +442,7 @@ static void SetCorrectness(FBLatInfo *fbInfo, Lattice *numLat){
                   LabId word = a->word; 
                   int currBegin=-1,currEnd=-1;
                   float currCorrect = -1; /*-1 is the min correctness (for wrong phones).*/
-                  if(!word) HError(1, "word is zero...coding error.");
+                  if(!word) HError(8491, "word is zero...coding error.");
                   start_time = la->start->time; 
                   end_time =  la->end->time;
                   i_start = 1 + TimeToNFrames(start_time, fbInfo->aInfo);
@@ -400,7 +456,7 @@ static void SetCorrectness(FBLatInfo *fbInfo, Lattice *numLat){
                         otherWord = cal->h->i_label; /*is actually the (int)LabId in this case.*/
                         proportion =
                            (float)(MIN(i_end,currEnd)-MAX(i_start,currBegin)+1)/ ((float)(currEnd-currBegin+1)); 
-                        if(otherWord == (int)word)
+                        if(otherWord == (int)(unsigned long int)word)
                            /*Work out how much overlap we have with the correct phone*/
                            /* ref length div by overlap length */
                            currCorrect = MAX(currCorrect, InsCorrectness + proportion*(-InsCorrectness+1));
@@ -423,7 +479,7 @@ static void SetCorrectness(FBLatInfo *fbInfo, Lattice *numLat){
             if(a->calcArc) a->mpe->correctness = a->calcArc->mpe->correctness;
       }
    }    
-   if (fbInfo->T != fbInfo->aInfo->T) HError(1, "Lattice and acoustics mismatch in T (%d[lat],%d[acoustic]): may have to set e.g. FRAMEDUR=x (for x!=0.01) in config file", fbInfo->aInfo->T,fbInfo->T);
+   if (fbInfo->T != fbInfo->aInfo->T) HError(8422, "Lattice and acoustics mismatch in T (%d[lat],%d[acoustic]): may have to set e.g. FRAMEDUR=x (for x!=0.01) in config file", fbInfo->aInfo->T,fbInfo->T);
    Dispose(&fbInfo->tempStack, correctArc);
 }
 
@@ -482,7 +538,7 @@ float GetLowestNegError(int tStart, int tEnd, int tCurr, float curr_corr, float 
 	  best = MAX(tmp,best);
 	}
       }
-      if(best==-100 && *compute_count > 0) HError(-1, "Error in computing approximate error (no matching phone-start found...)");
+      if(best==-100 && *compute_count > 0) HError(-8423, "Error in computing approximate error (no matching phone-start found...)");
       return best;
     }
   }
@@ -523,7 +579,7 @@ static void SetCorrectnessAsError(FBLatInfo *fbInfo, Lattice *numLat){    /* re 
    CorrectArcList **correctArc;
    correctArc=New(&fbInfo->tempStack, sizeof(CorrectArcList*)*(fbInfo->T+1));
    ResetObsCache();
-   if(!numLat) HError(-1, "MEE mode and no numLat provided.  FBLat needs to be given both lattices in this mode.");
+   if(!numLat) HError(-8421, "MEE mode and no numLat provided.  FBLat needs to be given both lattices in this mode.");
    for(t=1;t<=fbInfo->T;t++)    correctArc[t]  = NULL;
 
    {   /* Set up arrays of correct-transcription.. */
@@ -543,7 +599,7 @@ static void SetCorrectnessAsError(FBLatInfo *fbInfo, Lattice *numLat){    /* re 
                {
                   LabId label = numLat->larcs[larcid].lAlign[seg].label; 
                   if(!PhoneMEEUseContext) i_label = GetNoContextPhone(label,&quinphone_nstates,&quinphone_state,NULL,NULL); 
-                  else i_label = (int)label; /* Use address of LabId. */
+                  else i_label = (int)(unsigned long int)label; /* Use address of LabId. */
 
 		  is_nonsil = (int) ! IsSilence(label->name);
                }
@@ -556,12 +612,12 @@ static void SetCorrectnessAsError(FBLatInfo *fbInfo, Lattice *numLat){    /* re 
                      seg++; /* Use one more state.. */
                      label  = numLat->larcs[larcid].lAlign[seg].label; 
                      if(seg>=numLat->larcs[larcid].nAlign){ /*outer loop condition not still true..*/
-                        HError(1, "Confused about quinphones...[first quinphone of model was %s", name);
+                        HError(8420, "Confused about quinphones...[first quinphone of model was %s", name);
                      }
                      end_time += numLat->larcs[larcid].lAlign[seg].dur; 
                      /* Confirm correct phone + pos: */
                      if(!(i_label == GetNoContextPhone(label,&dummy,&quinphone_newstate,NULL,NULL) && quinphone_newstate == quinphone_state+1))
-                        HError(1, "Confused about quinphones...[first quinphone of model was %s", name);
+                        HError(8420, "Confused about quinphones...[first quinphone of model was %s", name);
                      quinphone_state = quinphone_newstate;
                   }
                }
@@ -594,7 +650,7 @@ static void SetCorrectnessAsError(FBLatInfo *fbInfo, Lattice *numLat){    /* re 
 #endif
             ca = New(&fbInfo->tempStack, sizeof(CorrectArc));
             ca->start = i_start; ca->end = i_end; 
-            ca->i_label = (int)numLat->larcs[larcid].end->word->wordName;
+            ca->i_label = (int)(unsigned long int)numLat->larcs[larcid].end->word->wordName;
 
             for(i=i_start;i<=i_end;i++){
                CorrectArcList *cal = New(&fbInfo->tempStack, sizeof(CorrectArcList));
@@ -603,7 +659,7 @@ static void SetCorrectnessAsError(FBLatInfo *fbInfo, Lattice *numLat){    /* re 
 	 }
       }
 #ifdef SUPPORT_QUINPHONE
-      if(PhoneMEEUseContext&&Quinphone) HError(1, "Context and quinphone not compatible.");
+      if(PhoneMEEUseContext&&Quinphone) HError(8420, "Context and quinphone not compatible.");
 #endif
       /*now set the correctness field (for MPE). */
       if(PhoneMEE){
@@ -623,7 +679,7 @@ static void SetCorrectnessAsError(FBLatInfo *fbInfo, Lattice *numLat){    /* re 
                /*get phone start&end times.*/
                i_start=a->t_start;i_end=a->t_end;
                if(!PhoneMEEUseContext)  iphone = GetNoContextPhone(phone,&quinphone_nstates,&quinphone_state, a, &i_end);
-               else iphone = (int)phone;
+               else iphone = (int)(unsigned long int)phone;
 #ifdef SUPPORT_QUINPHONE
                if(Quinphone && quinphone_nstates>1 && quinphone_state > 2){ ZeroCorrectness = TRUE; }
 #endif
@@ -648,10 +704,10 @@ static void SetCorrectnessAsError(FBLatInfo *fbInfo, Lattice *numLat){    /* re 
                a->mpe->correctness = a->calcArc->mpe->correctness;
             }
 	 }
-      } else HError(1, "MWE not supported for approximate error...");
+      } else HError(8423, "MWE not supported for approximate error...");
 
    }  
-   if (fbInfo->T != fbInfo->aInfo->T) HError(1, "Lattice and acoustics mismatch in T (%d[lat],%d[acoustic]): may have to set e.g. FRAMEDUR=x (for x!=0.01) in config file", fbInfo->aInfo->T,fbInfo->T);
+   if (fbInfo->T != fbInfo->aInfo->T) HError(8422, "Lattice and acoustics mismatch in T (%d[lat],%d[acoustic]): may have to set e.g. FRAMEDUR=x (for x!=0.01) in config file", fbInfo->aInfo->T,fbInfo->T);
    Dispose(&fbInfo->tempStack, correctArc);
 }
 
@@ -675,76 +731,105 @@ static void ZeroAlpha(int sq, int eq)
    }
 }
 
+#ifdef CUDA
+/* cz277 - cuda fblat */
+static void StepAlphaSwapOnly(int t) {
+    DVector tmp;
+    int q;
+    Acoustic *ac;
+
+    for (q = fbInfo->aInfo->qLo[t]; q <= fbInfo->aInfo->qHi[t]; ++q) {  /*swap alphat, alphat1*/
+        ac = fbInfo->aInfo->ac + q;
+        if (!ac->SP) {
+            tmp = ac->alphat1;
+            ac->alphat1 = ac->alphat;
+            ac->alphat = tmp;
+        }
+    }
+}
+#endif
+
 /* StepAlpha: calculate alphat column for time t */
 /* Calculates the forward (alpha) likelihoods given the previous alpha likelihoods, i.e. for t-1 */
 static void StepAlpha(int t)
 {
-   DVector aq,laq,tmp;
-   float ***outprob;
-   int i,j,q,Nq;
-   LogDouble x=0.0,y,a;
-   HLink hmm;
+    DVector aq, laq, tmp;
+    float ***outprob;
+    int i, j, q, Nq;
+    LogDouble x = 0.0, y, a;
+    HLink hmm;
    
+    for (q = fbInfo->aInfo->qLo[t]; q <= fbInfo->aInfo->qHi[t]; q++) {  /*swap alphat, alphat1*/
+        Acoustic *ac = fbInfo->aInfo->ac + q;
+        if (!ac->SP) {   
+            tmp = ac->alphat1; 
+            ac->alphat1 = ac->alphat; 
+            ac->alphat = tmp; 
+        }
+    }
 
-   for (q = fbInfo->aInfo->qLo[t]; q <= fbInfo->aInfo->qHi[t]; q++) {  /*swap alphat, alphat1*/
-      Acoustic *ac = fbInfo->aInfo->ac+q;
-      if(!ac->SP){   tmp = ac->alphat1; ac->alphat1=ac->alphat; ac->alphat=tmp; }
-   }
-
-   /* Zero any alphas that may be nonzero.*/
-   /* not needed. */
-   /*  if(t>2)
+    /* Zero any alphas that may be nonzero.*/
+    /* not needed. */
+    /*  if(t>2)
        ZeroAlpha(fbInfo->aInfo->qLo[t-2],fbInfo->aInfo->qHi[t-2]);   / * Because the alphat vectors are swapped over each time,
        we need to zero the one from t-2. */
    
-   for (q = fbInfo->aInfo->qLo[t]; q <= fbInfo->aInfo->qHi[t]; q++) { /*This is just to avoid iterating over all q's.*/
-      Acoustic *ac = fbInfo->aInfo->ac+q;
+    for (q = fbInfo->aInfo->qLo[t]; q <= fbInfo->aInfo->qHi[t]; q++) { /*This is just to avoid iterating over all q's.*/
+        Acoustic *ac = fbInfo->aInfo->ac+q;
      
-      if(t >= ac->t_start && t<=ac->t_end){ /*If it's in the beam...*/
-         hmm = ac->hmm; Nq = hmm->numStates; 
-         aq = ac->alphat; laq = (t-1>=ac->t_start&&t-1<=ac->t_end)?ac->alphat1:NULL;
-         if((outprob = ac->otprob[t]) == NULL)
-            HError(2322,"StepAlpha: Outprob NULL at time %d model %d in StepAlpha",t,q);
-       
-
-
-         if(t==ac->t_start) aq[1] = ac->locc - ac->aclike;
-         /* This is the forward log likelihood at the start of the phone model.  It is a "cheating" log likelihood
-            in the sense that it is calculated to give the model the log occupancy "locc".  */
-         else aq[1] = LZERO;  /* no entry to the model unless at its start time. */
-
-         x=LZERO;
-         for (j=2;j<Nq;j++) { /*Calculate the alpha probs for the emitting states.*/
-            a = hmm->transP[1][j];
-            x = (a>LSMALL)?a+aq[1]:LZERO;
-            for (i=2;i<=Nq;i++){
-               a = hmm->transP[i][j]; y = (laq?laq[i]:LZERO);
-               if (a>LSMALL && y>LSMALL)
-                  x = LAdd(x,y+a);
+        if (t >= ac->t_start && t <= ac->t_end) { /*If it's in the beam...*/
+            hmm = ac->hmm; 
+            Nq = hmm->numStates; 
+            aq = ac->alphat; 
+            laq = (t - 1 >= ac->t_start && t - 1 <= ac->t_end) ? ac->alphat1 : NULL;
+            if ((outprob = ac->otprob[t]) == NULL) {
+                HError(8491,"StepAlpha: Outprob NULL at time %d model %d in StepAlpha", t, q);
             }
-            aq[j] = x + outprob[j][0][0];
-         }
+            if (t == ac->t_start) {
+                aq[1] = ac->locc - ac->aclike;
+            }
+            /* This is the forward log likelihood at the start of the phone model.  It is a "cheating" log likelihood
+            in the sense that it is calculated to give the model the log occupancy "locc".  */
+            else {
+                aq[1] = LZERO;  /* no entry to the model unless at its start time. */
+            }
+  
+            x = LZERO;
+            for (j = 2; j < Nq; j++) { /*Calculate the alpha probs for the emitting states.*/
+                a = hmm->transP[1][j];
+                x = (a > LSMALL) ? a + aq[1] : LZERO;
+                for (i = 2; i <= Nq; i++) {
+                    a = hmm->transP[i][j]; 
+                    y = (laq ? laq[i] : LZERO);
+                    if (a > LSMALL && y > LSMALL) {
+                        x = LAdd(x, y + a);
+                    }
+                }
+                aq[j] = x + outprob[j][0][0];
+            }
 
-         x = LZERO;
-         for (i=2;i<Nq;i++){
-            a = hmm->transP[i][Nq]; y = aq[i];
-            if (a>LSMALL && y>LSMALL)
-               x = LAdd(x,y+a);
-         }
-         aq[Nq] = x;
+            x = LZERO;
+            for (i = 2; i < Nq; i++) {
+                a = hmm->transP[i][Nq]; 
+                y = aq[i];
+                if (a > LSMALL && y > LSMALL) {
+                    x = LAdd(x, y + a);
+                }
+            }
+            aq[Nq] = x;
        
-         if(t==ac->t_end){ /*Work out the exit prob, just for checking purposes......  */
-            double transP;
-            hmm = ac->hmm; Nq = hmm->numStates; 
-            transP = hmm->transP[1][Nq];
-            aq = ac->alphat;
+            if (t == ac->t_end) { /*Work out the exit prob, just for checking purposes......  */
+                hmm = ac->hmm; 
+                Nq = hmm->numStates; 
+                aq = ac->alphat;
 	 
-            x = aq[Nq];
-            if ( fabs(x - ac->locc) > 0.001 )
-               HError(1, "StepAlpha: problem with occs.. (fabs(x-locc)=%d (>0.001))",x-ac->locc); /*x is like an occupancy for that segment.*/
-         }
-      }
-   }
+                x = aq[Nq];
+                if (fabs(x - ac->locc) > 0.001) {
+                    HError(8424, "StepAlpha: problem with occs.. (fabs(x-locc)=%d (>0.001))", x - ac->locc); /*x is like an occupancy for that segment.*/
+                }
+            }
+        }
+    }
 }
 
 /* NewOtprobVec: create prob vector size [0..M] */
@@ -802,7 +887,7 @@ static float * ShStrP(Vector v, int t, StreamElem *ste, AdaptXForm *xform, MemHe
                else {
                   mixp = MOutP(ApplyCompFXForm(mp,v,xform,&det,t),mp);
                   mixp += det; 
-		  if(isnan(mixp)) HError(1, "mixp zero...");
+		  if(isnan(mixp)) HError(8491, "mixp zero...");
                   pMix->prob = mixp; pMix->time = t; pMix->indx=-1;
                }
                x = LAdd(x,MixLogWeight(fbInfo->hset,me->weight)+mixp);
@@ -821,128 +906,167 @@ static float * ShStrP(Vector v, int t, StreamElem *ste, AdaptXForm *xform, MemHe
 /* Setotprob: allocate and calculate otprob matrix at time t */
 static void Setotprob(int t)
 {
-   int q,j,Nq,s;
-   float ***outprob;
-   StreamElem *ste;
-   HLink hmm;
-   LogFloat sum;
-   float local_probscale;
+    int q,j,Nq,s;
+    float ***outprob;
+    StreamElem *ste;
+    HLink hmm;
+    LogFloat sum;
+    float local_probscale;
   
-   ReadAsTable(fbInfo->al_pbuf,t-1,&fbInfo->al_ot); 
-    
-   local_probscale = probScale;   /* direct scale on acoustics on state level, usu. 1 */
+    /* cz277 - ANN */
+    if (fbInfo->hset->annSet != NULL && fbInfo->hsKind != HYBRIDHS) {	/* TANDEM */
+        /* TODO: Tandem */
+    }
+    else if (fbInfo->al_pbuf != NULL) {
+        ReadAsTable(fbInfo->al_pbuf,t-1,&fbInfo->al_ot); 
+    }
 
-   if (fbInfo->hsKind == TIEDHS)
-      PrecomputeTMix(fbInfo->hset,&(fbInfo->al_ot),minFrwdP,0);
+    local_probscale = probScale;   /* direct scale on acoustics on state level, usu. 1 */
+
+    if (fbInfo->hsKind == TIEDHS) {
+        PrecomputeTMix(fbInfo->hset,&(fbInfo->al_ot),minFrwdP,0);
+    }
   
-  
-   for (q=fbInfo->aInfo->qHi[t];q>=fbInfo->aInfo->qLo[t];q--) {
-      if(t>=fbInfo->aInfo->ac[q].t_start && t<=fbInfo->aInfo->ac[q].t_end) { /* HMM is active at this time... */
-         Acoustic *ac = fbInfo->aInfo->ac+q;
-         hmm = ac->hmm; Nq = hmm->numStates;
-         outprob = ac->otprob[t];
+    for (q = fbInfo->aInfo->qHi[t]; q >= fbInfo->aInfo->qLo[t]; q--) {
+        if(t >= fbInfo->aInfo->ac[q].t_start && t <= fbInfo->aInfo->ac[q].t_end) { /* HMM is active at this time... */
+            Acoustic *ac = fbInfo->aInfo->ac + q;
+            hmm = ac->hmm; 
+            Nq = hmm->numStates;
+            outprob = ac->otprob[t];
       
-         for (j=2;j<Nq;j++){
-            ste=hmm->svec[j].info->pdf+1; sum = 0.0;
+            for (j = 2; j < Nq; j++) {
+                ste = hmm->svec[j].info->pdf + 1; 
+                sum = 0.0;
 
-
-            for (s=1;s<=fbInfo->S;s++,ste++){
-               switch (fbInfo->hsKind){
-               case TIEDHS:	 /* SOutP deals with tied mix calculation */
-               case DISCRETEHS:
-                  if (fbInfo->S==1) {
-                     outprob[j][0] = NewOtprobVec(fbInfo->aInfo->mem,1);
-                     outprob[j][0][0] = SOutP(fbInfo->hset,s,&fbInfo->al_ot, ste);
-                  } else {
-                     outprob[j][s] = NewOtprobVec(fbInfo->aInfo->mem,1);
-                     outprob[j][s][0] = SOutP(fbInfo->hset,s,&fbInfo->al_ot, ste);
-                  }
-		  break;
-               case PLAINHS: /* x = SOutP(fbInfo->hset,s,&ot,ste);    break; commented out by dp10006 since
+                for (s = 1; s <= fbInfo->S; s++, ste++) {
+                    switch (fbInfo->hsKind) {
+                        case TIEDHS:	 /* SOutP deals with tied mix calculation */
+                        case DISCRETEHS:
+                            if (fbInfo->S == 1) {
+                                outprob[j][0] = NewOtprobVec(fbInfo->aInfo->mem, 1);
+                                outprob[j][0][0] = SOutP(fbInfo->hset, s, &fbInfo->al_ot, ste);
+                            } else {
+                                outprob[j][s] = NewOtprobVec(fbInfo->aInfo->mem, 1);
+                                outprob[j][s][0] = SOutP(fbInfo->hset, s, &fbInfo->al_ot, ste);
+                            }
+		            break;
+                        case PLAINHS: /* x = SOutP(fbInfo->hset,s,&ot,ste);    break; commented out by dp10006 since
                                 sharing is needed in any case for lattices. */
-               case SHAREDHS:
-		  if (fbInfo->S==1)
-		     outprob[j][0] = ShStrP(fbInfo->al_ot.fv[s],t+StartTime,ste,fbInfo->inXForm,fbInfo->aInfo->mem);
-		  else
-		     outprob[j][s] = ShStrP(fbInfo->al_ot.fv[s],t+StartTime,ste,fbInfo->inXForm,fbInfo->aInfo->mem);
-		  break;
-               default:       HError(1, "Unknown hset kind.");
-               }
-               if (fbInfo->S==1)
-		  outprob[j][0][0] *= local_probscale;
-               else{
-		  outprob[j][s][0] *= local_probscale;
-		  sum += outprob[j][s][0];
-               }
+                        case SHAREDHS:
+		            if (fbInfo->S == 1) {
+		                outprob[j][0] = ShStrP(fbInfo->al_ot.fv[s], t + StartTime, ste, fbInfo->inXForm, fbInfo->aInfo->mem);
+                            }
+		            else {
+		                outprob[j][s] = ShStrP(fbInfo->al_ot.fv[s], t + StartTime, ste, fbInfo->inXForm, fbInfo->aInfo->mem);
+                            }
+		            break;
+                        case HYBRIDHS:	/* cz277 - ANN */
+                            if (fbInfo->S == 1) {
+                                outprob[j][0] = NewOtprobVec(fbInfo->aInfo->mem, 1);
+                                outprob[j][0][0] = fbInfo->hset->annSet->llhMat[1]->matElems[(t - 1) * fbInfo->hset->annSet->outLayers[1]->nodeNum + (ste->targetIdx - 1)];
+                            }
+                            else {
+                                outprob[j][s] = NewOtprobVec(fbInfo->aInfo->mem, 1);
+                                outprob[j][s][0] = fbInfo->hset->annSet->llhMat[s]->matElems[(t - 1) * fbInfo->hset->annSet->outLayers[s]->nodeNum + (ste->targetIdx - 1)]; 
+                            }
+                            break;
+                        default:       
+                            HError(8492, "Unknown hset kind.");
+                    }
+                    if (fbInfo->S == 1) {
+		        outprob[j][0][0] *= local_probscale;
+                    }
+                    else {
+		        outprob[j][s][0] *= local_probscale;
+		        sum += outprob[j][s][0];
+                    }
+                }
+                if (fbInfo->S > 1) {
+                    outprob[j][0][0] = sum;
+                    for (s = 1; s <= fbInfo->S; s++) {
+		        outprob[j][s][0] = sum - outprob[j][s][0];
+                    }
+                }
             }
-            if (fbInfo->S>1){
-               outprob[j][0][0] = sum;
-               for (s=1;s<=fbInfo->S;s++)
-		  outprob[j][s][0] = sum - outprob[j][s][0];
-            }
-         }
-      }
-   }
+        }
+    }
 }
 
-void SetModelBetaPlus(int t, int q){
-   double x=LZERO;
-   Acoustic *ac = fbInfo->aInfo->ac+q;
-   HLink hmm = ac->hmm;
-   int Nq = hmm->numStates,i,j;
-   DVector bqt = ac->betaPlus[t],bqt1;
-   float ***outprob = ac->otprob[t];
+void SetModelBetaPlus(int t, int q) {
+    double x = LZERO;
+    Acoustic *ac = fbInfo->aInfo->ac + q;
+    HLink hmm = ac->hmm;
+    int Nq = hmm->numStates, i, j;
+    DVector bqt = ac->betaPlus[t], bqt1;
+    float ***outprob = ac->otprob[t];
 
-   if(t==ac->t_end)  bqt[Nq] = 0;  /* We are calculating the acoustic likelihood for each model separately. */
-   else bqt[Nq] = LZERO;
+    if(t == ac->t_end)  
+        bqt[Nq] = 0;  /* We are calculating the acoustic likelihood for each model separately. */
+    else 
+        bqt[Nq] = LZERO;
   
-   for(i=2;i<Nq;i++){
-      x = bqt[Nq] + hmm->transP[i][Nq];
-      if(t+1<=ac->t_end){ /*in beam next time frame*/
-         bqt1=ac->betaPlus[t+1];
-         for(j=2;j<Nq;j++)
-            x = LAdd(x, bqt1[j] + hmm->transP[i][j]);
-      }
-      x += outprob[i][0][0];
-      bqt[i] = x;
-   }
-   x=LZERO;
-   for(i=2;i<Nq;i++) x = LAdd(x, bqt[i]+hmm->transP[1][i]);
-   bqt[1] = x;
+    for (i = 2; i < Nq; i++) {
+        x = bqt[Nq] + hmm->transP[i][Nq];
+        if (t + 1 <= ac->t_end) { /*in beam next time frame*/
+            bqt1 = ac->betaPlus[t + 1];
+            for(j = 2; j < Nq; j++) {
+                x = LAdd(x, bqt1[j] + hmm->transP[i][j]);
+            }
+        }
+        x += outprob[i][0][0];
+        bqt[i] = x;
+    }
+    x = LZERO;
+    for (i = 2; i < Nq; i++) 
+        x = LAdd(x, bqt[i] + hmm->transP[1][i]);
+    bqt[1] = x;
 }
 
 
 /* SetBetaPlus: calculate gamma and otprob matrices */
 static void SetBetaPlus()
 {
-   int t,q; /*,lNq=0,q_at_gMax;*/
-   LogDouble x;
-  
+    int t,q; /*,lNq=0,q_at_gMax;*/
+    LogDouble x;
    
-   /* 
-      Columns T-1 -> 1.
-   */
-   ResetObsCache();  
-   for (t=fbInfo->T;t>=1;t--) {
-      Setotprob(t);
-      for (q=fbInfo->aInfo->qHi[t];q>=fbInfo->aInfo->qLo[t];q--) { /*MAX(qHi[t],qLo[t]) because of the case for tee models where qHi[t]=qLo[t]-1 .*/
-         Acoustic *ac = fbInfo->aInfo->ac + q;
-         if(t>=ac->t_start && t<=ac->t_end){ /*in beam.*/
-            SetModelBetaPlus(t,q);
-         }
-         if(t==ac->t_start){ /* We need to set "aclike", the total accumulated acoustic
-                                probability for this frame. */
-            if(ac->SP) /* Is a tee model, i.e. zero time, t_end=t_start-1. */
-               x = ac->hmm->transP[1][ac->hmm->numStates]; /* beta will not have been set for tee models. */
-            else
-               x = ac->betaPlus[t][1]; /* state 1 of HMM. */
-            ac->aclike = x;
-         }	
-      }
-   }
+    /* 
+       Columns T-1 -> 1.
+    */
+    ResetObsCache();  
+    for (t = fbInfo->T; t >= 1; t--) {
+        Setotprob(t);
+        for (q = fbInfo->aInfo->qHi[t]; q >= fbInfo->aInfo->qLo[t]; q--) { /*MAX(qHi[t],qLo[t]) because of the case for tee models where qHi[t]=qLo[t]-1 .*/
+            Acoustic *ac = fbInfo->aInfo->ac + q;
+            if (t >= ac->t_start && t <= ac->t_end) { /*in beam.*/
+                SetModelBetaPlus(t,q);
+            }
+            if (t == ac->t_start) { /* We need to set "aclike", the total accumulated acoustic probability for this frame. */
+                if(ac->SP) /* Is a tee model, i.e. zero time, t_end=t_start-1. */
+                    x = ac->hmm->transP[1][ac->hmm->numStates]; /* beta will not have been set for tee models. */
+                else
+                    x = ac->betaPlus[t][1]; /* state 1 of HMM. */
+                ac->aclike = x;
+            }	
+        }
+    }
+
 }
 
+/* cz277 - cuda fblat */
+#ifdef CUDA
+static void SetBetaPlusCUDA() {
+    int q;
 
+    if (fbInfo->aInfo->FBLatCUDA == FALSE) {
+        HError(8492, "SetBetaPlusCUDA: The case is not valid for CUDA based FBLat rescore");
+    }
+    SetModelBetaPlusCUDA(fbInfo->aInfo->T, fbInfo->llhMat[1], fbInfo->aInfo->qLoDev, fbInfo->aInfo->qHiDev, fbInfo->aInfo->Q, probScale, fbInfo->aInfo->acDev);
+    for (q = 1; q <= fbInfo->aInfo->Q; ++q) {
+        SyncAcousticDev2HostBeta(&fbInfo->aInfo->acDev[q], &fbInfo->aInfo->ac[q], fbInfo->aInfo->mem);
+    }
+
+}
+#endif
 
 
 void UpSkipTranParms(int q, int t){
@@ -981,7 +1105,6 @@ static void UpTranParms(int t, int q){
    N = hmm->numStates;    ta = ((TrAcc*)GetHook(hmm->transP)) + local_accindx;
    if(DoingFourthAcc) tammi = ((TrAcc*)GetHook(hmm->transP)) + add_index;   
 
-
    for(i=1;i<N;i++){
       float *ti = ta->tran[i], *ai = hmm->transP[i];
       for(j=2;j<=N;j++){
@@ -994,8 +1117,7 @@ static void UpTranParms(int t, int q){
             x = aqt[i]+ai[N]+bqtPlus[N]; /* bqtPlus[N] lacks likelihood from this time. */
          }
          /* dont do tee transition in this part of the code. */
-
-         if(x > 0.001) HError(1, "too large transition occ! (%d>0)",x);
+         if(x > 0.001) HError(8424, "too large transition occ! (%d>0)",x);
          if (x>MINEARG){
             float occmmi,occ;   
             occmmi = exp(x);
@@ -1067,18 +1189,17 @@ void DoAllMixUpdates(int t){
    int s,m,k,vSize;
    MixPDF *mp;
    float Lr, unscaledLr, LrWithSign;
-   Vector mean,variance,up_otvs,al_otvs,mu_jm;
+   Vector mean,variance,up_otvs,mu_jm;
    LogFloat det;
 
    float zmean,zmeanlr;
-   MuAcc *ma,*mammi;
+   MuAcc *ma,*mammi=NULL;
    VaAcc *va,*vammi;
    int local_accindx;
   
    for(s=1;s<=fbInfo->S;s++){
       float steSumLr = 0.0;
       vSize = fbInfo->hset->swidth[s];
-      al_otvs = fbInfo->al_ot.fv[s];
     
       for(m=0;m<nPDFs[s];m++){
          unscaledLr = SavedMixes[s][m].occ;  /*differs in MPE case from Lr*/
@@ -1093,7 +1214,7 @@ void DoAllMixUpdates(int t){
          variance = mp->cov.var;
       
          if(mp->ckind != INVDIAGC && mp->ckind != DIAGC){
-            HError(-1, "HFwdBkwdLat.c: expecting INVDIAGC or DIAGC");
+            HError(-8493, "HFBLat.c: expecting INVDIAGC or DIAGC");
          }
 
       /* -------------------- (a) MLLR updates --------------------*/
@@ -1163,7 +1284,7 @@ void DoAllMixUpdates(int t){
                      } 
                   }
                   break;
-               default: HError(1, "Unknown CKIND.");
+               default: HError(8492, "Unknown CKIND.");
                }
             } else {
                ma->occ += Lr;
@@ -1181,7 +1302,7 @@ void DoAllMixUpdates(int t){
             }
          }
       }
-      if(steSumLr > 1.01 || steSumLr < 0.99) HError(-1, "Wrong steSumLr: %f, t=%d, s=%d",steSumLr, t, s);
+      if(steSumLr > 1.01 || steSumLr < 0.99) HError(-8425, "Wrong steSumLr: %f, t=%d, s=%d",steSumLr, t, s);
    }
    for(s=1;s<=fbInfo->S;s++) /*Reset.*/
       nPDFs[s] = 0;
@@ -1189,178 +1310,179 @@ void DoAllMixUpdates(int t){
 
 
 /* UpMixParms: update mu/va accs of given hmm  */
-static double UpMixParms(int q, HLink hmm, int t, DVector aqt, 
-			 DVector aqt1, DVector gqt)
+static double UpMixParms(int q, HLink hmm, int t, DVector aqt, DVector aqt1, DVector gqt)
 {
-   Acoustic *ac = fbInfo->aInfo->ac+q;
-   double ans=LZERO;   
-   double ans2=LZERO;   
-   int mx,s,j,m=0,M=0,N,vSize;
-   TMixRec *tmRec = NULL;
-   float ***outprob;
-   LogFloat c_jm,prob=0;
-   LogDouble x,initx = LZERO;
-   double Lr,steSumLr;
-   float tmp;
-   StreamElem *ste;
-   MixtureElem *me;
-   MixPDF *mp=NULL;
-   WtAcc *wa, *wammi=NULL;
-   PreComp *pMix;
-   Boolean mmix=FALSE;  /* TRUE if multiple mixture */
-   float wght=0;
-   float mee_acc_scale =   fbInfo->AccScale * (fbInfo->MPE? fbInfo->aInfo->ac[q].mpe_occscale: 1 ),
-      abs_mee_acc_scale = fabs(mee_acc_scale); int local_accindx = (mee_acc_scale > 0 ? fbInfo->num_index : fbInfo->den_index);
+    Acoustic *ac = fbInfo->aInfo->ac + q;
+    double ans = LZERO;   
+    double ans2 = LZERO;   
+    int mx, s, j, m = 0, M = 0, N;
+    TMixRec *tmRec = NULL;
+    float ***outprob;
+    LogFloat c_jm, prob = 0;
+    LogDouble x, initx = LZERO;
+    double Lr, steSumLr;
+    float tmp;
+    StreamElem *ste;
+    MixtureElem *me;
+    MixPDF *mp = NULL;
+    WtAcc *wa, *wammi = NULL;
+    PreComp *pMix;
+    Boolean mmix = FALSE;  /* TRUE if multiple mixture */
+    float wght = 0;
+    float mee_acc_scale = fbInfo->AccScale * (fbInfo->MPE ? fbInfo->aInfo->ac[q].mpe_occscale : 1);
+    float abs_mee_acc_scale = fabs(mee_acc_scale); 
+    int local_accindx = (mee_acc_scale > 0 ? fbInfo->num_index : fbInfo->den_index);
+    float local_probscale;
 
-   float local_probscale;
-
-   local_probscale = probScale;  
-   N = hmm->numStates;
-   for (j=2;j<N;j++) {
-      outprob = ac->otprob[t];
-      if(aqt[j]+gqt[j]-outprob[j][0][0]/*-pr*/ > MINEARG){
-         ans  = LAdd(ans, aqt[j]+gqt[j]-outprob[j][0][0]); /*the total occ.*/
-      }
-
-      if(aqt[j]+gqt[j]-outprob[j][0][0] < -minFrwdP) continue; /*go to the next state.  This added for the tiedhs case,
-                                                              to speed things up.*/
-
-      initx = aqt[j]+gqt[j]-(outprob[j][0][0] * (1 + 1 / local_probscale)); 
-      /*the outprob[j][0][0]*1 is to
-        get the correct occupancy (since both alpha and gamma contain this states outprob); 
-        and the  outprob[j][0][0]*1/probScale is to subtract the (unscaled) prob
-        so we get the 'initx', which is the x without this timeframe's prob.*/
+    local_probscale = probScale;  
+    N = hmm->numStates;
+    for (j = 2; j < N; j++) {
+        outprob = ac->otprob[t];
+        if (aqt[j] + gqt[j] - outprob[j][0][0]/*-pr*/ > MINEARG) {
+            ans = LAdd(ans, aqt[j] + gqt[j] - outprob[j][0][0]); /*the total occ.*/
+        }
+        if (aqt[j] + gqt[j] - outprob[j][0][0] < -minFrwdP) {
+            continue; /*go to the next state.  This added for the tiedhs case, to speed things up.*/
+        }
+        initx = aqt[j] + gqt[j] - (outprob[j][0][0] * (1 + 1 / local_probscale)); 
+        /*the outprob[j][0][0]*1 is to
+          get the correct occupancy (since both alpha and gamma contain this states outprob); 
+          and the  outprob[j][0][0]*1/probScale is to subtract the (unscaled) prob
+          so we get the 'initx', which is the x without this timeframe's prob.*/
      
-      /*Initx is the occupancy for this mixture, divided by the (unscaled) output prob for this state's PDF.*/
-     
-      ste = hmm->svec[j].info->pdf+1;
+        /*Initx is the occupancy for this mixture, divided by the (unscaled) output prob for this state's PDF.*/ 
+        ste = hmm->svec[j].info->pdf + 1;
 
-      for (s=1;s<=fbInfo->S;s++,ste++){
-         /* Get observation vector for this state/stream */
-         vSize = fbInfo->hset->swidth[s];
-
-         switch (fbInfo->hsKind){
-         case TIEDHS:		          /* if tied mixtures then we only */
-            tmRec = &(fbInfo->hset->tmRecs[s]);   /* want to process the non-pruned */
-            M = tmRec->topM;	          /* components */
-            mmix = TRUE;
-            break;
-         case DISCRETEHS:
-            M = 1;
-            mmix = FALSE;
-            break;
-         case PLAINHS:
-         case SHAREDHS:
-            M = ste->nMix;
-            mmix = (M>1);
-            break;
-         }
-       
-         wa = ((WtAcc*)ste->hook) + local_accindx;
-         if(DoingFourthAcc) wammi = ((WtAcc*)ste->hook) + add_index;   
-         steSumLr = 0.0;      /*  zero stream occupation count */
-       
-       
-         /* process mixtures */
-         for (mx=1;mx<=M;mx++) {
-            switch (fbInfo->hsKind){	/* Get wght and mpdf */
-            case TIEDHS:
-               m=tmRec->probs[mx].index;
-               wght=MixWeight(fbInfo->hset,ste->spdf.tpdf[m]);
-               mp=tmRec->mixes[m];
-               break;
-            case DISCRETEHS:
-               m=fbInfo->twoDataFiles ? fbInfo->up_ot.vq[s] : fbInfo->al_ot.vq[s];
-               wght = 1.0;
-               mp=NULL;
-               break;
-            case PLAINHS:
-            case SHAREDHS:
-               m = mx;
-               me = ste->spdf.cpdf+m;
-               wght = MixWeight(fbInfo->hset,me->weight);
-               mp=me->mpdf;
-               break;
+        for (s = 1; s <= fbInfo->S; s++, ste++) {
+            /* Get observation vector for this state/stream */
+            switch (fbInfo->hsKind) {
+                case TIEDHS:		          /* if tied mixtures then we only */
+                    tmRec = &(fbInfo->hset->tmRecs[s]);   /* want to process the non-pruned */
+                    M = tmRec->topM;	          /* components */
+                    mmix = TRUE;
+                    break;
+                case DISCRETEHS:
+                    M = 1;
+                    mmix = FALSE;
+                    break;
+                case PLAINHS:
+                case SHAREDHS:
+                    M = ste->nMix;
+                    mmix = (M > 1);
+                    break;
             }
-            if (wght>MINMIX){        /* For this mixture m, if the weight is nonzero... */
-               /* compute mixture likelihood */
-               if (!mmix || (fbInfo->hsKind==DISCRETEHS)){       /*    Don't need the MOutP for 1-mix systems. */
-                  x = aqt[j]+gqt[j]-outprob[j][0][0]/*-pr*/;   
-                  pMix = (PreComp *)mp->hook;
-                  if(pMix->time != t+StartTime){ /* set the indx to -1, this relates to caching of the mixture occupation
-                                                    probability on each time frame. */
-                     pMix->time = t+StartTime; 
+       
+            wa = ((WtAcc*) ste->hook) + local_accindx;
+            if (DoingFourthAcc) {
+                wammi = ((WtAcc*) ste->hook) + add_index;   
+            }
+            steSumLr = 0.0;      /*  zero stream occupation count */
+       
+            /* process mixtures */
+            for (mx = 1; mx <= M; mx++) {
+                switch (fbInfo->hsKind) {	/* Get wght and mpdf */
+                    case TIEDHS:
+                        m = tmRec->probs[mx].index;
+                        wght = MixWeight(fbInfo->hset, ste->spdf.tpdf[m]);
+                        mp = tmRec->mixes[m];
+                        break;
+                    case DISCRETEHS:
+                        m = fbInfo->twoDataFiles ? fbInfo->up_ot.vq[s] : fbInfo->al_ot.vq[s];
+                        wght = 1.0;
+                        mp = NULL;
+                        break;
+                    case PLAINHS:
+                    case SHAREDHS:
+                        m = mx;
+                        me = ste->spdf.cpdf + m;
+                        wght = MixWeight(fbInfo->hset, me->weight);
+                        mp=me->mpdf;
+                        break;
+                }
+                if (wght > MINMIX) {        /* For this mixture m, if the weight is nonzero... */
+                    /* compute mixture likelihood */
+                    if (!mmix || (fbInfo->hsKind == DISCRETEHS)) {       /*    Don't need the MOutP for 1-mix systems. */
+                        x = aqt[j] + gqt[j] - outprob[j][0][0]/*-pr*/;   
+                        pMix = (PreComp *) mp->hook;
+                        if (pMix->time != t + StartTime) { /* set the indx to -1, this relates to caching of the mixture occupation probability on each time frame. */
+                            pMix->time = t + StartTime; 
 #ifdef MIX_UPDATE_SHARING
-                     pMix->indx = -1;
+                            pMix->indx = -1;
 #endif
-                  } 
-               } else { /*   Multiple-mixture --> need to work out the occupation probabilty of the individual mixture. */
-                  c_jm=log(wght);
-                  x = initx+c_jm;
-                  switch(fbInfo->hsKind){
-                  case TIEDHS :
-                     tmp = tmRec->probs[m].prob;
-                     prob = (tmp>=MINLARG)?(log(tmp)+tmRec->maxP):LZERO; /*maxP is a normalising factor subtracted from all the TMProbs.*/
-                     break;                                            /*"prob" now contains the TM prob [not the mixture weight as well.]*/
-                  case SHAREDHS : case PLAINHS:
-		     if (fbInfo->S==1)
-		        prob = outprob[j][0][mx];
-		     else
-		        prob = outprob[j][s][mx];
-		     pMix = (PreComp *)mp->hook;
-		     if(pMix->time != t+StartTime){ /* set the indx to -1, this relates to caching of the mixture occupation
+                        } 
+                    } 
+                    else { /*   Multiple-mixture --> need to work out the occupation probabilty of the individual mixture. */
+                        c_jm = log(wght);
+                        x = initx + c_jm;
+                        switch (fbInfo->hsKind) {
+                            case TIEDHS:
+                                tmp = tmRec->probs[m].prob;
+                                prob = (tmp >= MINLARG) ? (log(tmp) + tmRec->maxP) : LZERO; /*maxP is a normalising factor subtracted from all the TMProbs.*/
+                                break;                                            /*"prob" now contains the TM prob [not the mixture weight as well.]*/
+                            case SHAREDHS: 
+                            case PLAINHS:
+		                if (fbInfo->S == 1) {
+		                    prob = outprob[j][0][mx];
+                                }
+		                else {
+		                    prob = outprob[j][s][mx];
+                                }
+		                pMix = (PreComp *) mp->hook;
+		                if (pMix->time != t + StartTime) { /* set the indx to -1, this relates to caching of the mixture occupation
 						       probability on each time frame. */
-		        pMix->time = t+StartTime; 
+		                    pMix->time = t + StartTime; 
 #ifdef MIX_UPDATE_SHARING
-			pMix->indx = -1;
+			            pMix->indx = -1;
 #endif
-		     } 
-                     break;
-                  default:
-                     HError(1, "Unknown hsKind.");
-                     break;
-                  }
-                  x += prob;
-                  if (fbInfo->S>1)	/* adjust for parallel streams */
-                     x += outprob[j][s][0]/probScale; /* all the other streams... */
-               }
+		                } 
+                                break;
+                            default:
+                                HError(8492, "Unknown hsKind.");
+                                break;
+                        }
+                        x += prob;
+                        if (fbInfo->S > 1) {	/* adjust for parallel streams */
+                            x += outprob[j][s][0] / probScale; /* all the other streams... */
+                        }
+                    }
 	   
-               /* If transforms are used, x is the prob from the *alignment* transform, not the update transform. */
-	   
-               if (-x<minFrwdP) {
-                  ans2=LAdd(ans2, x);
-                  Lr = exp(x);
+                    /* If transforms are used, x is the prob from the *alignment* transform, not the update transform. */
+                    if (-x < minFrwdP) {
+                        ans2 = LAdd(ans2, x);
+                        Lr = exp(x);
              
-                  /* More diagnostics */
-                  if(isnan(Lr) || Lr > 1.001)
-                     HError(1, "FwdBkwdLat: UpMixParms: invalid Lr.");
-                  if (Lr>1.001)
-                     HError(-999,"UpMix: Lr too big %f ", Lr);
+                        /* More diagnostics */
+                        if (isnan(Lr))
+                            HError(8425, "HFBLat: UpMixParms: invalid Lr.");
+                        if (Lr > 1.001)
+                            HError(-8425, "UpMix: Lr too big %f ", Lr);
 	     
-                  steSumLr += Lr;
+                        steSumLr += Lr;
 	     
-                  DoMixUpdate(mp, s, Lr, mee_acc_scale, t); /* This now does not actually update the mixture, but just notes down
-                                                               the probability for later updating with "DoAllMixUpdates", which is called
-                                                               once every time frame. */
-                  /* ------------------ update mixture weight counts ----------------- */
-                  if (fbInfo->uFlags&UPMIXES) {
-                     wa->c[m] += Lr * abs_mee_acc_scale;
-                     if(DoingFourthAcc) wammi->c[m] += Lr;
-                  }
-               } 
-               /*   printf("q=%d, N=%d,j=%d, M=%d, m=%d, x=%f, prob=%f,stocc=%f\n", q,N,j,M,m,x,prob,aqt[j]+gqt[j]-outprob[j][0][0]); */
-            }
-         }
+                        DoMixUpdate(mp, s, Lr, mee_acc_scale, t); /* This now does not actually update the mixture, but just notes down
+                                                                     the probability for later updating with "DoAllMixUpdates", which is called
+                                                                     once every time frame. */
+                        /* ------------------ update mixture weight counts ----------------- */
+                        if (fbInfo->uFlags & UPMIXES) {
+                            wa->c[m] += Lr * abs_mee_acc_scale;
+                            if (DoingFourthAcc) 
+                                wammi->c[m] += Lr;
+                        }
+                    } 
+                    /*   printf("q=%d, N=%d,j=%d, M=%d, m=%d, x=%f, prob=%f,stocc=%f\n", q,N,j,M,m,x,prob,aqt[j]+gqt[j]-outprob[j][0][0]); */
+                }
+            } /* for (mx = 1; mx <= M; mx++) */
    
-         wa = ((WtAcc*)ste->hook) + local_accindx;
-         wa->occ += steSumLr * abs_mee_acc_scale;
-         if(DoingFourthAcc){   /* do 4th acc if MPE with MMI prior */            
-            wammi = ((WtAcc*)ste->hook) + add_index;
-            wammi->occ += steSumLr;
-         }
-      }
-   }
-   return ans;
+            wa = ((WtAcc*) ste->hook) + local_accindx;
+            wa->occ += steSumLr * abs_mee_acc_scale;
+            if (DoingFourthAcc) {   /* do 4th acc if MPE with MMI prior */            
+                wammi = ((WtAcc*) ste->hook) + add_index;
+                wammi->occ += steSumLr;
+            }
+        } /* for (s = 1; s <= fbInfo->S; s++, ste++) */
+    } /* for (j = 2; j < N; j++) */
+
+    return ans;
 }
 
 
@@ -1371,11 +1493,11 @@ static double UpMixParms(int q, HLink hmm, int t, DVector aqt,
 static void CheckData(char *fn, BufferInfo *info) 
 {
    if (info->tgtVecSize!=fbInfo->hset->vecSize)
-      HError(2350,"CheckData: Vector size in %s[%d] is incompatible with hset [%d]",
+      HError(8426,"CheckData: Vector size in %s[%d] is incompatible with hset [%d]",
              fn,info->tgtVecSize,fbInfo->hset->vecSize);
    if (!fbInfo->twoDataFiles){
       if (info->tgtPK != fbInfo->hset->pkind)
-         HError(2350,"CheckData: Parameterisation in %s is incompatible with hset ",
+         HError(8426,"CheckData: Parameterisation in %s is incompatible with hset ",
                 fn);
    }
 }
@@ -1385,70 +1507,198 @@ static void CheckData(char *fn, BufferInfo *info)
 /* StepForward: Step from 1 to T calc'ing Alpha columns and updating parms */
 static void StepForward()
 {
-   int q,t,negs;
-   DVector aqt,aqt1,bqt,bqt1,tmp;
-   double occ, total_occ;
-   HLink hmm, up_hmm;
-   ResetObsCache();
-   ZeroAlpha(1, fbInfo->Q); /*Zero the alphat column,*/
-   for(q=1;q<=fbInfo->Q;q++){ /*And switch: now the alphat1 column is zero.*/
-      Acoustic *ac = fbInfo->aInfo->ac + q;
-      tmp=ac->alphat;ac->alphat=ac->alphat1;ac->alphat1=tmp;
-   }
-   ZeroAlpha(1, fbInfo->Q); /*Now the alphat column is zero too.*/
-  
-   for (q=1;q<=fbInfo->Q;q++){  /* inc access counters */
-      up_hmm = fbInfo->aInfo->ac[q].hmm;
-      negs = (int)up_hmm->hook+1;
-      up_hmm->hook = (void *)negs;
-   }
+    int q, t, s, i, N;
+    unsigned long int negs;
+    DVector aqt, aqt1, bqt, tmp;
+    double occ, occConv, total_occ, total_exp_occ;
+    HLink hmm, up_hmm;
+    /* cz277 - ANN */
+    StreamElem *ste;
+    float mee_acc_scale;
+    float ***outprob;
+    int pos;
+    float occScale = fbInfo->FSmoothH * probScale * fbInfo->AccScale;
 
-   for (t=1;t<=fbInfo->T;t++) {
-      /* Get Data */
-      ReadAsTable(fbInfo->al_pbuf,t-1,&fbInfo->al_ot);
-
-      if (fbInfo->twoDataFiles)		
-         ReadAsTable(fbInfo->up_pbuf,t-1,&fbInfo->up_ot);
-
-      if (fbInfo->hsKind == TIEDHS)  PrecomputeTMix(fbInfo->hset,&fbInfo->al_ot,minFrwdP,0);
-
-      StepAlpha(t); /* Calculate this time's Alpha column. */
-
-      /* Now accumulate statistics. */
-      total_occ=LZERO;
-      for (q=fbInfo->aInfo->qLo[t];q<=fbInfo->aInfo->qHi[t];q++){ /* inc accs for each active model */
-         Acoustic *ac = fbInfo->aInfo->ac+q;
-         int tLo = ac->t_start,
-            tHi = ac->t_end;
-         if(t==tLo && tHi==tLo-1 && fbInfo->uFlags&UPTRANS){ /*In the ExactMatch case, where we have a skip transition.*/
-            UpSkipTranParms(q, t);
-         }
-         if(t>=tLo&&t<=tHi){
-            hmm = ac->hmm; 
-            aqt = ac->alphat; bqt = ac->betaPlus[t];
-	
-            bqt1 = (t+1>=tLo&&t+1<=tHi) ? ac->betaPlus[t+1]:NULL;
-            aqt1 = (t==1) ? NULL:ac->alphat1; /* alpha from t-1 */
-
-	if (fbInfo->uFlags&(UPMEANS|UPVARS|UPMIXES|UPXFORM|UPMIXES))
-	  if((occ=UpMixParms(q,hmm,t,aqt,aqt1,bqt)) > LSMALL){
-	    total_occ = LAdd(total_occ, occ);
-	  }
-	if (fbInfo->uFlags&UPTRANS)
-	  UpTranParms(t,q);
-      }
+    /* cz277 - cuda fblat */
+#ifdef CUDA
+    if (fbInfo->aInfo->FBLatCUDA == TRUE) {
+        ZeroAlphasCUDA(fbInfo->T, fbInfo->Q, fbInfo->aInfo->acDev);	/* cz277 - cuda fblat */
     }
-    DoAllMixUpdates(t);  /* Iterates over all active mpdf's and actually accumulates stats. */
-  
-    if(fabs(total_occ) > 0.1)
-      HError( 1, "in HFwdBkwdLat.c: Wrong occ: exp(%f)\n",total_occ);
-    if(fabs(total_occ) > 1.0e-4)
-      HError( -1, "in HFwdBkwdLat.c: Wrong occ: exp(%f)\n",total_occ);
-  }
+#endif
+    if (fbInfo->aInfo->FBLatCUDA == FALSE) {
+        ResetObsCache();
+        ZeroAlpha(1, fbInfo->Q); /*Zero the alphat column,*/
+        for(q = 1; q <= fbInfo->Q; q++) { /*And switch: now the alphat1 column is zero.*/
+            Acoustic *ac = fbInfo->aInfo->ac + q;
+            tmp = ac->alphat;
+            ac->alphat = ac->alphat1;
+            ac->alphat1 = tmp;
+        }
+        ZeroAlpha(1, fbInfo->Q); /*Now the alphat column is zero too.*/
+    }  
+
+    for (q = 1; q <= fbInfo->Q; q++) {  /* inc access counters */
+        up_hmm = fbInfo->aInfo->ac[q].hmm;
+        negs = (unsigned long int)up_hmm->hook + 1;
+        up_hmm->hook = (void *) negs;
+    }
+
+#ifdef CUDA
+    if (fbInfo->aInfo->FBLatCUDA == TRUE) {
+        for(q = 1; q <= fbInfo->Q; ++q) {
+            SyncAcousticHost2DevAlpha(&fbInfo->aInfo->ac[q], &fbInfo->aInfo->acDev[q]);
+        }
+        /* cz27 - cuda fblat */
+        StepAlphaCUDA(fbInfo->Q, fbInfo->aInfo->acDev);
+        for (q = 1; q <= fbInfo->Q; ++q) {
+            SyncAcousticDev2HostAlpha(&fbInfo->aInfo->acDev[q], &fbInfo->aInfo->ac[q]);            
+        }
+    }
+#endif
+
+    for (t = 1; t <= fbInfo->T; t++) {
+        /* cz277 - ANN */
+        if (fbInfo->hset->annSet != NULL && fbInfo->hsKind != HYBRIDHS) {	/* TANDEM */
+            /* TODO: Tandem */
+
+        }
+        else if (fbInfo->al_pbuf != NULL) {
+            /* Get Data */
+            ReadAsTable(fbInfo->al_pbuf, t - 1, &fbInfo->al_ot);
+            if (fbInfo->twoDataFiles) {		
+                ReadAsTable(fbInfo->up_pbuf, t - 1, &fbInfo->up_ot);
+            }
+        }
+
+        /* cz277 - frame rejection */
+        if (fbInfo->rejFrame && fbInfo->findRef && fbInfo->num_index == 0.0) {	/* for numerator lattices */
+            for (s = 1; s <= fbInfo->S; ++s) {
+                fbInfo->refVec[s][t] = -1;
+            }
+        }
+        if (fbInfo->hsKind == TIEDHS) {
+            PrecomputeTMix(fbInfo->hset, &fbInfo->al_ot, minFrwdP, 0);
+        }
+
+        /* cz277 - cuda fblat */
+#ifdef CUDA
+        if (fbInfo->aInfo->FBLatCUDA == TRUE) {
+            StepAlphaSwapOnly(t);
+        }
+#endif
+        if (fbInfo->aInfo->FBLatCUDA == FALSE) {
+            StepAlpha(t); /* Calculate this time's Alpha column. */
+        }
+
+        /* Now accumulate statistics. */
+        total_occ = LZERO;
+        total_exp_occ = 0.0;
+        for (q = fbInfo->aInfo->qLo[t]; q <= fbInfo->aInfo->qHi[t]; q++) { /* inc accs for each active model */
+            Acoustic *ac = fbInfo->aInfo->ac + q;
+            int tLo = ac->t_start, tHi = ac->t_end;
+            if (t == tLo && tHi == tLo - 1 && fbInfo->uFlags & UPTRANS) { /*In the ExactMatch case, where we have a skip transition.*/
+                UpSkipTranParms(q, t);
+            }
+            if (t >= tLo && t <= tHi) {
+                hmm = ac->hmm; 
+                aqt = ac->alphat; 
+                bqt = ac->betaPlus[t];
+                /*bqt1 = (t + 1 >= tLo && t + 1 <= tHi) ? ac->betaPlus[t + 1] : NULL;*/
+                aqt1 = (t == 1) ? NULL : ac->alphat1; /* alpha from t-1 */
+                /* cz277 - cuda fblat */
+#ifdef CUDA
+                if (fbInfo->aInfo->FBLatCUDA == TRUE) {
+                    aqt = ac->alphaPlus[t];
+                    if (aqt1 != NULL)
+                        aqt1 = ac->alphaPlus[t - 1];
+                }
+#endif
+	        if (fbInfo->uFlags & (UPMEANS | UPVARS | UPMIXES | UPXFORM | UPMIXES)) {
+	            if ((occ = UpMixParms(q, hmm, t, aqt, aqt1, bqt)) > LSMALL) {
+	                total_occ = LAdd(total_occ, occ);
+	            }
+                }
+	        if (fbInfo->uFlags & UPTRANS) {
+	            UpTranParms(t, q);
+                }
+                /* cz277 - ANN */
+                if (fbInfo->hsKind == HYBRIDHS) {
+                    N = hmm->numStates;
+                    if (fbInfo->MPE) {
+                        mee_acc_scale = fbInfo->AccScale * ac->mpe_occscale;
+                    }
+                    else if (fbInfo->num_index == 1.0) {	/* MMI denorminator */
+                        mee_acc_scale = fbInfo->AccScale * (-1.0);
+                    }
+                    else {
+                        mee_acc_scale = fbInfo->AccScale;
+                    }
+                    /*mee_acc_scale = fabs(mee_acc_scale);*/
+                    outprob = ac->otprob[t];
+                    for (i = 2; i < N; ++i) {
+                        /* to compute gamma^{MPE}_{q}(t) = \dfrac{a_q(t) * b_q(t)}{P}(c(q) - c_avg) */
+                        occ = aqt[i] + bqt[i] - outprob[i][0][0];
+                        total_occ = LAdd(total_occ, occ);
+                        occConv = exp(occ);
+                        occ = occConv * mee_acc_scale;
+                        total_exp_occ += occConv;
+                        occ *= probScale;
+                        for (s = 1; s <= fbInfo->S; ++s) {
+                            ste = &hmm->svec[i].info->pdf[s];
+                            if ((fbInfo->num_index == 0.0) && ((fbInfo->uFlags & UPTARGETPEN) != 0)) {      /* ML or MMI numerator */
+                                ste->occAcc += occConv;
+                            }
+                            /* cz277 - seq bug 1 */
+                            /*pos = fbInfo->occMat[s]->colNum * t + ste->targetIdx - 1;*/
+                            pos = fbInfo->occMat[s]->colNum * (t - 1) + ste->targetIdx - 1;
+
+                            fbInfo->occMat[s]->matElems[pos] -= fbInfo->FSmoothH * occ;
+                            /* cz277 - frame rejection */
+                            if (fbInfo->rejFrame && fbInfo->findRef && fbInfo->num_index == 0.0) {	/* for numerator lattice */
+                                occConv = (-1.0) * (fbInfo->occMat[s]->matElems[pos] / occScale);	/* abs(occ) */
+                                if ((fbInfo->refVec[s][t] == -1) || (fbInfo->occVec[s][t] < occConv)) {
+                                    fbInfo->occVec[s][t] = occConv;
+                                    fbInfo->refVec[s][t] = ste->targetIdx - 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        /* cz277 - frame rejection */
+        if (fbInfo->rejFrame) {
+            if (fbInfo->num_index == 1.0) { /* MMI denominator, (den - num) * occScale is stored */
+                for (s = 1; s <= fbInfo->S; ++s) {
+                    /* fbInfo->occVec[s][t] changes from the num occ to den occ */
+                    fbInfo->occVec[s][t] += fbInfo->occMat[s]->matElems[fbInfo->occMat[s]->colNum * t + fbInfo->refVec[s][t]] / occScale;
+                }
+            }
+            else if (fbInfo->findRef == FALSE && fbInfo->num_index == 0.0) {	/* for MMI numerator */
+                for (s = 1; s <= fbInfo->S; ++s) {
+                    /* set fbInfo->occVec[s][t] to the num occ */
+                    fbInfo->occVec[s][t] = (-1.0) * (fbInfo->occMat[s]->matElems[fbInfo->occMat[s]->colNum * t + fbInfo->refVec[s][t]] / occScale);	/* abs(occ) */
+                }
+            }
+        }
+
+	/* cz277 - ANN */
+        if (fbInfo->hsKind != HYBRIDHS) {	/* TODO: need to cover xfrom for hybrid system */
+            DoAllMixUpdates(t);  /* Iterates over all active mpdf's and actually accumulates stats. */
+        }  
+
+        /* cz277 - cuda fblat */
+        if (fbInfo->aInfo->FBLatCUDA == FALSE) {
+            if (fabs(total_occ) > 0.1) {
+                HError(8424, "in HFBLat.c: Wrong occ: exp(%f)\n", total_occ);
+            }
+            if (fabs(total_occ) > 1.0e-4) {
+                HError(-8424, "in HFBLat.c: Wrong occ: exp(%f)\n", total_occ);
+            }
+        }
+    }
 }
 
-
-    
 /* -------------------------- Top Level Forward-Backward Routine ------------------------ */
 
 
@@ -1479,8 +1729,8 @@ void FBLatAddLattice (FBLatInfo *fbInfo, Lattice *lat){  /* add this lattice,
 							    can do this repeatedly. */
 
    fbInfo->aInfo->lat[ fbInfo->aInfo->nLats ++ ] = lat;
-   if(!lat) HError(1, "Zero lattice supplied to FBLat.");
-   if(fbInfo->aInfo->nLats > MAXLATS) HError(1,"fbInfo->aInfo->nLats > MAXLATS, increase array size MAXLATS.");
+   if(!lat) HError(8422, "Zero lattice supplied to FBLat.");
+   if(fbInfo->aInfo->nLats > MAXLATS) HError(8427,"fbInfo->aInfo->nLats > MAXLATS, increase array size MAXLATS.");
 
 
 }
@@ -1523,256 +1773,350 @@ int MPE_GetFileLen(Lattice *lat){
 
 void FBLatClearUp(FBLatInfo *fbInfo); 
 
-void FBLatFirstPass(FBLatInfo *_fbInfo, FileFormat dff, char * datafn, char *datafn2, Lattice *MPECorrLat){
-   int q,T2=0; Boolean MPE;
+Boolean FBLatFirstPass(FBLatInfo *_fbInfo, FileFormat dff, char * datafn, char *datafn2, Lattice *MPECorrLat){
+    int q, T2 = 0; 
+    Boolean MPE;
   
-   fbInfo = _fbInfo;
-   if(fbInfo->InUse) FBLatClearUp(fbInfo); 
-   fbInfo->InUse=TRUE; /* will now initialise */
+    fbInfo = _fbInfo;
+    if (fbInfo->InUse) {
+        FBLatClearUp(fbInfo); 
+    }
+    fbInfo->InUse = TRUE; /* will now initialise */
   
-   if (trace&T_TOP) {
-      printf(" Processing Data: %s\n", NameOf(datafn,buf1));
-      fflush(stdout);
-   }
-   MPE = fbInfo->MPE = (MPECorrLat!=NULL);
+    if (trace & T_TOP) {
+        printf("\tProcessing Data: %s\n", NameOf(datafn, buf1));
+        fflush(stdout);
+    }
+    MPE = fbInfo->MPE = (MPECorrLat != NULL);
   
-   ArcFromLat(fbInfo->aInfo, fbInfo->hset);
-   if(MPE) AttachMPEInfo(fbInfo->aInfo);
-  
-   /*[trace:] PrintArcInfo(stdout, &fbInfo->aInfo);*/
-   fbInfo->Q = fbInfo->aInfo->Q;
-   if (fbInfo->Q==0)
-      HError(2325,"FBLat: No arcs in lattice for %s",datafn);
-  
-   if (fbInfo->twoDataFiles)
-      SetNewConfig("HPARM1");
-   fbInfo->al_pbuf=OpenBuffer(&fbInfo->al_dataStack,datafn,0,dff,FALSE_dup,FALSE_dup);
-   GetBufferInfo(fbInfo->al_pbuf,&fbInfo->al_info);
-   if (fbInfo->twoDataFiles){
-      if(!datafn2) HError(1, "Need 2 data file names if single pass retraining.");
-      SetNewConfig("HPARM2");
-      fbInfo->up_pbuf=OpenBuffer(&fbInfo->up_dataStack,datafn2,0,dff,FALSE_dup,FALSE_dup);
-      GetBufferInfo(fbInfo->up_pbuf,&fbInfo->up_info);
-      CheckData(datafn2,&fbInfo->up_info);
-      /*      SyncBuffers(pbuf,pbuf2); */
-      T2 = ObsInBuffer(fbInfo->up_pbuf);
-   }else
-      CheckData(datafn,&fbInfo->al_info);
-   fbInfo->T = ObsInBuffer(fbInfo->al_pbuf);
-  
-   if (fbInfo->twoDataFiles && (fbInfo->T != T2))
-      HError(2319,"HERest: Paired training files must be same length for single pass retraining");
-  
-   if (fbInfo->firstTime){
-      SetStreamWidths(fbInfo->al_info.tgtPK,fbInfo->al_info.tgtVecSize,fbInfo->hset->swidth,&eSep);
-    
-      fbInfo->al_ot = MakeObservation(&fbInfo->miscStack,fbInfo->hset->swidth,fbInfo->al_info.tgtPK,
-                                      fbInfo->hsKind==DISCRETEHS,eSep);
+    ArcFromLat(fbInfo->aInfo, fbInfo->hset);
+    if(MPE) {
+        AttachMPEInfo(fbInfo->aInfo);
+    }
 
-      if (fbInfo->twoDataFiles){ /*todo, fix use of this. */
-         fbInfo->up_ot = MakeObservation(&fbInfo->miscStack,fbInfo->hset->swidth,fbInfo->up_info.tgtPK,
-                                         fbInfo->hsKind==DISCRETEHS,eSep);
-      }
-      fbInfo->firstTime = FALSE;
-   }
+    /*[trace:] PrintArcInfo(stdout, &fbInfo->aInfo);*/
+    fbInfo->Q = fbInfo->aInfo->Q;
+    if (fbInfo->Q == 0) {
+        HError(8422, "FBLat: No arcs in lattice for %s", datafn);
+    }  
+
+    /* cz277 - ANN */
+    if (fbInfo->hsKind == HYBRIDHS) {	/* for hybrid systems, llhMat and T are already set */
+        fbInfo->al_pbuf = NULL;
+        fbInfo->up_pbuf = NULL;
+    }
+    else if (fbInfo->hset->annSet != NULL) {	/* TANDEMHS */
+        /* TODO */
+    }
+    else {	/* if need to load the data */
+        if (fbInfo->twoDataFiles) {
+            SetNewConfig("HPARM1");
+        }
+        fbInfo->al_pbuf = OpenBuffer(&fbInfo->al_dataStack, datafn, 0, dff, FALSE_dup, FALSE_dup);
+        GetBufferInfo(fbInfo->al_pbuf, &fbInfo->al_info);
+        if (fbInfo->twoDataFiles) {
+            if(!datafn2) {
+                HError(8419, "Need 2 data file names if single pass retraining.");
+            }
+            SetNewConfig("HPARM2");
+            fbInfo->up_pbuf = OpenBuffer(&fbInfo->up_dataStack, datafn2, 0, dff, FALSE_dup, FALSE_dup);
+            GetBufferInfo(fbInfo->up_pbuf, &fbInfo->up_info);
+            CheckData(datafn2, &fbInfo->up_info);
+            /*      SyncBuffers(pbuf,pbuf2); */
+            T2 = ObsInBuffer(fbInfo->up_pbuf);
+        } else {
+            CheckData(datafn,&fbInfo->al_info);
+        }
+        fbInfo->T = ObsInBuffer(fbInfo->al_pbuf);
   
-  
-   SetBetaPlus(); /* Step back through file. */
-  
-   {
-      HArc *a; ArcTrans *at; LogFloat lmprob;
-      fbInfo->pr = LZERO;
+        if (fbInfo->twoDataFiles && (fbInfo->T != T2)) {
+            HError(8428, "HERest: Paired training files must be same length for single pass retraining");
+        }
+
+        if (fbInfo->firstTime){
+            SetStreamWidths(fbInfo->al_info.tgtPK, fbInfo->al_info.tgtVecSize, fbInfo->hset->swidth, &eSep);
     
-      /* Calculate beta [actually betaPlus, like a reversed alpha] */
-      for(q=1;q<=fbInfo->Q;q++){  
-         Acoustic *ac = fbInfo->aInfo->ac+q;
-         ac->locc = LZERO;
-         if(ac->aclike == LZERO) HError(1, "Zero acoustic likelihood! (May be due to different model topology than used to create lattice)");
-      }
+            fbInfo->al_ot = MakeObservation(&fbInfo->miscStack, fbInfo->hset->swidth, fbInfo->al_info.tgtPK, fbInfo->hsKind == DISCRETEHS, eSep);
+
+            if (fbInfo->twoDataFiles) { /*todo, fix use of this. */
+                fbInfo->up_ot = MakeObservation(&fbInfo->miscStack, fbInfo->hset->swidth, fbInfo->up_info.tgtPK, fbInfo->hsKind == DISCRETEHS, eSep);
+            }
+            fbInfo->firstTime = FALSE;
+        }
+    }
+
+    /* cz277 - cuda fblat */
+    /* Step back through file. */
+#ifdef CUDA
+    if (fbInfo->aInfo->FBLatCUDA == TRUE) {
+        SetBetaPlusCUDA();
+    }
+#endif
+    if (fbInfo->aInfo->FBLatCUDA == FALSE) {
+        SetBetaPlus(); 
+    }
+
+    {
+        HArc *a; 
+        ArcTrans *at; 
+        LogFloat lmprob;
+        fbInfo->pr = LZERO;
+    
+        /* Calculate beta [actually betaPlus, like a reversed alpha] */
+        for (q = 1; q <= fbInfo->Q; q++) {  
+            Acoustic *ac = fbInfo->aInfo->ac + q;
+            ac->locc = LZERO;
+            if (ac->aclike == LZERO) {
+                /* from mjfg, cz277 - 141022 */
+                HError(-8425, "Zero acoustic likelihood! (May be due to different model topology than used to create lattice)");
+                FBLatClearUp(fbInfo);
+		StartTime += fbInfo->T; /*relates to caching of likelihoods */
+		return FALSE;
+            }
+        }
        
-      for(a=fbInfo->aInfo->end;a;a=a->prec){ /*Calculate betaPlus .*/
-         Acoustic *ac = a->ac;
-         LogDouble betaPlus;
-         if(!a->follTrans) betaPlus = 0;
-         else{	  
-            betaPlus=LZERO;
-            for(at=a->follTrans;at;at=at->start_foll){
-               lmprob = translm(at->lmlike);
-               betaPlus = LAdd(betaPlus, at->end->betaPlus + lmprob);
+        for (a = fbInfo->aInfo->end; a; a = a->prec) { /*Calculate betaPlus .*/
+            Acoustic *ac = a->ac;
+            LogDouble betaPlus;
+            if (!a->follTrans) {
+                betaPlus = 0;
             }
-         }
-         betaPlus += ac->aclike * latProbScale;
-         if(isnan(betaPlus)) HError(1, "betaPlus isnan...");
-         a->betaPlus = betaPlus;
-         if(!a->precTrans) fbInfo->pr = LAdd(fbInfo->pr, a->betaPlus);
-      }
-    
-      /*Now calculate alpha... The occupancy of an arc is its exp((alpha+betaPlus-outprob)-fbInfo->pr) */
-      for(a=fbInfo->aInfo->start;a;a=a->foll){
-         Acoustic *ac = a->ac;
-         LogDouble alpha, occ;
-         if(!a->precTrans) alpha = 0;
-         else{	  
-            alpha=LZERO;
-            for(at=a->precTrans;at;at=at->end_foll){
-               lmprob = translm(at->lmlike);
-               alpha = LAdd(alpha, at->start->alpha + lmprob);
+            else {	  
+                betaPlus = LZERO;
+                for (at = a->follTrans; at; at = at->start_foll) {
+                    lmprob = translm(at->lmlike);
+                    betaPlus = LAdd(betaPlus, at->end->betaPlus + lmprob);
+                }
             }
-         }
-         alpha += ac->aclike * latProbScale;
-         a->alpha = alpha;
-         occ = a->alpha + a->betaPlus - ac->aclike*latProbScale- fbInfo->pr; 
+            betaPlus += ac->aclike * latProbScale;
+            if (isnan(betaPlus)) {
+                HError(-8424, "betaPlus isnan...");
+                FBLatClearUp(fbInfo);
+		StartTime += fbInfo->T; /*relates to caching of likelihoods */
+		return FALSE;
+            }
+            a->betaPlus = betaPlus;
+            if (!a->precTrans) {
+                fbInfo->pr = LAdd(fbInfo->pr, a->betaPlus);
+            }
+        }
+
+        /*Now calculate alpha... The occupancy of an arc is its exp((alpha+betaPlus-outprob)-fbInfo->pr) */
+        for (a = fbInfo->aInfo->start; a; a = a->foll) {
+            Acoustic *ac = a->ac;
+            LogDouble alpha, occ;
+            if (!a->precTrans) {
+                alpha = 0;
+            }
+            else {	  
+                alpha = LZERO;
+                for (at = a->precTrans; at; at = at->end_foll) {
+                    lmprob = translm(at->lmlike);
+                    alpha = LAdd(alpha, at->start->alpha + lmprob);
+                }
+            }
+            alpha += ac->aclike * latProbScale;
+            a->alpha = alpha;
+            occ = a->alpha + a->betaPlus - ac->aclike * latProbScale - fbInfo->pr; 
       
-         /*occ should be log of sth in the region 0.0 ... 1.0 */
-         if(occ > 0.0001) HError(1, "occ > 1.0001 (%f)", occ);
-      
-         /* alpha_startprob[id] = LAdd(alpha_startprob[id], -gamma_startprob[id] + occ); */
-         ac->locc = LAdd(ac->locc, occ);
-      }
+            /*occ should be log of sth in the region 0.0 ... 1.0 */
+            if (occ > 0.0001) {
+                HError(-8424, "occ > 1.0001 (%f)", occ);
+                FBLatClearUp(fbInfo);
+		StartTime += fbInfo->T; /*relates to caching of likelihoods */
+                return FALSE;
+            }
 
-      /* calculate & check overall probability of file */
-      { 
-         double pr = LZERO;
-         for(a=fbInfo->aInfo->start;a;a=a->foll){
-            if(!a->follTrans) /* an ending arc. */
-               pr = LAdd(pr, a->alpha);
-         }
-         if(fabs(pr-fbInfo->pr)>1.0e-6) HError(1, "Error in file pr...");
-      }
-    
-     
-      if(MPE){  
-         int nTrans1=0,nTrans2=0; /*debug*/
-         HArc *a; ArcTrans *at; double norm;
-         /*We are going to set the "alphaError" and "betaPlusError" fields for each of the arcs."*/
+            /* alpha_startprob[id] = LAdd(alpha_startprob[id], -gamma_startprob[id] + occ); */
+            ac->locc = LAdd(ac->locc, occ);
+        }
 
+        /* calculate & check overall probability of file */
+        { 
+            double pr = LZERO;
+            for (a = fbInfo->aInfo->start; a; a = a->foll) {
+                if (!a->follTrans) {/* an ending arc. */
+                    pr = LAdd(pr, a->alpha);
+                }
+            }
+            if (fabs(pr - fbInfo->pr) > 1.0e-6) {
+                HError(-8424, "Error in file pr %e vs %e", pr, fbInfo->pr);
+                FBLatClearUp(fbInfo);
+		StartTime += fbInfo->T; /*relates to caching of likelihoods */
+                return FALSE;
+            }
+        }
 
-         if(!MPECorrLat) HError(-1, "No num lattice provided for MPE! ");        
-         fbInfo->MPEFileLength = MPE_GetFileLen(MPECorrLat);
+        if (MPE) {  
+            int nTrans1=0, nTrans2=0; /*debug*/
+            HArc *a; 
+            ArcTrans *at; 
+            double norm;
+            /*We are going to set the "alphaError" and "betaPlusError" fields for each of the arcs."*/
+
+            if (!MPECorrLat) {
+                HError(-8421, "No num lattice provided for MPE! ");        
+            }
+            fbInfo->MPEFileLength = MPE_GetFileLen(MPECorrLat);
 
 #ifdef SUPPORT_EXACT_CORRECTNESS   
-         if(ExactCorrectness){
-            DoExactCorrectness(fbInfo, MPECorrLat);
-         } else {
+            if (ExactCorrectness) {
+                DoExactCorrectness(fbInfo, MPECorrLat);
+            } else {
 #endif
-            /* Inexact version of MPE/MWE. */
-	   if(CalcAsError)  SetCorrectnessAsError(fbInfo, MPECorrLat); /* first set 'correctness' field for each arc, a value between -1 and 1. */
-	   else  SetCorrectness(fbInfo, MPECorrLat); /* first set 'correctness' field for each arc, a value between -1 and 1. */
-         
-            /*First set alphaError*/
-            for(a=fbInfo->aInfo->start;a;a=a->foll){ 
-               double alphaError;
-               if(!StartOfWord(a)) a->mpe->alphaError=a->precTrans->start->mpe->alphaError + a->mpe->correctness;
-               else{ /*start of word.  Sum previous alphas.*/
-                  if(!a->precTrans){ alphaError = 0.0;  } /*start of sentence*/
-                  else{
-                     norm = LZERO; alphaError = 0.0;
-                     for(at=a->precTrans;at;at=at->end_foll){ 
-                        nTrans1++;
-                        norm = LAdd(norm, at->start->alpha + translm(at->lmlike));
-                     }
-                     for(at=a->precTrans;at;at=at->end_foll){
-                        alphaError += (at->start->alpha+translm(at->lmlike)-norm > MINEARG ? exp(at->start->alpha+translm(at->lmlike)-norm):0.0)*(at->start->mpe->alphaError);
-                     }
-                  }
-                  alphaError +=  a->mpe->correctness; /*-1 .. 1*/
-                  a->mpe->alphaError = alphaError;
-               }
-            }
-         
-            /*now set betaPlusError (like betaError but includes present phone's contribution). */
-            for(a=fbInfo->aInfo->end;a;a=a->prec){
-               double betaPlusError;
+
+                /* Inexact version of MPE/MWE. */
+	        if (CalcAsError) {
+                    SetCorrectnessAsError(fbInfo, MPECorrLat); /* first set 'correctness' field for each arc, a value between -1 and 1. */
+                }
+	        else {
+                    SetCorrectness(fbInfo, MPECorrLat); /* first set 'correctness' field for each arc, a value between -1 and 1. */
+                }
+                /*First set alphaError*/
+                for (a = fbInfo->aInfo->start; a; a = a->foll) { 
+                    double alphaError;
+                    if (!StartOfWord(a)) {
+                        a->mpe->alphaError = a->precTrans->start->mpe->alphaError + a->mpe->correctness;
+                    }
+                    else { /*start of word.  Sum previous alphas.*/
+                        if (!a->precTrans) { 
+                            alphaError = 0.0;  
+                        } /*start of sentence*/
+                        else {
+                            norm = LZERO; 
+                            alphaError = 0.0;
+                            for (at = a->precTrans; at; at = at->end_foll) { 
+                                nTrans1++;
+                                norm = LAdd(norm, at->start->alpha + translm(at->lmlike));
+                            }
+                            for (at = a->precTrans; at; at = at->end_foll) {
+                                alphaError += (at->start->alpha+translm(at->lmlike) - norm > MINEARG ? exp(at->start->alpha + translm(at->lmlike) - norm): 0.0) * (at->start->mpe->alphaError);
+                            }
+                        }
+                        alphaError += a->mpe->correctness; /*-1 .. 1*/
+                        a->mpe->alphaError = alphaError;
+                    }
+                 }
+                /*now set betaPlusError (like betaError but includes present phone's contribution). */
+                for (a = fbInfo->aInfo->end; a; a = a->prec) {
+                    double betaPlusError;
            
-               /* current phone's contribution to correctness:*/
-               betaPlusError = a->mpe->correctness; /*if Word MEE this will only be nonzero in the start-of-word case. */
-               if(EndOfWord(a)){ /* --> multiple transitions from end of arc. */
-                  if(!a->follTrans){ betaPlusError += 0.0; } /*end of sentence*/
-                  else{
-                     norm = LZERO; 
-                     for(at=a->follTrans;at;at=at->start_foll){ /* Get normalising factor = sum following gamma...*/
-                        nTrans2++;
-                        norm = LAdd(norm, at->end->betaPlus + translm(at->lmlike));
-                     }
-                     for(at=a->follTrans;at;at=at->start_foll){
-                        if(at->end->betaPlus+translm(at->lmlike) -norm > MINEARG)
-                           betaPlusError += exp(at->end->betaPlus + translm(at->lmlike) - norm)*(at->end->mpe->betaPlusError);
-                     }
-                  }
-               }  else  betaPlusError += a->follTrans->end->mpe->betaPlusError; 
-               a->mpe->betaPlusError = betaPlusError;
-            }
-         
-            if(nTrans1!=nTrans2) HError(-1, "NTrans1!=NTrans2"); /*maybe should be +1 error */
+                    /* current phone's contribution to correctness:*/
+                    betaPlusError = a->mpe->correctness; /*if Word MEE this will only be nonzero in the start-of-word case. */
+                    if (EndOfWord(a)){ /* --> multiple transitions from end of arc. */
+                        if (!a->follTrans) { 
+                            betaPlusError += 0.0; 
+                        } /*end of sentence*/
+                        else {
+                            norm = LZERO; 
+                            for (at = a->follTrans; at; at = at->start_foll) { /* Get normalising factor = sum following gamma...*/
+                                nTrans2++;
+                                norm = LAdd(norm, at->end->betaPlus + translm(at->lmlike));
+                            }
+                            for (at = a->follTrans; at; at = at->start_foll) {
+                                if (at->end->betaPlus + translm(at->lmlike) - norm > MINEARG) {
+                                    betaPlusError += exp(at->end->betaPlus + translm(at->lmlike) - norm) * (at->end->mpe->betaPlusError);
+                                }
+                            }
+                        }
+                    }  
+                    else {
+                        betaPlusError += a->follTrans->end->mpe->betaPlusError; 
+                    }
+                    a->mpe->betaPlusError = betaPlusError;
+                }
+                if (nTrans1 != nTrans2) {
+                    HError(-8993, "NTrans1!=NTrans2"); /*maybe should be +1 error */
+                }
 
-            /*Find the average correctness for the whole file, and do some checking...*/
+                /*Find the average correctness for the whole file, and do some checking...*/
+                {
+                    double avgErrBetaPlus = 0, avgErrAlpha = 0, normBetaPlus = 0, normAlpha = 0;
+                    for (a = fbInfo->aInfo->start; a; a = a->foll) {
+                        if (!a->precTrans) { /*start of file*/
+                            if (a->betaPlus-fbInfo->pr > MINEARG) {
+                                avgErrBetaPlus += exp(a->betaPlus - fbInfo->pr) * a->mpe->betaPlusError;
+                                normBetaPlus += exp(a->betaPlus-fbInfo->pr);
+                            }
+                        } 
+                        if (!a->follTrans) { /*end of file*/
+                            if (a->alpha - fbInfo->pr > MINEARG) {
+                                avgErrAlpha += exp(a->alpha-fbInfo->pr) * a->mpe->alphaError;
+                                normAlpha += exp(a->alpha - fbInfo->pr);
+                            }
+                        }
+                    /* printf("Error for %s = %f/%f/%f   ", a->phone->name, a->mpe->alphaError, a->mpe->betaPlusError, a->mpe->alphaError+a->mpe->betaPlusError); */
+                    }
+
+                    if (fabs(1 - normBetaPlus) > 0.1 || fabs(1 - normAlpha) > 0.1) {   /*Sanity check*/
+                        HError(-8423, "normAlpha/normBetaPlus wrong!");
+                        FBLatClearUp(fbInfo);
+			StartTime += fbInfo->T; /*relates to caching of likelihoods */
+			return FALSE;
+                    }
+                    if (fabs(avgErrBetaPlus - avgErrAlpha) > 0.0001) {        /*Sanity check*/
+                        HError(-8423, "avgErrBetaPlus and avgErrAlpha disagree (%f,%f)!", avgErrBetaPlus, avgErrAlpha);
+                        FBLatClearUp(fbInfo);
+			StartTime += fbInfo->T; /*relates to caching of likelihoods */
+			return FALSE;
+                    }
+                    fbInfo->AvgCorr = avgErrBetaPlus;    /* set average correctness of file. */
+                }
+
+                { 
+                   /*  Calculate the scales gamma_q^MPE = (AvgErr(node) - AvgErr(file)) for each arc.  */
+                   /*  Since the calculation is pooled for identical arcs in pools q=1..Q, this is actually
+                       a weighted average of gamma_q^MPE over all the identically timed arcs, weighted by occupation probability gamma_q. */
+
+                    for (q = 1; q <= fbInfo->Q; q++) {
+                        fbInfo->aInfo->ac[q].mpe_occscale = 0; 
+                    }
+                    for (a = fbInfo->aInfo->start; a; a = a->foll) {
+                        Acoustic *ac = a->ac;
+                        float occ = a->alpha + a->betaPlus - ac->aclike*latProbScale - fbInfo->pr;   /* Occupancy of this cluster of identical arcs which is due to a. */
+                        float total_occ = ac->locc;              /* total occupancy of this group of arcs */
+                        if (occ-total_occ > MINEARG) {
+                            /* cz277 - ANN */
+                            /*ac->mpe_occscale += exp(occ-total_occ) * (a->mpe->alphaError+a->mpe->betaPlusError-fbInfo->AvgCorr - a->mpe->correctness);*/
+                            ac->mpe_occscale += exp(occ - total_occ) * (a->mpe->alphaError + a->mpe->betaPlusError - fbInfo->AvgCorr - a->mpe->correctness);
+                        /* MEEScale is an average error for words including that arc, minus the global average error. */
+                        /* - a->mpe->correctness has to be subtracted because alpha and betaPlus both contain it.*/
+                        }
+                    }
+                }
+
+#ifdef SUPPORT_EXACT_CORRECTNESS
+            }   /* endif (!ExactCorrectness) */
+#endif	    
+
             {
-               double  avgErrBetaPlus=0, avgErrAlpha=0, normBetaPlus=0, normAlpha=0;
-               for(a=fbInfo->aInfo->start;a;a=a->foll){
-                  if(!a->precTrans){ /*start of file*/
-                     if(a->betaPlus-fbInfo->pr > MINEARG){
-                        avgErrBetaPlus += exp(a->betaPlus-fbInfo->pr) * a->mpe->betaPlusError;
-                        normBetaPlus +=  exp(a->betaPlus-fbInfo->pr);
-                     }
-                  } 
-                  if(!a->follTrans){ /*end of file*/
-                     if(a->alpha-fbInfo->pr > MINEARG){
-                        avgErrAlpha += exp(a->alpha-fbInfo->pr) * a->mpe->alphaError;
-                        normAlpha +=  exp(a->alpha-fbInfo->pr);
-                     }
-                  }
-                  /* printf("Error for %s = %f/%f/%f   ", a->phone->name, a->mpe->alphaError, a->mpe->betaPlusError, a->mpe->alphaError+a->mpe->betaPlusError); */
-               }
-
-               if(fabs(1-normBetaPlus)>0.1 || fabs(1-normAlpha)>0.1)    /*Sanity check*/
-                  HError(1, "normAlpha/normBetaPlus wrong!");
-               if(fabs(avgErrBetaPlus - avgErrAlpha) > 0.0001)         /*Sanity check*/
-                  HError(-1, "avgErrBetaPlus and avgErrAlpha disagree (%f,%f)!", avgErrBetaPlus, avgErrAlpha);
-               fbInfo->AvgCorr = avgErrBetaPlus;    /* set average correctness of file. */
-            }
-	   
-            { 
-               /*  Calculate the scales gamma_q^MPE = (AvgErr(node) - AvgErr(file)) for each arc.  */
-               /*  Since the calculation is pooled for identical arcs in pools q=1..Q, this is actually
-                   a weighted average of gamma_q^MPE over all the identically timed arcs, weighted by occupation
-                   probability gamma_q. */
-
-               for(q=1;q<=fbInfo->Q;q++) fbInfo->aInfo->ac[q].mpe_occscale = 0; 
-
-               for(a=fbInfo->aInfo->start;a;a=a->foll){
-                  Acoustic *ac = a->ac;
-                  float occ = a->alpha + a->betaPlus - ac->aclike*latProbScale - fbInfo->pr;   /* Occupancy of this cluster of identical arcs which is due to a. */
-                  float total_occ = ac->locc;              /* total occupancy of this group of arcs */
-                  if(occ-total_occ > MINEARG){
-                     ac->mpe_occscale += exp(occ-total_occ) * (a->mpe->alphaError+a->mpe->betaPlusError-fbInfo->AvgCorr - a->mpe->correctness);
-                     /* MEEScale is an average error for words including that arc, minus the global average error. */
-                     /* - a->mpe->correctness has to be subtracted because alpha and betaPlus both contain it.*/
-                  }
-               }
-            }
-         }   /* endif (!ExactCorrectness) */
-	    
-         {
 #ifdef DEBUG_MEE
-            printf("\nMEEScale = ");
-            for(i=1;i<=fbInfo->Q;i++) printf("%f ", fbInfo->aInfo->ac[i].mpe_occscale);
-         
-            printf("\nMEEScale*fbscale = ");
-            for(i=1;i<=fbInfo->Q;i++) { 
-               Acoustic *ac = fbInfo->aInfo->ac+i;
-               printf("%f ", ac->mpe_occscale  * exp (ac->locc));
-            }
-            printf("\n");
+                printf("\nMEEScale = ");
+                for (i = 1; i <= fbInfo->Q; i++) {
+                    printf("%f ", fbInfo->aInfo->ac[i].mpe_occscale);
+                }
+                printf("\nMEEScale*fbscale = ");
+                for(i = 1; i <= fbInfo->Q; i++) { 
+                    Acoustic *ac = fbInfo->aInfo->ac + i;
+                   printf("%f ", ac->mpe_occscale * exp(ac->locc));
+                }
+                printf("\n");
 #endif
-         }
+            }
 
-	 if(CalcAsError) fbInfo->AvgCorr += fbInfo->MPEFileLength;       
-         if(trace&T_TOP) printf("FLen=%d, AvCor=%f\n", fbInfo->MPEFileLength, fbInfo->AvgCorr); /*normal case.*/
+	    if (CalcAsError) {
+                fbInfo->AvgCorr += fbInfo->MPEFileLength;       
+            }
+            if (trace&T_TOP) {
+                printf("\t\tFLen=%d, AvCor=%f\n", fbInfo->MPEFileLength, fbInfo->AvgCorr); /*normal case.*/
+            }
+        } /*endif ( MPE ) */
+    }
+    if (trace&T_TOP) {
+        printf("\t\tT=%d, pr/fr=%f\n", fbInfo->T, fbInfo->pr/fbInfo->T);
+    }
 
-      } /*endif ( MPE ) */
-   }
-   if(trace&T_TOP) printf("T=%d, pr/fr=%f\n", fbInfo->T, fbInfo->pr/fbInfo->T);
-
+    return TRUE;
 }
 
 
@@ -1780,13 +2124,13 @@ void FBLatSecondPass(FBLatInfo *_fbInfo, int num_index, int den_index){
    fbInfo = _fbInfo;
    fbInfo->num_index = num_index; fbInfo->den_index = den_index;
 
-
-   if(fbInfo->pr == 0) HError(1, "FBLatSecondPass: 1st pass not done!!");
+   if(fbInfo->pr == 0) HError(8493, "FBLatSecondPass: 1st pass not done!!");
    StepForward();
-
    FBLatClearUp(fbInfo);
    StartTime += fbInfo->T; /*relates to caching of likelihoods */
 
+   /* cz277 - ANN */
+   fbInfo->latPr[num_index] = fbInfo->pr;
 }
 
 
@@ -1800,12 +2144,16 @@ void InitFBLat(void)
    int iter,i;
    double f;
    Boolean b;
+   char buf[MAXSTRLEN];
 
    Register(hfblat_version,hfblat_vc_id);
 
+   /* setup the local memory management - defaults sensible? */
+   CreateHeap(&infoStack,"InfoStore", MSTAK, 1, 1.0, 50000, 500000);
+
    for(iter=0;iter<=1;iter++){
       if(iter) nParm = GetConfig("HFBLAT", TRUE, cParm, MAXGLOBS);
-      else nParm = GetConfig("HFWDBKWDBLAT", TRUE, cParm, MAXGLOBS); /* Backward compatibility */
+      else nParm = GetConfig("HFWDBKWDLAT", TRUE, cParm, MAXGLOBS); /* Backward compatibility */
 
       if (nParm>0){
          if (GetConfInt(cParm,nParm,"TRACE",&i)) trace = i;
@@ -1831,6 +2179,14 @@ void InitFBLat(void)
                                                                                this false. */
          if (GetConfFlt(cParm,nParm,"INSCORRECTNESS",&f)) InsCorrectness=-fabs(f); /* to make sure negative.*/
          /* this config also used in HFBExactMPE.c */
+
+         if (GetConfBool(cParm,nParm,"MATCHMPETONE",&b)) matchMPETone = b;
+         if (GetConfStr (cParm,nParm,"MATCHMPEMASK",buf)) 
+            matchMPEMask = CopyString(&infoStack,buf);
+         /* cz277 - cuda fblat */
+#ifdef CUDA
+         if (GetConfBool(cParm, nParm, "USECUDA4FBLAT", &b)) FBLatCUDA = b;
+#endif
       }
    }
    SET_totalProbScale;
@@ -1850,6 +2206,7 @@ void InitialiseFBInfo(FBLatInfo *fbInfo,
    /* Stacks for global structures requiring memory allocation */
    CreateHeap(&fbInfo->arcStack,    "fbLatArcStore",       MSTAK, 1, 1.0, 1000000,  20000000);
    CreateHeap(&fbInfo->tempStack,   "fbLatTempStore",       MSTAK, 1, 0.5, 1000,  10000);
+
    CreateHeap(&fbInfo->al_dataStack,    "fbLatDataStore",     MSTAK, 1, 0.5, 1000,  10000);
    CreateHeap(&fbInfo->miscStack,    "fbLatMiscStore",     MSTAK, 1, 0.5, 1000,  10000);
    if (fbInfo->twoDataFiles)
@@ -1876,22 +2233,68 @@ void InitialiseFBInfo(FBLatInfo *fbInfo,
          nPDFs[s] = 0; SavedMixesSize[s]=0; SavedMixes[s]=0;
       }
    }
+ 
+    /* cz277 - ANN */
+    for (s = 1; s <= SMAX; ++s) {
+        fbInfo->llhMat[s] = NULL;
+        fbInfo->occMat[s] = NULL;
+    }
+    /* cz277 - cuda fblat */
+#ifdef CUDA
+    if (fbInfo->hset->annSet != NULL && fbInfo->S == 1) {
+        fbInfo->aInfo->FBLatCUDA = FBLatCUDA;
+    }
+    else {
+        fbInfo->aInfo->FBLatCUDA = FALSE;
+    }
+#endif
+
 }
 
 
 
-void FBLatClearUp(FBLatInfo *fbInfo){  
-   ResetHeap(&fbInfo->arcStack);
-   fbInfo->aInfo->mem = &fbInfo->arcStack;  
-   fbInfo->aInfo->nLats = 0; /* important. */
-   CloseBuffer(fbInfo->al_pbuf);  
-   ResetHeap(&fbInfo->up_dataStack);
-   if (fbInfo->twoDataFiles){
-      CloseBuffer(fbInfo->up_pbuf);
-      ResetHeap(&fbInfo->up_dataStack);
-   }
-   ResetHeap(&fbInfo->tempStack);
-   fbInfo->InUse=FALSE; 
+void FBLatClearUp(FBLatInfo *fbInfo) {  
+    int s;
+
+    /* cz277 - cuda fblat */
+#ifdef CUDA
+    int q;
+
+    if (fbInfo->aInfo->FBLatCUDA == TRUE) {
+        DevDispose(fbInfo->aInfo->qLoDev, sizeof(int) * (fbInfo->aInfo->T + 1));
+        DevDispose(fbInfo->aInfo->qHiDev, sizeof(int) * (fbInfo->aInfo->T + 1));
+        for (q = 1; q <= fbInfo->Q; ++q) {
+            ClearAcousticDev(&fbInfo->aInfo->acDev[q]);
+        }
+        DevDispose(fbInfo->aInfo->acDev, sizeof(AcousticDev) * (fbInfo->aInfo->Q + 1));
+    }
+#endif
+
+    ResetHeap(&fbInfo->arcStack);
+    fbInfo->aInfo->mem = &fbInfo->arcStack;  
+    fbInfo->aInfo->nLats = 0; /* important. */
+    /* cz277 - ANN */
+    if (fbInfo->al_pbuf != NULL) {
+        CloseBuffer(fbInfo->al_pbuf);
+        /* from mjfg - cz277 141022 */
+        ResetHeap(&fbInfo->al_dataStack);
+    } 
+    /* cz277 - ANN */
+    if (fbInfo->up_pbuf != NULL) {
+        ResetHeap(&fbInfo->up_dataStack);
+        if (fbInfo->twoDataFiles) {
+            CloseBuffer(fbInfo->up_pbuf);
+            ResetHeap(&fbInfo->up_dataStack);
+        }
+    }
+    for (s = 1; s <= fbInfo->S; ++s) {
+        if (fbInfo->occMat[s] != NULL) {
+            SetNMatrix(0.0, fbInfo->occMat[s], fbInfo->T);
+        }
+    }
+
+    ResetHeap(&fbInfo->tempStack);
+    fbInfo->InUse = FALSE; 
 }
 
 
@@ -1900,6 +2303,11 @@ void FBLatClearUp(FBLatInfo *fbInfo){
 void SetDoingFourthAcc(Boolean DO, int indx){
    DoingFourthAcc = DO;
    add_index = indx;
+}
+
+/* cz277 - ANN */
+float GetProbScale(void) {
+    return probScale;
 }
 
 

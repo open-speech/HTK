@@ -1,0 +1,163 @@
+#!/bin/tcsh
+#$ -S /bin/tcsh
+
+#set verbose
+
+# Layer-by-layer discriminative DNN pre-training
+set ALLARGS = ($*)
+set HNTRAINSGD = HNTrainSGD
+set CHANGED
+while ($?CHANGED)
+    unset CHANGED
+    if ("$argv[1]" == "-HNTRAINSGD") then
+        set CHANGED
+        shift argv
+        set HNTRAINSGDCMD = $argv[1]
+        shift argv
+    endif
+    if ("$argv[1]" == "-LIB") then
+        set CHANGED
+        shift argv
+        set LIBCMD = $argv[1]
+        shift argv
+    endif
+end
+
+if ($#argv != 1) then
+    echo "Usage: $0 [-HNTRAINSGD path] [-LIB path] DNNenv"
+    echo "-HNTRAINSGD path: use a specified HNTrainSGD binary"
+    echo "-LIB path: CUDA/MKL library path for GPU/MKL computing"
+    exit 1
+endif
+
+
+set DNNENV = $argv[1]
+if (! -f $DNNENV) then
+   echo "ERROR: cannot find environment file $DNNENV"
+   exit 1
+endif
+# Read the environment file
+source $DNNENV
+if ($?LIBCMD) then 
+    set LIB = $LIBCMD
+endif
+if ($?LIB) then
+    setenv LD_LIBRARY_PATH ${LIB}:${LD_LIBRARY_PATH}
+endif
+if ($?HNTRAINSGDCMD) then
+    set HNTRAINSGD = $HNTRAINSGDCMD
+endif
+
+# parse DNNSTRUCTURE
+if (! $?DNNSTRUCTURE) then
+    echo "ERROR: environment variable DNNSTRUCTURE is missing"
+    exit 100
+endif
+# get layer sizes
+set lsizes = `echo $DNNSTRUCTURE | awk 'BEGIN{FS="X"}{for (i=1; i<=NF; i++) print $i}'`
+set lnum = $#lsizes
+if ($lnum < 3) then
+    echo "ERROR: at least need to be 3 layer MLP"
+endif
+
+
+# generate config.dnn.ft
+echo 'HANNET: TRACE = 1' > config.dnn.ft
+echo 'HNCACHE: TRACE = 1' >> config.dnn.ft
+echo 'HNCACHE: DATAACCESSKIND = FRAMERAND' >> config.dnn.ft
+echo 'HNCACHE: SHUFFLEKIND = QUICKNET' >> config.dnn.ft
+echo 'HNTRAINSGD: TRACE = 1' >> config.dnn.ft
+echo 'HNTRAINSGD: UPDATEMODE = BATCHLEVEL' >> config.dnn.ft
+echo 'HNTRAINSGD: CRITERION = XENT' >> config.dnn.ft
+echo 'HNTRAINSGD: UPDATETARGETPEN = TRUE' >> config.dnn.ft
+if ($?MINIBATCHSIZE) then
+    echo "HANNET: MINIBATCHSIZE = $MINIBATCHSIZE" >> config.dnn.ft
+endif 
+if ($?DATACACHESIZE) then
+    echo "HNCACHE: DATACACHESIZE = $DATACACHESIZE" >> config.dnn.ft
+endif
+if ($?FTLEARNRATEKIND) then
+    echo "HNTRAINSGD: LRSCHEDULER = $FTLEARNRATEKIND" >> config.dnn.ft
+    if ($FTLEARNRATEKIND == NEWBOB) then
+        if ($?FTNEWBOBCRITERION) then
+            echo "HNTRAINSGD: NEWBOBCRT = $FTNEWBOBCRITERION" >> config.dnn.ft
+        endif
+        if ($?FTNEWBOBRAMPSTART) then
+            echo "HNTRAINSGD: RAMPSTART = $FTNEWBOBRAMPSTART" >> config.dnn.ft
+        endif
+        if ($?FTNEWBOBSTOPDIFF) then
+            echo "HNTRAINSGD: STOPDIFF = $FTNEWBOBSTOPDIFF" >> config.dnn.ft
+        endif
+    else if ($FTLEARNRATEKIND == EXPONENTIAL) then
+        if ($?FTEXPGAMMA) then
+            echo "HNTRAINSGD: GAMMA = $FTEXPGAMMA" >> config.dnn.ft
+        endif
+        if ($?FTEXPBASE) then
+            echo "HNTRAINSGD: BASE = $FTEXPBASE" >> config.dnn.ft
+        endif
+    else if ($FTLEARNRATEKIND == ADAGRAD) then
+        if ($?FTADAGRADK) then
+            echo "HNTRAINSGD: K = $FTADAGRADK" >> config.dnn.ft
+        endif 
+    endif
+endif
+if ($?FTLEARNRATEVALS) then
+    echo "HNTRAINSGD: LEARNRATE = $FTLEARNRATEVALS" >> config.dnn.ft
+endif
+if ($?FTMINEPOCHNUM) then
+    echo "HNTRAINSGD: MINEPOCHNUM = $FTMINEPOCHNUM" >> config.dnn.ft
+endif
+if ($?FTMAXEPOCHNUM) then
+    echo "HNTRAINSGD: MAXEPOCHNUM = $FTMAXEPOCHNUM" >> config.dnn.ft
+endif
+if ($?FTMOMENTUM) then
+    echo "HNTRAINSGD: MOMENTUM = $FTMOMENTUM" >> config.dnn.ft
+endif
+if ($?FTWEIGHTDECAY) then
+    echo "HNTRAINSGD: WEIGHTDECAY = $FTWEIGHTDECAY" >> config.dnn.ft
+endif
+if ($?LOGPRIOROBSV) then
+    echo "HNTRAINSGD: LOGPRIOROBSV = $LOGPRIOROBSV" >> config.dnn.ft
+endif
+if ($?FTGRADIENTCLIP) then
+    echo "HNTRAINSGD: ACTIVATIONUPDATECLIP = $FTGRADIENTCLIP" >> config.dnn.ft
+    echo "HNTRAINSGD: WEIGHTUPDATECLIP = $FTGRADIENTCLIP" >> config.dnn.ft
+    echo "HNTRAINSGD: BIASUPDATECLIP = $FTGRADIENTCLIP" >> config.dnn.ft
+endif
+if ($?SHUFFLEKIND) then
+    echo "HNCACHE: SHUFFLEKIND = $SHUFFLEKIND" >> config.dnn.ft
+endif
+if ($?ANNUPDATEFLAG) then
+    echo "HANNET: ANNUPDATEFLAG = $ANNUPDATEFLAG" >> config.dnn.ft
+endif
+if ($?LAYERUPDATEFLAG) then
+    echo "HANNET: LAYERUPDATEFLAG = $LAYERUPDATEFLAG" >> config.dnn.ft
+endif
+if ($?ACTFUNUPDATEFLAG) then
+    echo "HANNET: ACTFUNUPDATEFLAG = $ACTFUNUPDATEFLAG" >> config.dnn.ft
+endif
+echo "\n" >> config.dnn.ft
+
+if ( -f cv.scp) then
+    set SCPARGS = "-S train.scp -N cv.scp"
+else
+    set SCPARGS = "-S train.scp"
+endif
+
+# for -J
+set OPTJstr = ""
+if ($?OPTJXFORM) then
+    while ($#OPTJXFORM > 0)
+        set OPTJstr = "$OPTJstr -J $OPTJXFORM[1]"
+        shift OPTJXFORM
+    end
+endif
+
+# setup the directory
+if (! -d dnn${lnum}.finetune) then
+    mkdir -p dnn${lnum}.finetune
+endif
+if (! -f dnn${lnum}.finetune/MODELS) then
+    $HNTRAINSGD -A -D -V -T 1 -C config.dnnbasic -C config.dnn.ft -H dnn${lnum}/MODELS -M dnn${lnum}.finetune -l LABEL $SCPARGS $OPTJstr -I train.mlf treeg.list > dnn${lnum}.finetune/LOG
+endif
+

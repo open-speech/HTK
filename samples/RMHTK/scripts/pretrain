@@ -1,0 +1,297 @@
+#!/bin/tcsh
+#$ -S /bin/tcsh
+
+#set verbose
+
+# Layer-by-layer discriminative DNN pre-training
+set ALLARGS = ($*)
+set HHED = HHEd
+set HNTRAINSGD = HNTrainSGD
+set CHANGED
+while ($?CHANGED)
+    unset CHANGED
+    if ("$argv[1]" == "-SWAP") then
+        set CHANGED
+        shift argv
+        set SWAP
+    endif
+    if ("$argv[1]" == "-PRETRAIN") then
+        set CHANGED
+        shift argv
+        set PRETRAINCMD = $argv[1]
+        shift argv
+    endif
+    if ("$argv[1]" == "-HNTRAINSGD") then
+        set CHANGED
+        shift argv
+        set HNTRAINSGDCMD = $argv[1]
+        shift argv
+    endif
+    if ("$argv[1]" == "-HHED") then
+        set CHANGED
+        shift argv
+        set HHEDCMD = $argv[1]
+        shift argv    
+    endif
+    if ("$argv[1]" == "-LIB") then
+        set CHANGED
+        shift argv
+        set LIBCMD = $argv[1]
+        shift argv
+    endif
+end
+
+if ($#argv != 1) then
+    echo "Usage: $0 [-PRETRAIN 0/1/2] [-SWAP] [-HNTRAINSGD path] [-HHED path] [-LIB path] DNNenv"
+    echo "-PRETRAIN 0/1/2: use pretraining method 0/1/2"
+    echo "-SWAP: use DNN output target swap (swap/MMF & swap/hmms.mlist) "
+    echo "-HNTRAINSGD path: use a specified HNTrainSGD binary"
+    echo "-HHED path: use a specified HHEd binary"
+    echo "-LIB path: CUDA/MKL library path for GPU/MKL computing"
+    exit 1
+endif
+
+set DNNENV = $argv[1]
+if (! -f $DNNENV) then
+   echo "ERROR: pretrain: cannot find environment file $DNNENV"
+   exit 1
+endif
+# Read the environment file
+source $DNNENV
+if ($?LIBCMD) then 
+    set LIB = $LIBCMD
+endif
+if ($?LIB) then
+    setenv LD_LIBRARY_PATH ${LIB}:${LD_LIBRARY_PATH}
+endif
+if ($?HNTRAINSGDCMD) then
+    set HNTRAINSGD = $HNTRAINSGDCMD
+endif
+if ($?HHEDCMD) then
+    set HHED = $HHEDCMD
+endif
+if (! $?HIDDENACTIVATION) then
+    set HIDDENACTIVATION = SIGMOID
+endif
+if ($HIDDENACTIVATION == RELU || $HIDDENACTIVATION == PRELU || $HIDDENACTIVATION == PARMRELU || $HIDDENACTIVATION == SOFTRELU) then
+    set PRETRAIN = 0
+else
+    set PRETRAIN = 1
+endif
+if ($?PRETRAINCMD) then
+    set PRETRAIN = $PRETRAINCMD
+endif
+if ($?SWAP) then
+    set PRETRAIN = 0
+endif
+
+
+# parse DNNSTRUCTURE
+if (! $?DNNSTRUCTURE) then
+    echo "ERROR: environment variable DNNSTRUCTURE is missing"
+    exit 100
+endif
+# get layer sizes
+set lsizes = `echo $DNNSTRUCTURE | awk 'BEGIN{FS="X"}{for (i=1; i<=NF; i++) print $i}'` 
+set lnum = $#lsizes
+if ($lnum < 3) then
+    echo "ERROR: at least need to be 3 layer MLP"
+endif
+
+#i)  generate a layer initial model
+set diridx = 3
+set lastnum = $lnum
+python GenInitDNN.py --quiet --structure "${lsizes[1]}X${lsizes[2]}X${lsizes[$lnum]}" $DNNENV proto/work/NMF
+echo 'CH proto/work/NMF /dev/null ~N "DNN1" <HYBRID>' > connect.hed
+echo 'SW 1 39' >> connect.hed
+echo 'SK MFCC_E_D_A_Z' >> connect.hed
+$HHED -A -D -V -T 1 -H proto/work/MODELS -M proto connect.hed treeg.list > proto/LOG
+
+
+# generate config.dnn.pt
+echo 'HANNET: TRACE = 1' > config.dnn.pt
+echo 'HNCACHE: TRACE = 1' >> config.dnn.pt
+echo 'HNCACHE: DATAACCESSKIND = FRAMERAND' >> config.dnn.pt
+echo 'HNCACHE: SHUFFLEKIND = QUICKNET' >> config.dnn.pt
+echo 'HNTRAINSGD: TRACE = 1' >> config.dnn.pt
+echo 'HNTRAINSGD: UPDATEMODE = BATCHLEVEL' >> config.dnn.pt
+echo 'HNTRAINSGD: CRITERION = XENT' >> config.dnn.pt
+echo 'HNTRAINSGD: UPDATETARGETPEN = TRUE' >> config.dnn.pt
+if ($?MINIBATCHSIZE) then
+    echo "HANNET: MINIBATCHSIZE = $MINIBATCHSIZE" >> config.dnn.pt
+endif 
+if ($?DATACACHESIZE) then
+    echo "HNCACHE: DATACACHESIZE = $DATACACHESIZE" >> config.dnn.pt
+endif
+if ($?PTLEARNRATEKIND) then
+    echo "HNTRAINSGD: LRSCHEDULER = $PTLEARNRATEKIND" >> config.dnn.pt
+    if ($PTLEARNRATEKIND == NEWBOB) then
+        if ($?PTNEWBOBCRITERION) then
+            echo "HNTRAINSGD: NEWBOBCRT = $PTNEWBOBCRITERION" >> config.dnn.pt
+        endif
+        if ($?PTNEWBOBRAMPSTART) then
+            echo "HNTRAINSGD: RAMPSTART = $PTNEWBOBRAMPSTART" >> config.dnn.pt
+        endif
+        if ($?PTNEWBOBSTOPDIFF) then
+            echo "HNTRAINSGD: STOPDIFF = $PTNEWBOBSTOPDIFF" >> config.dnn.pt
+        endif
+    else if ($PTLEARNRATEKIND == EXPONENTIAL) then
+        if ($?PTEXPGAMMA) then
+            echo "HNTRAINSGD: GAMMA = $PTEXPGAMMA" >> config.dnn.pt
+        endif
+        if ($?PTEXPBASE) then
+            echo "HNTRAINSGD: BASE = $PTEXPBASE" >> config.dnn.pt
+        endif
+    else if ($PTLEARNRATEKIND == ADAGRAD) then
+        if ($?PTADAGRADK) then
+            echo "HNTRAINSGD: K = $PTADAGRADK" >> config.dnn.pt
+        endif 
+    endif
+endif
+if ($?PTLEARNRATEVALS) then
+    echo "HNTRAINSGD: LEARNRATE = $PTLEARNRATEVALS" >> config.dnn.pt
+endif
+if ($?PTMINEPOCHNUM) then
+    echo "HNTRAINSGD: MINEPOCHNUM = $PTMINEPOCHNUM" >> config.dnn.pt
+endif
+if ($?PTMAXEPOCHNUM) then
+    echo "HNTRAINSGD: MAXEPOCHNUM = $PTMAXEPOCHNUM" >> config.dnn.pt
+endif
+if ($?PTMOMENTUM) then
+    echo "HNTRAINSGD: MOMENTUM = $PTMOMENTUM" >> config.dnn.pt
+endif
+if ($?PTWEIGHTDECAY) then
+    echo "HNTRAINSGD: WEIGHTDECAY = $PTWEIGHTDECAY" >> config.dnn.pt
+endif
+if ($?LOGPRIOROBSV) then
+    echo "HNTRAINSGD: LOGPRIOROBSV = $LOGPRIOROBSV" >> config.dnn.pt
+endif
+if ($?PTGRADIENTCLIP) then
+    echo "HNTRAINSGD: ACTIVATIONUPDATECLIP = $PTGRADIENTCLIP" >> config.dnn.pt
+    echo "HNTRAINSGD: WEIGHTUPDATECLIP = $PTGRADIENTCLIP" >> config.dnn.pt
+    echo "HNTRAINSGD: BIASUPDATECLIP = $PTGRADIENTCLIP" >> config.dnn.pt
+endif
+if ($?SHUFFLEKIND) then
+    echo "HNCACHE: SHUFFLEKIND = $SHUFFLEKIND" >> config.dnn.pt
+endif
+if ($?ANNUPDATEFLAG) then
+    echo "HANNET: ANNUPDATEFLAG = $ANNUPDATEFLAG" >> config.dnn.pt
+endif
+if ($?LAYERUPDATEFLAG) then
+    echo "HANNET: LAYERUPDATEFLAG = $LAYERUPDATEFLAG" >> config.dnn.pt
+endif
+if ($?ACTFUNUPDATEFLAG) then
+    echo "HANNET: ACTFUNUPDATEFLAG = $ACTFUNUPDATEFLAG" >> config.dnn.pt
+endif
+echo "\n" >> config.dnn.pt
+
+
+# the first model
+if (! -d dnn$diridx/init) then
+    mkdir -p dnn$diridx/init
+endif
+if (! -f dnn$diridx/MODELS) then
+    set hedfile = dnn$diridx/init/eraselayer.hed
+    echo 'EL ~L "layer2"' > ${hedfile}
+    echo 'EL ~L "layerout"' >> ${hedfile}
+    $HHED -A -D -V -T 1 -H proto/MODELS -M dnn$diridx/init ${hedfile} treeg.list > dnn$diridx/init/LOG
+endif
+
+if ( -f cv.scp) then
+    set SCPARGS = "-S train.scp -N cv.scp"
+else
+    set SCPARGS = "-S train.scp"
+endif
+
+#ii) Perform layerwise pretrain
+if ($?SWAP) then
+    echo 'CP <HMMSET> swap/MODELS swap/hmms.list <UPDATEFLAG> abw <SOURCEMACRO> ~L "layer2" <TARGETMACRO> ~L "layer2"' > copyparameters.hed
+endif
+
+# for -J
+set OPTJstr = ""
+if ($?OPTJXFORM) then
+    while ($#OPTJXFORM > 0)
+        set OPTJstr = "$OPTJstr -J $OPTJXFORM[1]"
+        shift OPTJXFORM
+    end
+endif
+
+set var = 3
+while ($var < $lastnum)
+    if (! -f dnn$diridx/MODELS) then
+        if ($PRETRAIN >= 1) then 
+            $HNTRAINSGD -A -D -V -T 1 -C config.dnnbasic -C config.dnn.pt -H dnn$diridx/init/MODELS -M dnn$diridx $SCPARGS -l LABEL $OPTJstr -I train.mlf treeg.list > dnn$diridx/LOG    
+        else 
+            ln -s `pwd`/dnn$diridx/init/MODELS dnn$diridx/MODELS
+        endif 
+    endif
+    @ prevvar = $var - 1
+    # generate next init/MMF
+    @ diridx++
+    if (! -d dnn$diridx/init) then
+        mkdir -p dnn$diridx/init
+    endif
+    if (! -f dnn$diridx/init/MODELS) then
+        set hedname = dnn$diridx/init/addlayer.hed
+        # add ~M weight matrix
+        echo 'AM ~M "layer'$var'_weight" <MATRIX> '"$lsizes[$var] $lsizes[$prevvar]" > $hedname
+        # add ~V bias vector 
+        echo 'AV ~V "layer'$var'_bias" <VECTOR> '"$lsizes[$var]" >> $hedname
+        # insert a new perceptron layer
+        set ILCMD = 'IL ~N "DNN1" '$var' ~L "layer'$var'" <BEGINLAYER> <LAYERKIND> "PERCEPTRON" <INPUTFEATURE> ~F "layer'$prevvar'_feamix" <WEIGHT> ~M "layer'$var'_weight" <BIAS> ~V "layer'$var'_bias" <ACTIVATION> "'$HIDDENACTIVATION'"' 
+        # add activation function parameters
+        if ($HIDDENACTIVATION == PSIGMOID || $HIDDENACTIVATION == PRELU) then
+            echo 'AV ~V "layer'$var'_actparam1" '$lsizes[$var] >> $hedname
+            echo 'SV ~V "layer'$var'_actparam1" 1 1.0' >> $hedname
+            set ILCMD = "$ILCMD"' <PARAMETER> 1 ~V "layer'$var'_actparam1"'
+        else if ($HIDDENACTIVATION == PARMSIGMOID) then
+            echo 'AV ~V "layer'$var'_actparam1" '$lsizes[$var] >> $hedname
+            echo 'SV ~V "layer'$var'_actparam1" 1 1.0' >> $hedname
+            set ILCMD = "$ILCMD"' <NUMPARAMETERS> 3 <PARAMETER> 1 ~V "layer'$var'_actparam1"'
+            echo 'AV ~V "layer'$var'_actparam2" '$lsizes[$var] >> $hedname
+            echo 'SV ~V "layer'$var'_actparam2" 1 1.0' >> $hedname
+            set ILCMD = "$ILCMD"' <PARAMETER> 2 ~V "layer'$var'_actparam2"'
+            echo 'AV ~V "layer'$var'_actparam3" '$lsizes[$var] >> $hedname    
+            echo 'SV ~V "layer'$var'_actparam3" 1 0.0' >> $hedname
+            set ILCMD = "$ILCMD"' <PARAMETER> 3 ~V "layer'$var'_actparam3"'
+        else if ($HIDDENACTIVATION == PARMRELU) then
+            echo 'AV ~V "layer'$var'_actparam1" '$lsizes[$var] >> $hedname
+            echo 'SV ~V "layer'$var'_actparam1" 1 1.0' >> $hedname
+            set ILCMD = "$ILCMD"' <NUMPARAMETERS> 2 <PARAMETER> 1 ~V "layer'$var'_actparam1"'
+            echo 'AV ~V "layer'$var'_actparam2" '$lsizes[$var] >> $hedname
+            echo 'SV ~V "layer'$var'_actparam2" 1 0.25' >> $hedname
+            set ILCMD = "$ILCMD"' <PARAMETER> 2 ~V "layer'$var'_actparam2"'
+        endif
+        echo "$ILCMD"' <ENDLAYER>' >> $hedname
+        # change output layer input feature mixture
+        echo 'CF ~L "layerout" ~F "layer'$var'_feamix" <FEATURE> 1 '$lsizes[$var]' <SOURCE> ~L "layer'$var'" <CONTEXTSHIFT> 1 0' >> $hedname
+	# add command for changing layer dimension
+        if ($lsizes[$prevvar] != $lsizes[$var]) then 
+            echo 'CD ~L "layerout" 0 '"$lsizes[$var]" >> $hedname
+        endif
+        echo 'EL ~L "layer'$var'"' >> $hedname
+        echo 'EL ~L "layerout"' >> $hedname
+        # generate init/MMF
+        if (! -f dnn$diridx/init/MODELS) then
+            $HHED -A -D -V -T 1 -H dnn$var/MODELS -M dnn$diridx/init $hedname treeg.list >> dnn$diridx/init/LOG 
+        endif
+    endif
+    if ($?SWAP) then
+        echo 'CP <HMMSET> swap/MODELS swap/hmms.list <UPDATEFLAG> abw <SOURCEMACRO> ~L "layer'$var'" <TARGETMACRO> ~L "layer'$var'"' >> copyparameters.hed
+    endif
+    # update the indexes
+    @ var++
+end
+
+if ($PRETRAIN >= 2) then
+    if (! -f dnn${diridx}/MODELS) then
+        $HNTRAINSGD -A -D -V -T 1 -C config.dnnbasic -C config.dnn.pt -H dnn${diridx}/init/MODELS -M dnn$diridx -l LABEL $SCPARGS $OPTJstr -I train.mlf treeg.list > dnn$diridx/LOG
+    endif
+else if ($?SWAP) then
+    $HHED -A -D -V -T 1 -H dnn${diridx}/init/MODELS -M dnn${diridx} copyparameters.hed treeg.list > dnn${diridx}/LOG
+else
+    ln -s $PWD/dnn${diridx}/init/MODELS dnn${diridx}/
+endif
+
+

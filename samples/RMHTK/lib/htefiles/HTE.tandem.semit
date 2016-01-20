@@ -1,0 +1,72 @@
+#---------------------------------------------------------------#
+# HTK RM Environment File                                       #
+#                                                               #
+#---------------------------------------------------------------#
+
+# Comparing to HTE.semit, -t, -v, & -s are doubled since the 
+# input feature dimension changed from 39d -> 78d
+
+# Set priority at which processes are run
+set NICE = 5
+
+# Define the rmwork and rmdata areas
+set rmwork=$RMWORK
+set rmdata=$RMDATA
+set rmlib=$RMLIB
+
+# define input filters
+setenv HNETFILTER 'gzip -d -c $.gz'          # Networks compress well
+
+# Define input configuration files
+setenv HECONFIG $rmlib/configs/config.tandem.basic  # Basic configuration
+setenv HVCONFIG $rmlib/configs/config.tandem.xwrd  # Basic configuration
+setenv HEXFORMCONFIG $rmlib/configs/config.tandem.semit
+
+# Define HMMs - should reflect current models set
+set HMMLIST=$rmlib/mlists/treeg.list # ****** #
+
+# Define Training Data and Label files for current models
+set TRAINDATALIST=./ind_trn109.scp
+set TRAINMLF=$rmlib/labs/xwrd.mlf   # ****** #
+
+# Define Test Data 
+# Note that TESTSET is defined by htestrm before sourcing HTE
+set SETLIST=(feb89 oct89 feb91 sep92)
+if ($?TESTSET) then
+   set TESTDATALIST=./ind_${TESTSET}.scp
+   set TESTMLF=$rmlib/wlabs/ind_tst.mlf
+endif
+
+# HERest Program Options
+set HETRACE=1
+set HEMINWEIGHT=2.0
+set HETMTHRESH=20.0    # Only needs to be same order as numerical accuracy
+# 500==VERY TIGHT, 1000==TIGHT, 2000==LOOSE #
+set HEPRUNE= (500.0 500.0 2000.1) 
+set HESTATS=stats      # stats files aren't always needed but are interesting #
+set HEMINEG=0          # Potentially bad choice for unclustered models 
+set HEUPD=stw
+
+# Define possible test conditions
+set TYPELIST=(ng wp)
+
+# HVite Network Defn & Program Options
+set HVTRACE=1
+set HVNET=($rmlib/nets/net.ng $rmlib/nets/net.wp)
+set HVVOC=($rmlib/dicts/mono.dct $rmlib/dicts/mono.dct)
+set HVPRUNE=(400.0 600.0)
+set HVMAXACTIVE=(0 0)
+set HVGSCALE=(14.0 14.0)
+set HVIMPROB=(0.0 0.0)
+
+set HEFORCEXFORMDIR = (hmm0 hmm1)
+set HVFORCEXFORMDIR = (hmm0 hmm1)
+
+# HResults Results Analysis
+set WORDLIST=$rmlib/wordlist
+set HREQSETS=($rmlib/eq.ng $rmlib/eq.wp)
+set HRNIST 
+
+#---------------------------------------------------------------#
+#                END OF ENVIRONMENT DEFINITION                  #
+#---------------------------------------------------------------#

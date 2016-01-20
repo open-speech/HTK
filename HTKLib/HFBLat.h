@@ -3,32 +3,32 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*                                                             */
-/*              2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HFBLat.h   Lattice Forward Backward routines  */
+/*      File: HFBLat.h   Lattice Forward Backward routines     */
 /* ----------------------------------------------------------- */
 
-/* !HVER!HNET:   3.4.1 [CUED 12/03/09] */
-
+/* !HVER!HFBLat:   3.5.0 [CUED 12/10/15] */
 
 /*
    This module provides facilities to apply a HMM set to 
@@ -89,6 +89,18 @@ typedef struct {
   AdaptXForm *inXForm;/* current input transform (if any) */
   AdaptXForm *paXForm;/* current parent transform (if any) */
   /* ... */
+
+  /* cz277 - ANN */
+  NMatrix *llhMat[SMAX];
+  NMatrix *occMat[SMAX];
+
+  LogDouble latPr[2];
+  float FSmoothH;
+  /* cz277 - frame rejection */
+  IntVec refVec[SMAX];	/* the hard target index or the target that has the biggest num occ */
+  DVector occVec[SMAX];	/* num occ when proc num lattice, den occ when proc den lattice */
+  Boolean findRef;	/* compute the state with the maximum num likelihood or not */
+  Boolean rejFrame;	/* do frame rejection or not */
 } FBLatInfo;
 
 void InitFBLat(void);
@@ -108,7 +120,7 @@ void FBLatSetAccScale(FBLatInfo *fbInfo, float AccScale); /*prepare to scale acc
 
 
 
-void FBLatFirstPass(FBLatInfo *fbInfo, 
+Boolean FBLatFirstPass(FBLatInfo *fbInfo, 
 		    FileFormat dff, char *datafn, char *datafn2 /*for single-pass retraining*/,
 		    Lattice *MPECorrLat /* Only used in MPE, equals correct lattice.*/ );
 
@@ -126,9 +138,8 @@ void GetTimes(LArc *larc, int i, int *start, int *end);   /*gets times as ints. 
 /* EXPORT-> SetDoingFourthAcc: Indicate whether it is currently storing MMI statistics */
 void SetDoingFourthAcc(Boolean DO, int indx);
 
+/* cz277 - ANN */
+float GetProbScale(void);
+
 /* ------------------------- End of HFBLat.h --------------------------- */
-
-
-
-
 

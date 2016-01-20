@@ -3,30 +3,33 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Machine Intelligence Laboratory                        */
-/*      Department of Engineering                              */
-/*      University of Cambridge                                */
-/*      http://mi.eng.cam.ac.uk/                               */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2002-2003  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLVRec-outP.c OutP calculation and caching    */
+/*       File: HLVRec-outP.c OutP calculation and caching      */
 /* ----------------------------------------------------------- */
 
+char *hlvrec_outp_version = "!HVER!HLVRec-outP:   3.5.0 [CUED 12/10/15]";
+char *hlvrec_outp_vc_id = "$Id: HLVRec-outP.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 static void ResetOutPCache (OutPCache *cache)
 {
@@ -225,16 +228,19 @@ static LogFloat cOutP (DecoderInst *dec, Observation *x, HLink hmm, int state)
       if (!cache->mixOutP) {     /* don't bother caching mixtures */
          /* #### handle boundary case where we don't have cache->block obs left */
 
-         if (!dec->si->useHModel) 
-            OutPBlock (dec->si, &dec->obsBlock[0], cache->block,
-                       sIdx, dec->acScale, &cache->stateOutP[sIdx * cache->block]);
-         else
-            OutPBlock_HMod (dec->si, &dec->obsBlock[0], cache->block,
-                            sIdx, dec->acScale, &cache->stateOutP[sIdx * cache->block],
-                            dec->frame);
-            
+         if (dec->hset->hsKind == HYBRIDHS) {   /* cz277 - ANN */
+            OutPBlock_Hybrid(dec->si, cache->block, sIdx, dec->acScale, &cache->stateOutP[sIdx * cache->block], dec);         
+         }
+         else {
+            if (!dec->si->useHModel) 
+               OutPBlock(dec->si, &dec->obsBlock[0], cache->block, sIdx, dec->acScale, &cache->stateOutP[sIdx * cache->block], dec);    /* cz277 - ANN */
+            else
+               OutPBlock_HMod(dec->si, &dec->obsBlock[0], cache->block, sIdx, dec->acScale, &cache->stateOutP[sIdx * cache->block], dec->frame, dec);   /* cz277 - ANN */
+         }    
+
          cache->stateT[sIdx] = dec->frame;
          outP = cache->stateOutP[sIdx * cache->block];
+
 #if 0   /* sanity checking for OutPBlock */
          {
             LogFloat safe_outP;
@@ -264,20 +270,20 @@ x      CACHE_FLAG_SET(dec, sIdx);
 /*******************************************************************************/
 /*  outP calculation from HModel.c and extended for new adapt code */
 
-
-static LogFloat SOutP_HMod (HMMSet *hset, int s, Observation *x, StreamElem *se,
+/* cz277 - ANN */
+static LogFloat SOutP_HMod (HMMSet *hset, int s, Vector v, StreamElem *se,
                             int id)
 {
    int m;
    LogFloat bx,px,wt,det;
    MixtureElem *me;
    MixPDF *mp;
-   Vector v,otvs;
-   
+   Vector otvs;
+
    /* Note hset->kind == SHAREDHS */
    assert (hset->hsKind == SHAREDHS);
 
-   v=x->fv[s];
+   /*v=x->fv[s];*/
    me=se->spdf.cpdf+1;
    if (se->nMix==1){     /* Single Mixture Case */
       bx= MOutP(ApplyCompFXForm(me->mpdf,v,inXForm,&det,id),me->mpdf);
@@ -308,37 +314,111 @@ static LogFloat SOutP_HMod (HMMSet *hset, int s, Observation *x, StreamElem *se,
 	 }
       }
    }
+
    return bx;
 }
 
-LogFloat POutP_HModel (HMMSet *hset,Observation *x, StateInfo *si, int id)
+/* cz277 - ANN */
+LogFloat POutP_HModel (HMMSet *hset,Observation *x, StateInfo *si, int id, DecoderInst *dec, int frameIdx)
 {
    LogFloat bx;
    StreamElem *se;
    Vector w;
-   int s,S = x->swidth[0];
-   
-   if (S==1 && si->weights==NULL)
-      return SOutP_HMod(hset,1,x,si->pdf+1, id);
-   bx=0.0; se=si->pdf+1; w = si->weights;
-   for (s=1;s<=S;s++,se++)
-      bx += w[s]*SOutP_HMod(hset,s,x,se, id);
+   int s, S = x->swidth[0];
+
+   if (S == 1 && si->weights == NULL) {
+      switch (dec->decodeKind) {
+         case NORMALDK:
+            return SOutP_HMod(hset, 1, x->fv[1], si->pdf + 1, id);
+         case TANDEMDK:
+            return SOutP_HMod(hset, 1, dec->cacheVec[frameIdx][1], si->pdf + 1, id);
+         case HYBRIDDK:
+         default:
+            HError(7890, "POutP_HModel: Unsupported DecodeKind");
+      }
+   }
+   bx = 0.0; se = si->pdf + 1; w = si->weights;
+   switch (dec->decodeKind) {
+      case NORMALDK:
+         for (s = 1; s <= S; s++, se++) {
+            bx += w[s] * SOutP_HMod(hset, s, x->fv[s], se, id);
+         }
+         break;
+      case TANDEMDK:
+         for (s = 1; s <= S; s++, se++) {
+            bx += w[s] * SOutP_HMod(hset, s, dec->cacheVec[frameIdx][s], se, id);
+         }
+         break;
+      case HYBRIDDK:
+      default:
+         HError(7890, "POutP_HModel: Unsupported DecodeKind");
+   }
+
    return bx;
 }
 
+/* cz277 - ANN */
 void OutPBlock_HMod (StateInfo_lv *si, Observation **obsBlock, 
-                int n, int sIdx, float acScale, LogFloat *outP, int id)
+                int n, int sIdx, float acScale, LogFloat *outP, int id, DecoderInst *dec)
 {
    int i;
 
    assert  (si->useHModel);
    
-   for (i = 0; i < n; ++i) {
-      outP[i] = POutP_HModel (si->hset, obsBlock[i], si->si[sIdx], id);
+   if (dec->decodeKind == NORMALDK) {
+      for (i = 0; i < n; ++i) {
+         outP[i] = POutP_HModel(si->hset, obsBlock[i], si->si[sIdx], id, dec, -1);
+      }
+      if (acScale != 1.0)
+         for (i = 0; i < n; ++i)
+            outP[i] *= acScale;
    }
-   
-   /* acoustic scaling */
-   if (acScale != 1.0)
-      for (i = 0; i < n; ++i)
-         outP[i] *= acScale;
+   else if (dec->decodeKind == TANDEMDK) {
+      outP[0] = POutP_HModel (si->hset, obsBlock[0], si->si[sIdx], id, dec, dec->cacheVecIdx) * acScale;
+   }
+   else {
+      HError(7890, "OutPBlock_HMod: Funtion is designed only for NORMALDK and TANDEMDK");
+   }
 }
+
+/* cz277 - ANN */
+LogFloat POutP_Hybrid(HMMSet *hset, StateInfo *si, DecoderInst *dec, int frameIdx) {
+    int s, S, targetIdx;
+    StreamElem *se;
+    Vector w;
+    LogFloat bx;
+    /*float targetPen;*/
+
+    /* get the stream width */
+    S = hset->swidth[0];
+    /* get the stream element */
+    se = si->pdf + 1;
+    /* if single stream */
+    if (S == 1) {
+        targetIdx = se->targetIdx;
+        return dec->cacheVec[frameIdx][1][targetIdx];
+        /*targetPen = se->targetPen;
+        return dec->cacheVec[frameIdx][1][targetIdx] + targetPen;*/
+    }
+    /* if multi-stream */
+    bx = 0.0;
+    w = si->weights;
+    for (s = 1; s <= S; ++s, ++se) {
+        targetIdx = se->targetIdx;
+        bx += w[s] * dec->cacheVec[frameIdx][s][targetIdx];
+        /*targetPen = se->targetPen;
+        bx += w[s] * (dec->cacheVec[frameIdx][s][targetIdx] + targetPen);*/
+    }
+
+    return bx;
+}
+
+/* cz277 - ANN */
+void OutPBlock_Hybrid(StateInfo_lv *si, int n, int sIdx, float acScale, LogFloat *outP, DecoderInst *dec) {
+
+    assert(dec->decodeKind == HYBRIDDK);
+    outP[0] = POutP_Hybrid(si->hset, si->si[sIdx], dec, dec->cacheVecIdx) * acScale;
+}
+
+/* ------------------------ End of HLVRec-outP.c ----------------------- */
+

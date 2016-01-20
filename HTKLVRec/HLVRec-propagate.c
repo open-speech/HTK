@@ -3,43 +3,34 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Machine Intelligence Laboratory                        */
-/*      Department of Engineering                              */
-/*      University of Cambridge                                */
-/*      http://mi.eng.cam.ac.uk/                               */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2002-2003  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLVRec-propagate.c Viterbi recognition engine */
-/*                                  for HTK LV Decoder, token  */
-/*                                  propagation                */
+/*   File: HLVRec-propagate.c Viterbi recognition engine for   */
+/*         HTK LV decoder, token propagation                   */
 /* ----------------------------------------------------------- */
 
-char *hlvrec_prop_vc_id = "$Id: HLVRec-propagate.c,v 1.1.1.1 2006/10/11 09:54:56 jal58 Exp $";
-
-
-static int winTok_cmp (const void *v1,const void *v2)
-{
-   RelToken **tok1,**tok2;
-
-   tok1 = (RelToken **) v1;
-   tok2 = (RelToken **) v2;
-   return ((int) ((*tok2)->delta - (*tok1)->delta));   /* reverse! i.e. largest first */
-}
+char *hlvrec_prop_version = "!HVER!HLVRec-propagate:   3.5.0 [CUED 12/10/15]";
+char *hlvrec_prop_vc_id = "$Id: HLVRec-propagate.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 
 /* stats for TokenSet Id optimisation */
@@ -122,7 +113,6 @@ static void MergeTokSet (DecoderInst *dec, TokenSet *src, TokenSet *dest,
       /* #### first go at sorted Tok merge, 
          #### very explicit, no optimisation at all, yet! */
       
-
       /* find best score */
       if (src->score + score > dest->score) {
          winScore = src->score + score;
@@ -143,6 +133,7 @@ static void MergeTokSet (DecoderInst *dec, TokenSet *src, TokenSet *dest,
       deltaLimit = dec->beamLimit - winScore;     /* main beam */
       if (dec->relBeamWidth > deltaLimit)            
          deltaLimit = dec->relBeamWidth;          /* relative beam */
+
 #endif
 #ifdef DEBUG_TRACE
       printf("dec->beamLimit = %f, winScore = %f, dec->beamLimit - winScore = %f, dec->relBeamWidth = %f, deltaLimit = %f\n",
@@ -253,7 +244,7 @@ static void MergeTokSet (DecoderInst *dec, TokenSet *src, TokenSet *dest,
             assert (((int) (winTok[i].delta / binWidth)) < NBINS);
             ++n[(int) (winTok[i].delta / binWidth)];
          }
-         
+
          nTok = 0;
          i = -1;
          while (nTok < dec->nTok) {
@@ -277,7 +268,10 @@ static void MergeTokSet (DecoderInst *dec, TokenSet *src, TokenSet *dest,
          else {
             int nBetter;
             LogFloat bestDelta;
-            
+
+	    /*cz277 - 64bit*/
+	    LogFloat minDelta;            
+
             /* do not include last bin */
             limit = binWidth * i;
             nTok -= n[i]; 
@@ -285,31 +279,35 @@ static void MergeTokSet (DecoderInst *dec, TokenSet *src, TokenSet *dest,
             /* need to relax limit so that we get an extra (dec->nTok - nTok) tokens */
             /* #### very simplistic implementation -- imporve? */
 
-            
             bestDelta = limit;
             do {
                limit = bestDelta;
                bestDelta = LZERO;
                nBetter = 0;
-               for (i = 0, j = 0; i < nWinTok; ++i) {
-                  if (winTok[i].delta >= limit)
+               for (i = 0; i < nWinTok; ++i) {
+                  if (winTok[i].delta >= limit) {
                      ++nBetter;
-                  else
-                     if (winTok[i].delta > bestDelta)
-                        bestDelta = winTok[i].delta;
+		  }
+                  else if (winTok[i].delta > bestDelta) {
+                     bestDelta = winTok[i].delta;
+		  }
                }
             } while (nBetter < dec->nTok);
             /*             printf ("nBetter %d\n", nBetter); */
 
-            if (nBetter > dec->nTok) {  /* multiple tokens with delta == limit
-                                           ==> delete some */
-               for (i = 0; nBetter > dec->nTok; ++i)
-                  if (winTok[i].delta == limit) {
-                     winTok[i].delta = LZERO;
-                     --nBetter;
-                  }
-            }
-         
+	    /*cz277 - 64bit*/
+	    /*a better solution should find the minimum within the tokens of the last bin*/
+	    while (nBetter > dec->nTok) {
+	        minDelta = 0.0;
+		for (i = 0, j = nBetter - 1; i < nWinTok; ++i) {	/* ar527 */
+		    if (winTok[i].delta >= limit && winTok[i].delta <= minDelta) {
+		        minDelta = winTok[i].delta;
+			j = i;
+		    }
+		}
+		winTok[j].delta = LZERO;
+		--nBetter;
+	    }
             for (i = 0, j = 0; i < nWinTok; ++i) { 
                if (winTok[i].delta >= limit) {
                   dest->relTok[j] = winTok[i];
@@ -371,7 +369,6 @@ static void PropagateInternal (DecoderInst *dec, LexNodeInst *inst)
    instTS = inst->ts;
 
    assert (ln->type == LN_MODEL);               /* Model node */
-
 
    /* LM lookahead has already been updated in PropIntoNode() !!! */
 
@@ -472,7 +469,7 @@ static void PropagateInternal (DecoderInst *dec, LexNodeInst *inst)
          printf ("#########################PropagateInternal hmm %p '%s':\n", inst->node,
                  FindMacroStruct (dec->net->hset, 'h', inst->node->data.hmm)->id->name);
 #endif
-      
+
       /* internal propagation; transition i -> j,  \forall 2 <= j <= N-1 */
       
       /* internal states */
@@ -557,7 +554,7 @@ static void PropagateInternal (DecoderInst *dec, LexNodeInst *inst)
          dec->bestScore = bestScore;
          dec->bestInst = inst;
       }
-      
+
       /* # this only collects stats for the model nodes */
 #ifdef COLLECT_STATS
       for (i = 1, ts = &instTS[0]; i <= N; ++i, ++ts) {
@@ -618,7 +615,6 @@ static void PropIntoNode (DecoderInst *dec, TokenSet *ts, LexNode *ln, Boolean u
 
    if (!ln->inst)                /* activate if necessary */
       ActivateNode (dec, ln);
-
    inst = ln->inst;
          
    /* propagate tokens from ln's exit into follLN's entry state */
@@ -720,7 +716,6 @@ static void PropagateExternal (DecoderInst *dec, LexNodeInst *inst,
    /* prune exit state token set */
    if (exitTS->n > 0)
       PruneTokSet (dec, exitTS);
-
 
    /* any tokens in exit state? */
    if (exitTS->n > 0 && exitTS->score > dec->beamLimit) {
@@ -1141,7 +1136,7 @@ void HandleSpSkipLayer (DecoderInst *dec, LexNodeInst *inst)
      performs pruning as necessary.
 */
 void ProcessFrame (DecoderInst *dec, Observation **obsBlock, int nObs, 
-                   AdaptXForm *xform)
+                   AdaptXForm *xform, int cacheVecIdx)
 {
    int l, i;
    LexNodeInst *inst, *prevInst, *next;
@@ -1149,7 +1144,7 @@ void ProcessFrame (DecoderInst *dec, Observation **obsBlock, int nObs,
    TokScore beamLimit;
    
    inXForm = xform; /* sepcifies the transform to use */
-   
+
    dec->obs = obsBlock[0];
    dec->nObs = nObs;
    for (i = 0; i < nObs; ++i)
@@ -1157,6 +1152,9 @@ void ProcessFrame (DecoderInst *dec, Observation **obsBlock, int nObs,
    dec->bestScore = LZERO;
    dec->bestInst = NULL;
    ++dec->frame;
+
+   /* cz277 - ANN */
+   dec->cacheVecIdx = cacheVecIdx;
 
    if (dec->frame % gcFreq == 0)
       GarbageCollectPaths (dec);
@@ -1225,7 +1223,6 @@ void ProcessFrame (DecoderInst *dec, Observation **obsBlock, int nObs,
               FindMacroStruct (dec->net->hset, 'h', dec->bestInst->node->data.hmm)->id->name,
               dec->bestScore, dec->bestScore/dec->frame);
 
-
    /* beam pruning & external propagation */
    modelActive = 0;
    for (l = 0; l < dec->nLayers; ++l) {
@@ -1248,6 +1245,7 @@ void ProcessFrame (DecoderInst *dec, Observation **obsBlock, int nObs,
 
       /*** wordend beam pruning ***/
       beamLimit = dec->beamLimit;
+
       if ((dec->weBeamWidth < dec->beamWidth) && 
           (l == LAYER_WE)) {
          TokScore bestWEscore = LZERO;
@@ -1271,7 +1269,6 @@ void ProcessFrame (DecoderInst *dec, Observation **obsBlock, int nObs,
                PrintTokSet (dec, inst->ts);
             }
 #endif
-
                DeactivateNode (dec, inst->node);
             }
             else {
@@ -1327,7 +1324,6 @@ void ProcessFrame (DecoderInst *dec, Observation **obsBlock, int nObs,
                printf ("before lmla, node %p '%s' score %f\n", inst->node, name, inst->ts[0].score);
             }
 #endif
-
             if (inst->ts[0].score >= beamLimit)       /* don't bother if inst will be pruned anyway */
                UpdateLMlookahead (dec, inst->node);
 
@@ -1412,7 +1408,6 @@ void ProcessFrame (DecoderInst *dec, Observation **obsBlock, int nObs,
                   }
                }
 #endif
-
                PropagateExternal (dec, inst, !(dec->weBeamWidth < dec->beamWidth) || 
                                   (l == LAYER_SIL) || (l == LAYER_AB),
                                   l == LAYER_BY);
@@ -1537,10 +1532,5 @@ void ProcessFrame (DecoderInst *dec, Observation **obsBlock, int nObs,
 }
 
 
+/* ------------------------ End of HLVRec-propagate.c ----------------------- */
 
-
-/*  CC-mode style info for emacs
- Local Variables:
- c-file-style: "htk"
- End:
-*/

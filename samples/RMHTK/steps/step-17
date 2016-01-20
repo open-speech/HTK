@@ -1,0 +1,90 @@
+#!/bin/bash
+
+#set verbose
+
+############################################################
+# Step 17: Hybrid DNN-HMM MPE training
+############################################################
+
+source environment
+
+# dependencies
+if [[ ! -d $RMWORK/R16/dnntrain/dnn7.finetune ]]; then
+    echo ERROR: step 17 depends on completion of step 16
+    exit 1
+fi
+
+# 17.1 Lattice Generation
+# The first step is to generate lattices that have the start and end times
+# for each phone marked (this is for efficiency in training). This involves
+# the following stepes
+# i) convert word-pair network into an N-gram language model
+# ii) generate word-lattices
+# iii) mark the start and end times for each phone in the word-lattices
+# iv) generate new training scp file
+
+# Note to illustrate the effects of discriminative training a single
+# component cross-word triphone system is used.
+
+if [[ ! -d $RMWORK/R17/dnnmpe ]]; then
+    mkdir -p $RMWORK/R17/dnnmpe
+fi
+cd $RMWORK/R17/dnnmpe
+
+# setup the library to run the binaries
+if [[ ! -z $HTKLIB ]]; then
+    HTKLIB='-LIB '$HTKLIB
+else
+    HTKLIB=''
+fi
+
+if [[ ! -d latgen ]]; then
+    mkdir -p latgen/hmm0
+    cd latgen
+    ln -s $RMWORK/R16/dnntrain/dnn7.finetune/MODELS hmm0/MODELS
+
+    # Copy the HTE file associated with lattice generation and phone marking
+    if [[ ! -d lattices ]]; then
+        mkdir lattices
+    fi
+    cp $RMHTK/lib/info/ident_MFCC_E_D_A_Z_cvn lattices
+    cp -r $RMWORK/R16/dnntrain/cvn lattices
+    cp $RMHTK/lib/htefiles/HTE.dnn.latgen .
+    cp $RMHTK/lib/configs/config.dnn.hd $RMLIB/configs
+
+    # Create a monophone dictionary suitable for HDecode (strip the final "sp")
+    if [[ ! -f $RMLIB/dicts/mono.hd.dct ]]; then
+        cd $RMLIB/dicts
+        sed 's/sp//g' mono.dct > mono.hd.dct
+        cd $RMWORK/R17/dnnmpe/latgen
+    fi
+
+    # All 4 steps can then be run using
+    latgen-dnn $HTKLIB -HDECODE $HTKBIN/HDecode -HDECODEMOD $HTKBIN/HDecode.mod -LATSCP $PWD/lattices/train.lat.scp HTE.dnn.latgen hmm0 lattices
+    cd ..
+fi
+
+# 17.2 MPE Model Training
+#Having generated the training lattices dsicriminative training can now be run.
+ln -s $RMWORK/R17/dnnmpe/latgen/lattices/lattices .
+ln -s $RMWORK/R17/dnnmpe/latgen/lattices/train.lat.scp train.scp
+
+#Create directories and copy the HTE file 
+cp $RMWORK/R16/dnntrain/config.dnnbasic .
+cp $RMHTK/lib/info/ident_MFCC_E_D_A_Z_cvn .
+cp -r $RMWORK/R16/dnntrain/cvn .
+cp $RMWORK/R16/dnntrain/treeg.list .
+mkdir hmm0
+ln -s $RMWORK/R16/dnntrain/dnn7.finetune/MODELS hmm0/MODELS
+cp $RMHTK/lib/htefiles/HTE.dnn.mpe HTE
+
+# Now perform 2 iterations of MPE training
+sequence $HTKLIB -HNTRAINSGD $HTKBIN/HNTrainSGD HTE
+
+# And then test the MPE models
+cp $RMHTK/lib/htefiles/HTE.dnn.decode .
+
+htestrm -HVITE $HTKBIN/HVite HTE.dnn.decode wp feb89 hmm1
+htestrm -HVITE $HTKBIN/HVite HTE.dnn.decode wp feb89 hmm2
+
+echo step 17 completed

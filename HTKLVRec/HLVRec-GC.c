@@ -3,31 +3,33 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Machine Intelligence Laboratory                        */
-/*      Department of Engineering                              */
-/*      University of Cambridge                                */
-/*      http://mi.eng.cam.ac.uk/                               */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2002-2003  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLVRec-GC.c Garbage collection for            */
-/*                           HTK LV Decoder                    */
+/*   File: HLVRec-GC.c Garbage collection for HTK LV Decoder   */
 /* ----------------------------------------------------------- */
 
+char *hlvrec_gc_version = "!HVER!HLVRec-GC:   3.5.0 [CUED 12/10/15]";
+char *hlvrec_gc_vc_id = "$Id: HLVRec-GC.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 /* #### this should be generalised and moved into HMem as MHEAP-GC */
 
@@ -43,19 +45,24 @@
 
 /* mark AltWordendHyp in least significant bit of a->prev, which is normally 
    always 0, since pointers are aligned */
-#define MARK_ALTPATH_MASK     0x00000001UL
-#define MARK_ALTPATH(a)         (a->prev = (int)(a->prev) | MARK_ALTPATH_MASK)
-#define MARKED_ALTPATH_P(a)     ((int)((a)->prev) & MARK_ALTPATH_MASK)
-#define UNMARK_ALTPATH(a)       (a->prev = (int)(a->prev) & ~MARK_ALTPATH_MASK)
-
-#define GC_ALTPATH_PREV(a)      ((WordendHyp *) ((int)(a)->prev & ~MARK_ALTPATH_MASK))
+#define MARK_ALTPATH_MASK     0x0000000000000001UL
+#define MARK_ALTPATH(a)         (a->prev = (WordendHyp *)((long)(a->prev) | MARK_ALTPATH_MASK))
+#define MARKED_ALTPATH_P(a)     ((long)((a)->prev) & MARK_ALTPATH_MASK)
+#define UNMARK_ALTPATH(a)       (a->prev = (WordendHyp *)((long)(a->prev) & ~MARK_ALTPATH_MASK))
+#define GC_ALTPATH_PREV(a)      ((WordendHyp *) ((long)(a)->prev & ~MARK_ALTPATH_MASK))
 
 #ifdef MODALIGN
-#define MARK_MODPATH_MASK     0x00000001UL
+/*#define MARK_MODPATH_MASK     0x00000001UL
 #define MARK_MODPATH(m)         (m->ln = (int)((m)->ln) | MARK_MODPATH_MASK)
 #define MARKED_MODPATH_P(m)     ((int)((m)->ln) & MARK_MODPATH_MASK)
 #define UNMARK_MODPATH(m)       (m->ln = (int)((m)->ln) & ~MARK_MODPATH_MASK)
+*/
 
+/* cz277 - 64bit */
+#define MARK_MODPATH_MASK       0x0000000000000001UL
+#define MARK_MODPATH(m)         (m->ln = (LexNode *)((long)((m)->ln) | MARK_MODPATH_MASK))
+#define MARKED_MODPATH_P(m)     ((long)((m)->ln) & MARK_MODPATH_MASK)
+#define UNMARK_MODPATH(m)       (m->ln = (LexNode *)((long)((m)->ln) & ~MARK_MODPATH_MASK))
 
 static void MarkModPath (ModendHyp *m)
 {
@@ -340,3 +347,7 @@ static void GarbageCollectPaths (DecoderInst *dec)
 #endif
    }
 }
+
+
+/* ------------------------ End of HLVRec-GC.c ----------------------- */
+

@@ -1,0 +1,4 @@
+TARGETKIND     = USER    #   Basic parameterisation
+HNET:TRACE     = 1             #   Want this for recognition
+#FORCECXTEXP    = T             #   Needed for cross word systems
+HMODEL: SAVEBINARY = T 

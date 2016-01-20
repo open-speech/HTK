@@ -3,31 +3,58 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HMem.c:   Memory Management Module            */
+/*            File: HMem.c    Memory management module         */
 /* ----------------------------------------------------------- */
 
-char *hmem_version = "!HVER!HMem:   3.4.1 [CUED 12/03/09]";
-char *hmem_vc_id = "$Id: HMem.c,v 1.1.1.1 2006/10/11 09:54:58 jal58 Exp $";
+char *hmem_version = "!HVER!HMem:   3.5.0 [CUED 12/10/15]";
+char *hmem_vc_id = "$Id: HMem.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 #include "HShell.h"
 #include "HMem.h"
+/* cz277 - ANN */
+#include "config.h"
+#include "HMath.h"
 
 int debug_level = 0;               /* For esps linking */
 
+/* cz277 - ANN */
+#ifdef MKL
+static int MKL_alignment = 64;
+#endif
+
 /* --------------------------- Trace Flags ------------------------ */
+
+#define MAX(a, b) ((a)>(b)?(a):(b))
+#define MIN(a, b) ((a)<(b)?(a):(b))
 
 static int trace = 0;
 
@@ -106,11 +133,11 @@ static BlockP AllocBlock(size_t size, size_t num, HeapType type)
    int i;
    
    if (trace&T_TOP)
-      printf("HMem: AllocBlock of %u bytes\n",num*size);
+      printf("HMem: AllocBlock of %lu bytes\n",num*size);
    if ((p = (BlockP) malloc(sizeof(Block))) == NULL)
       HError(5105,"AllocBlock: Cannot allocate Block");
    if ((p->data = (void *)malloc(size*num)) == NULL)
-      HError(5105,"AllocBlock: Cannot allocate block data of %u bytes",size*num);
+      HError(5105,"AllocBlock: Cannot allocate block data of %lu bytes",size*num);
    switch (type){
    case MHEAP:
       if ((p->used = (ByteP)malloc((num+7)/8)) == NULL)
@@ -193,7 +220,7 @@ void InitMem(void)
    
    Register(hmem_version, hmem_vc_id);
    CreateHeap(&gstack, "Global Stack",  MSTAK, 1, 0.0, 100000, ULONG_MAX ); /* #### should be max size_t */
-   CreateHeap(&gcheap, "Global C Heap", CHEAP, 1, 0.0, 0,      0 );
+   CreateHeap(&gcheap, "Global C Heap", CHEAP, 1, 0.0, 100000, ULONG_MAX);
    numParm = GetConfig("HMEM", TRUE, cParm, MAXGLOBS);
    if (numParm>0){
       if (GetConfInt(cParm,numParm,"TRACE",&i)) trace = i;
@@ -212,9 +239,9 @@ void CreateHeap(MemHeap *x, char *name, HeapType type, size_t elemSize,
    if (numElem>maxElem)
       HError(5170,"CreateHeap: init num elem > max elem in heap %s",name);
    if (elemSize <= 0)
-      HError(5170,"CreateHeap: elem size = %u in heap %s",elemSize,name);
+      HError(5170,"CreateHeap: elem size = %lu in heap %s",elemSize,name);
    if (type == MSTAK && elemSize !=1)
-      HError(5170,"CreateHeap: elem size = %u in MSTAK heap %s",elemSize,name);
+      HError(5170,"CreateHeap: elem size = %lu in MSTAK heap %s",elemSize,name);
    x->name = (char *)malloc(strlen(name)+1);
    strcpy(x->name,name); /* cant use a MemHeap for this!! */
    x->type  = type; x->growf = growf;
@@ -231,7 +258,7 @@ void CreateHeap(MemHeap *x, char *name, HeapType type, size_t elemSize,
       case MSTAK: c='S'; break;
       case CHEAP: c='C'; break;
       }
-      printf("HMem: Create Heap %s[%c] %u %.1f %u %u\n",name,c,
+      printf("HMem: Create Heap %s[%c] %lu %.1f %lu %lu\n",name,c,
              elemSize, growf, numElem, maxElem);
    }
 }
@@ -319,7 +346,7 @@ void *New(MemHeap *x,size_t size)
          determined by the curElem, the grow factor growf and the
          upper limit maxElem. */
       if (size != 0 && size != x->elemSize)
-         HError(5173,"New: MHEAP req for %u size elem from heap %s size %u",
+         HError(5173,"New: MHEAP req for %lu size elem from heap %s size %lu",
                 size,x->name,x->elemSize);
 
       noSpace = x->totUsed == x->totAlloc;
@@ -339,7 +366,7 @@ void *New(MemHeap *x,size_t size)
       }
       x->totUsed++;
       if (trace&T_MHP)
-         printf("HMem: %s[M] %u bytes at %p allocated\n",x->name,size,q);
+         printf("HMem: %s[M] %lu bytes at %p allocated\n",x->name,size,q);
       return q;
    case CHEAP:
       chdr = MRound(sizeof(size_t));
@@ -350,7 +377,7 @@ void *New(MemHeap *x,size_t size)
       x->totAlloc += size+chdr;
       ip = (size_t *)q; *ip = size;
       if (trace&T_CHP)
-         printf("HMem: %s[C] %u+%u bytes at %p allocated\n",x->name,chdr,size,q);
+         printf("HMem: %s[C] %lu+%lu bytes at %p allocated\n",x->name,chdr,size,q);
       return (Ptr)((ByteP)q+chdr);
    case MSTAK:
       /* set required size - must alloc on double boundaries */
@@ -374,7 +401,7 @@ void *New(MemHeap *x,size_t size)
       }
       x->totUsed += size;
       if (trace&T_STK)
-         printf("HMem: %s[S] %u bytes at %p allocated\n",x->name,size,q);
+         printf("HMem: %s[S] %lu bytes at %p allocated\n",x->name,size,q);
       if (x->protectStk) {
          pp = (Ptr *)((long)q + size - sizeof(Ptr)); /* #### fix this! */
          *pp = q;
@@ -437,7 +464,7 @@ void Dispose(MemHeap *x, void *p)
          free(cur->data); free(cur->used); free(cur);
       }
       if (trace&T_MHP)
-         printf("HMem: %s[M] %u bytes at %p de-allocated\n",x->name,size,p);
+         printf("HMem: %s[M] %lu bytes at %p de-allocated\n",x->name,size,p);
       return;
    case MSTAK:
       /* search for item to dispose */
@@ -480,7 +507,7 @@ void Dispose(MemHeap *x, void *p)
       cur->firstFree -= size;
       cur->numFree += size; x->totUsed -= size;
       if (trace&T_STK)
-         printf("HMem: %s[S] %u bytes at %p de-allocated\n",x->name,size,p);
+         printf("HMem: %s[S] %lu bytes at %p de-allocated\n",x->name,size,p);
       return;
    case CHEAP:
       chdr = MRound(sizeof(size_t));
@@ -488,7 +515,7 @@ void Dispose(MemHeap *x, void *p)
       ip = (size_t *)bp;
       x->totAlloc -= (*ip + chdr); x->totUsed -= *ip;
       if (trace&T_CHP)
-         printf("HMem: %s[C] %u+%u bytes at %p de-allocated\n",
+         printf("HMem: %s[C] %lu+%lu bytes at %p de-allocated\n",
                 x->name,chdr,*ip,bp);
       free(bp);
       return;
@@ -508,7 +535,7 @@ void PrintHeapStats(MemHeap *x)
    case CHEAP: tc = 'C'; break;
    }
    for (p=x->heap; p != NULL; p = p->next) ++nBlocks;
-   printf("nblk=%3d, siz=%6u*%-3u, used=%9u, alloc=%9u : %s[%c]\n",
+   printf("nblk=%3d, siz=%6lu*%-3lu, used=%9lu, alloc=%9lu : %s[%c]\n",
           nBlocks, x->curElem, x->elemSize, x->totUsed, 
           x->totAlloc*x->elemSize,x->name,tc) ;
    fflush(stdout);
@@ -667,6 +694,21 @@ void FreeSVector(MemHeap *x, Vector v)
    DecUse(v);
    if (GetUse(v) <= 0)
       Dispose(x,(Ptr *)(v)-2);
+}
+
+/* cz277 - ANN */
+/* compare different IntVec */
+Boolean CmpIntVec(IntVec lhVec, IntVec rhVec)
+{
+    int i;
+
+    if (lhVec != rhVec || lhVec == NULL || IntVecSize(lhVec) != IntVecSize(rhVec))
+        return FALSE;
+    for (i = 1; i < lhVec[0]; ++i)
+        if (lhVec[i] != rhVec[i])
+            return FALSE;
+
+    return TRUE;
 }
 
 /* EXPORT->MatrixElemSize: size of matrices for creating heaps */
@@ -987,6 +1029,554 @@ char *CopyString(MemHeap *x, char *s)
    t = (char *) New(x,strlen(s)+1);
    strcpy(t,s);
    return t;
+}
+
+/* ------------- ANN Vector/Matrix Memory Management -------------- */
+
+size_t CVectorElemSize(int nlen) 
+{ 
+    return nlen * sizeof(float); 
+}
+
+size_t CMatrixElemSize(int nrows, int ncols) 
+{ 
+    return nrows * ncols * sizeof(float); 
+}
+
+size_t CDVectorElemSize(int nlen) 
+{ 
+    return nlen * sizeof(double); 
+}
+
+size_t CDMatrixElemSize(int nrows, int ncols) 
+{ 
+    return nrows * ncols * sizeof(double); 
+}
+
+size_t NVectorElemSize(int nlen)
+{
+    return nlen * sizeof(NFloat);
+}
+
+size_t NMatrixElemSize(int nrows, int ncols)
+{
+    return nrows * ncols * sizeof(NFloat);
+}
+
+CVector *CreateCVector(MemHeap *x, int nlen)
+{
+    CVector *v;
+    v = (CVector *) New(x, sizeof(CVector));
+    v->vecLen = nlen;
+    v->vecElems = (float *) New(x, CVectorElemSize(nlen));
+    v->nUse = 0;
+    return v;
+}
+
+CMatrix *CreateCMatrix(MemHeap *x, int nrows, int ncols)
+{
+    CMatrix *m;
+    m = (CMatrix *) New(x, sizeof(CMatrix));
+    m->rowNum = nrows;
+    m->colNum = ncols;
+    m->matElems = (float *) New(x, CMatrixElemSize(nrows, ncols));
+    m->nUse = 0;
+    return m;
+}
+
+CDVector *CreateCDVector(MemHeap *x, int nlen)
+{
+    CDVector *v;
+    v = (CDVector *) New(x, sizeof(CDVector));
+    v->vecLen = nlen;
+    v->vecElems = (double *) New(x, CDVectorElemSize(nlen));
+    v->nUse = 0;
+    return v;
+}
+
+CDMatrix *CreateCDMatrix(MemHeap *x, int nrows, int ncols)
+{
+    CDMatrix *m;
+    m = (CDMatrix *) New(x, sizeof(CDMatrix));
+    m->rowNum = nrows;
+    m->colNum = ncols;
+    m->matElems = (double *) New(x, CDMatrixElemSize(nrows, ncols));
+    m->nUse = 0;
+    return m;
+}
+
+/* cz277 - 150824 */
+NVector *CreateHostNVector(MemHeap *x, int nlen) 
+{
+    NVector *v;
+
+    v = (NVector *) New(x, sizeof(NVector));
+    memset(v, 0, sizeof(NVector));
+
+    v->vecLen = nlen;
+#ifdef MKL
+    v->vecElems = (NFloat *) mkl_malloc(NVectorElemSize(nlen), MKL_alignment);
+#else
+    v->vecElems = (NFloat *) New(x, NVectorElemSize(nlen));
+#endif
+    /*v->hook = &v->acc;*/
+
+    return v;
+}
+
+/* cz277 - 150824 */
+NVector *CreateNVector(MemHeap *x, int nlen)
+{
+    NVector *v;
+
+    v = CreateHostNVector(x, nlen);
+#ifdef CUDA
+    DevNew(&v->devElems, NVectorElemSize(nlen));
+#endif
+
+    return v;
+}
+
+NMatrix *CreateHostNMatrix(MemHeap *x, int nrows, int ncols) 
+{
+    NMatrix *m;
+
+    m = (NMatrix *) New(x, sizeof(NMatrix));
+    memset(m, 0, sizeof(NMatrix));
+
+    m->rowNum = nrows;
+    m->colNum = ncols;
+#ifdef MKL
+    m->matElems = (NFloat *) mkl_malloc(NMatrixElemSize(nrows, ncols), MKL_alignment);
+#else
+    m->matElems = (NFloat *) New(x, NMatrixElemSize(nrows, ncols));
+#endif
+    /*m->hook = &m->acc;*/
+
+    return m;
+}
+
+NMatrix *CreateNMatrix(MemHeap *x, int nrows, int ncols)
+{
+    NMatrix *m;
+
+    m = CreateHostNMatrix(x, nrows, ncols);
+#ifdef CUDA
+    DevNew(&m->devElems, NMatrixElemSize(nrows, ncols));
+#endif
+    
+    return m;
+}
+
+size_t CVectorSize(CVector *v) 
+{ 
+    return v->vecLen; 
+}
+
+size_t NumCRows(CMatrix *m) 
+{ 
+    return m->rowNum; 
+}
+
+size_t NumCCols(CMatrix *m) 
+{ 
+    return m->colNum; 
+}
+
+size_t CDVectorSize(CDVector *v) 
+{ 
+    return v->vecLen; 
+}
+
+size_t NumCDRows(CDMatrix *m) 
+{ 
+    return m->rowNum; 
+}
+
+size_t NumCDCols(CDMatrix *m) 
+{ 
+    return m->colNum; 
+}
+
+size_t NVectorSize(NVector *v)
+{
+    return v->vecLen;
+}
+
+size_t NumNRows(NMatrix *m)
+{
+    return m->rowNum;
+}
+
+size_t NumNCols(NMatrix *m)
+{
+    return m->colNum;
+}
+
+void FreeCVector(MemHeap *x, CVector *v)
+{
+    if (x->type == CHEAP) {
+        Dispose(x, v->vecElems);
+        Dispose(x, v);
+    }
+}
+
+void FreeCMatrix(MemHeap *x, CMatrix *m)
+{
+    if (x->type == CHEAP) {
+        Dispose(x, m->matElems);
+        Dispose(x, m);
+    }
+}
+
+void FreeCDVector(MemHeap *x, CDVector *v)
+{
+    if (x->type == CHEAP) {
+        Dispose(x, v->vecElems);
+        Dispose(x, v);
+    }
+}
+
+void FreeCDMatrix(MemHeap *x, CDMatrix *m)
+{
+    if (x->type == CHEAP) {
+        Dispose(x, m->matElems);
+        Dispose(x, m);
+    }
+}
+
+void FreeNVector(MemHeap *x, NVector *v)
+{
+#ifdef CUDA
+    if (v->devElems != NULL)
+        DevDispose(v->devElems, NVectorElemSize(v->vecLen));
+    if (x->type == CHEAP) 
+        Dispose(x, v->vecElems);
+#else
+    #ifdef MKL
+    mkl_free(v->vecElems);
+    #else
+    if (x->type == CHEAP) 
+        Dispose(x, v->vecElems);
+    #endif
+#endif
+    if (x->type == CHEAP) 
+        Dispose(x, v);
+}
+
+void FreeNMatrix(MemHeap *x, NMatrix *m)
+{
+#ifdef CUDA
+    if (m->devElems != NULL)
+        DevDispose(m->devElems, NMatrixElemSize(m->rowNum, m->colNum));
+    if (x->type == CHEAP) 
+        Dispose(x, m->matElems);
+#else
+    #ifdef MKL
+    mkl_free(m->matElems);
+    #else
+    if (x->type == CHEAP) 
+        Dispose(x, m->matElems);
+    #endif
+#endif
+    if (x->type == CHEAP)
+        Dispose(x, m);
+}
+
+#ifdef CUDA
+void SyncNVectorDev2Host(NVector *v) 
+{
+    if (v->devElems == NULL)
+        HError(5190, "SyncNVectorDev2Host: Host only NVector cannot be synchronised");
+    SyncDev2Host(v->devElems, v->vecElems, NVectorElemSize(v->vecLen));
+}
+
+void SyncNVectorHost2Dev(NVector *v) 
+{
+    if (v->devElems == NULL)
+        HError(5190, "SyncNVectorHost2Dev: Host only NVector cannot be synchronised");
+    SyncHost2Dev(v->vecElems, v->devElems, NVectorElemSize(v->vecLen));
+}
+
+void SyncNMatrixDev2Host(NMatrix *m) 
+{
+    if (m->devElems == NULL)
+        HError(5190, "SyncNMatrixDev2Host: Host only NMatrix cannot be synchronised");
+    SyncDev2Host(m->devElems, m->matElems, NMatrixElemSize(m->rowNum, m->colNum));
+}
+
+void SyncNMatrixHost2Dev(NMatrix *m) 
+{
+    if (m->devElems == NULL)
+        HError(5190, "SyncNMatrixHost2Dev: Host only NMatrix cannot be synchronised");
+    SyncHost2Dev(m->matElems, m->devElems, NMatrixElemSize(m->rowNum, m->colNum));
+}
+#endif
+
+void CopyVector2NVector(Vector v1, NVector *v2)
+{
+    int i, size;
+ 
+    size = VectorSize(v1);
+    if (v2->vecLen != size)
+        HError(5176, "CopyVector2NVector: Inconsistent vector lengths");
+
+    for (i = 0; i < size; ++i)
+        v2->vecElems[i] = v1[i + 1];
+#ifdef CUDA
+    if (v2->devElems != NULL)
+        SyncNVectorHost2Dev(v2);
+#endif
+}
+
+
+void CopyNVector2Vector(NVector *v1, Vector v2) 
+{
+    int i, size;
+
+    size = VectorSize(v2);
+    if (v1->vecLen != size)
+        HError(5176, "CopyNVector2Vector: Inconsistent vector lengths");
+
+#ifdef CUDA
+    if (v1->devElems != NULL)
+        SyncNVectorDev2Host(v1);
+#endif
+    for (i = 0; i < size; ++i)
+        v2[i + 1] = v1->vecElems[i];
+}
+
+
+void CopyMatrix2NMatrix(Matrix m1, NMatrix *m2)
+{
+    int i, j, nrows, ncols;
+
+    nrows = NumRows(m1);
+    ncols = NumCols(m1);
+    if (nrows != m2->rowNum || ncols != m2->colNum)
+        HError(5176, "CopyMatrix2NMatrix: Inconsistent matrix dimensions");
+
+    for (i = 0; i < nrows; ++i)
+        for (j = 0; j < ncols; ++j)
+            m2->matElems[i * ncols + j] = m1[i + 1][j + 1];
+#ifdef CUDA
+    if (m2->devElems != NULL)
+        SyncNMatrixHost2Dev(m2);
+#endif
+}
+
+
+void CopyNMatrix2Matrix(NMatrix *m1, Matrix m2) 
+{
+    int i, j, nrows, ncols;
+
+    nrows = NumRows(m2);
+    ncols = NumCols(m2);
+    if (nrows != m1->rowNum || ncols != m1->colNum)
+        HError(5176, "CopyNMatrix2Matrix: Inconsistent matrix dimensions");
+
+#ifdef CUDA
+    if (m1->devElems != NULL)
+        SyncNMatrixDev2Host(m1);
+#endif
+    for (i = 0; i < nrows; ++i)
+        for (j = 0; j < ncols; ++j)
+            m2[i + 1][j + 1] = m1->matElems[i * ncols + j];
+}
+
+
+void CopyNMatrix2TrMatrix(NMatrix *m1, Matrix m2) {
+    int i, j, nrows, ncols;
+
+    nrows = NumRows(m2);
+    ncols = NumCols(m2);
+    if (nrows != m1->colNum || ncols != m1->rowNum)
+        HError(5176, "CopyNMatrix2TrMatrix: Inconsistent matrix dimensions");
+
+#ifdef CUDA
+    if (m1->devElems != NULL)
+        SyncNMatrixDev2Host(m1);
+#endif
+    for (i = 0; i < ncols; ++i)
+        for (j = 0; j < nrows; ++j)
+            m2[j + 1][i + 1] = m1->matElems[i * nrows + j];
+}
+
+
+void CopyMatrix2TrNMatrix(Matrix m1, NMatrix *m2) {
+    int i, j, nrows, ncols;
+
+    nrows = NumRows(m1);
+    ncols = NumCols(m1);
+    if (nrows != m2->colNum || ncols != m2->rowNum)
+        HError(5176, "CopyMatrix2TrNMatrix: Inconsistent matrix dimensions");
+
+    for (i = 0; i < nrows; ++i)
+        for (j = 0; j < ncols; ++j)
+            m2->matElems[j * nrows + i] = m1[i + 1][j + 1];
+#ifdef CUDA
+    if (m2->devElems != NULL)
+        SyncNMatrixHost2Dev(m2);
+#endif
+}
+
+/* cz277 - low rank */
+void CopyPartialDMatrix2NMatrix(DMatrix m1, NMatrix *m2) {
+    int i, j, nrows, ncols;
+
+    nrows = MIN(NumDRows(m1), m2->rowNum);
+    ncols = MIN(NumDCols(m1), m2->colNum);
+    for (i = 0; i < nrows; ++i)
+        for (j = 0; j < ncols; ++j)
+            m2->matElems[i * m2->colNum + j] = (NFloat) m1[i + 1][j + 1];
+#ifdef CUDA
+    if (m2->devElems != NULL)
+        SyncNMatrixHost2Dev(m2);
+#endif
+}
+
+
+/* cz277 - low rank */
+void CopyDMatrix2NMatrix(DMatrix m1, NMatrix *m2) {
+    int nrows, ncols;
+
+    nrows = NumDRows(m1);
+    ncols = NumDCols(m1);
+    if (nrows != m2->rowNum || ncols != m2->colNum) 
+        HError(5176, "CopyDMatrix2NMatrix: Inconsistent matrix dimensions");
+
+    CopyPartialDMatrix2NMatrix(m1, m2);
+}
+
+
+/* cz277 - low rank */
+void CopyNMatrix2DMatrix(NMatrix *m1, DMatrix m2) {
+    int i, j, nrows, ncols;
+
+    nrows = NumDRows(m2);
+    ncols = NumDCols(m2);
+    if (nrows != m1->rowNum || ncols != m1->colNum)
+        HError(5176, "CopyNMatrix2DMatrix: Inconsistent matrix dimensions");
+#ifdef CUDA
+    if (m1->devElems != NULL)
+        SyncNMatrixDev2Host(m1);
+#endif
+    for (i = 0; i < nrows; ++i)
+        for (j = 0; j < ncols; ++j)
+            m2[i + 1][j + 1] = m1->matElems[i * m1->colNum + j];
+}
+
+
+void CopyPartialNMatrix2NMatrix(NMatrix *m1, NMatrix *m2) 
+{
+    int nrows, ncols;
+
+    nrows = MIN(m1->rowNum, m2->rowNum);
+    ncols = MIN(m1->colNum, m2->colNum);
+#ifdef CUDA
+    if (m1->devElems != NULL && m2->devElems != NULL)
+        CopyPartialNSegment(nrows, ncols, m1->devElems, m1->colNum, m2->devElems, m2->colNum);
+    else {
+        if (m1->devElems != NULL)
+            SyncNMatrixDev2Host(m1);
+        CopyPartialNSegment(nrows, ncols, m1->matElems, m1->colNum, m2->matElems, m2->colNum);
+        if (m2->devElems != NULL)
+            SyncNMatrixHost2Dev(m2);
+    }
+#else
+    CopyPartialNSegment(nrows, ncols, m1->matElems, m1->colNum, m2->matElems, m2->colNum);
+#endif
+}
+
+void CopyNMatrix2NMatrix(NMatrix *m1, NMatrix *m2) {
+
+    if (m1->rowNum != m2->rowNum || m1->colNum != m2->colNum)
+        HError(5176, "CopyNMatrix2NMatrix: Inconsistent matrix dimensions");
+    CopyPartialNMatrix2NMatrix(m1, m2);
+}
+
+void CopyPartialNVector2NVector(NVector *v1, NVector *v2) 
+{
+    int len;
+
+    len = MIN(v1->vecLen, v2->vecLen);
+#ifdef CUDA
+    if (v1->devElems != NULL && v2->devElems != NULL)
+        CopyPartialNSegment(1, len, v1->devElems, v1->vecLen, v2->devElems, v2->vecLen);
+    else {
+        if (v1->devElems != NULL)
+            SyncNVectorDev2Host(v1);
+        CopyPartialNSegment(1, len, v1->vecElems, v1->vecLen, v2->vecElems, v2->vecLen);
+        if (v2->devElems != NULL)
+            SyncNVectorHost2Dev(v2);
+    }
+#else
+    CopyPartialNSegment(1, len, v1->vecElems, v1->vecLen, v2->vecElems, v2->vecLen);
+#endif
+}
+
+void CopyNVector2NVector(NVector *v1, NVector *v2) {
+    
+    if (v1->vecLen != v2->vecLen)
+        HError(5176, "CopyNVector2NVector: Inconsistent vector lengths");
+    CopyPartialNVector2NVector(v1, v2);
+}
+
+void CopyNFloatSeg2FloatSeg(NFloat *fv1, int segLen, float *fv2) {
+    int i;
+
+    for (i = 0; i < segLen; ++i)
+        fv2[i] = (float) fv1[i];
+}
+
+
+NMatrix *GenMaskTrNMatrix(MemHeap *x, int mappedTargetNum, IntVec mapVec) {
+    int i, nrows, ncols;
+    NMatrix *mat;
+
+    ncols = IntVecSize(mapVec);
+    nrows = mappedTargetNum;
+    mat = CreateNMatrix(x, nrows, ncols);
+    SetNMatrix(0.0, mat, nrows);
+    for (i = 0; i < ncols; ++i)
+        mat->matElems[mapVec[i + 1] * ncols + i] = 1.0;
+
+#ifdef CUDA
+    if (mat->devElems != NULL)
+        SyncNMatrixHost2Dev(mat);
+#endif
+
+    return mat;
+}
+
+void ShowNVector(NVector *inVec) {
+    int i;
+
+#ifdef CUDA
+    if (inVec->devElems != NULL)
+        SyncNVectorDev2Host(inVec);
+#endif
+    for (i = 0; i < inVec->vecLen; ++i)
+        printf(" %d:%e", i, inVec->vecElems[i]);
+    printf("\n");
+}
+
+void ShowNMatrix(NMatrix *inMat, int nrows) {
+    int i, j;
+
+#ifdef CUDA
+    if (inMat->devElems != NULL)
+        SyncNMatrixDev2Host(inMat);
+#endif
+    if (nrows <= 0)
+        nrows = inMat->rowNum;
+
+    for (i = 0; i < nrows; ++i) {
+        printf("Line %d = ", i);
+        for (j = 0; j < inMat->colNum; ++j)
+            printf(" %d:%e", j, inMat->matElems[i * inMat->colNum + j]);
+        printf("\n");
+    }
 }
 
 /* -------------------------- End of HMem.c ---------------------------- */

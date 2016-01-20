@@ -3,33 +3,35 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           Cambridge University Engineering Department       */
+/*           http://svr-www.eng.cam.ac.uk/                     */
 /*                                                             */
-/* main authors: Valtcho Valtchev, Steve Young,                */
-/*               Julian Odell, Gareth Moore                    */
+/* main authors:                                               */
+/*           Valtcho Valtchev, Steve Young,                    */
+/*           Julian Odell, Gareth Moore                        */
+/*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*                                                             */
-/*          1994-2002 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            1994-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*    File: LPlex:  compute perplexity                         */
+/*               File: LPlex  compute perplexity               */
 /* ----------------------------------------------------------- */
 
-char *lplex_version = "!HVER!LPlex:     3.4.1 [CUED 12/03/09]";
+char *lplex_version = "!HVER!LPlex:     3.5.0 [CUED 12/10/15]";
 char *lplex_vc_id = "$Id: LPlex.c,v 1.1.1.1 2006/10/11 09:54:44 jal58 Exp $";
 
 #include <stdio.h>
@@ -329,22 +331,23 @@ static void LinkEquiv(void)
    for (p=eqList; p!=NULL; p=p->next) {
       cl = p->classId; eq = p->equivId;
       if (eq->aux==NULL) {
-	 eq->aux = (Ptr) (nWords + unkEquiv);
+	 eq->aux = (Ptr)(unsigned long int)(nWords + unkEquiv);
 	 unkEquiv++;
       }
-      eqId[(int) eq->aux] = cl;
+      eqId[(unsigned long int)eq->aux] = cl;
    }
 }
 
 /* Initialise: perform global initialisations */
 static void Initialise(void)
 {
-   int i,j,ndx;
+   int j;
+   unsigned long int i,ndx;
    float x;
    LMInfo *li;
    Boolean inLM;
    LabId *wid,lab;
-   NameId *na,nid;
+   NameId *na;
    Boolean isPipe;
 
    nulClass = GetLabId(nulName,TRUE);
@@ -393,7 +396,7 @@ static void Initialise(void)
 	   {
 	     lab = GetLabId(na[j+1]->name, TRUE);
 	     if (lab->aux==NULL)
-	       lab->aux = (Ptr) (++nWords);
+	       lab->aux = (Ptr)(unsigned long int)(++nWords);
 	   }
 	 }
 	 else
@@ -404,7 +407,7 @@ static void Initialise(void)
 	   {
 	     lab = GetLabId(na[j+1]->name,TRUE);
 	     if (lab->aux==NULL)
-	       lab->aux = (Ptr) (++nWords);
+	       lab->aux = (Ptr)(unsigned long int)(++nWords);
 	   }
 	 }
       }
@@ -418,7 +421,7 @@ static void Initialise(void)
 	  for (j=0; j<li->lm->classW; j++)
 	  {
 	    lab = GetLabId(na[j+1]->name,TRUE);
-	    ndx = ((int) lab->aux) - 1;
+	    ndx = ((unsigned long int) lab->aux) - 1;
 	    wList.id[ndx] = lab;
 	  }
 	}
@@ -429,7 +432,7 @@ static void Initialise(void)
 	  for (j=0; j<li->lm->vocSize; j++)
 	  {
 	    lab = GetLabId(na[j+1]->name,TRUE);
-	    ndx = ((int) lab->aux) - 1;
+	    ndx = ((unsigned long int) lab->aux) - 1;
 	    wList.id[ndx] = lab;
 	  }
 	}
@@ -459,14 +462,14 @@ static void Initialise(void)
       for (wid = wList.id, j=0; j<nWords; j++, wid++) {
 	if (li->lm->classLM)
 	{
-	  nid = na[(int) ((*wid)->aux)] = GetNameId(li->lm->classH, (*wid)->name, FALSE);
+	  na[(unsigned long int)((*wid)->aux)] = GetNameId(li->lm->classH, (*wid)->name, FALSE);
 	}
 	else
 	{
-	  nid = na[(int) ((*wid)->aux)] = GetNameId(li->lm->htab, (*wid)->name, FALSE);
+	  na[(unsigned long int)((*wid)->aux)] = GetNameId(li->lm->htab, (*wid)->name, FALSE);
 	}
 #ifdef SANITY
-	 if (nid==NULL)
+	 if (na[(unsigned long int)((*wid)->aux)]==NULL)
 	    HError(-16625,"Unable to find word %s in model %s\n",(*wid)->name,li->fn);
 #endif
       }
@@ -476,7 +479,7 @@ static void Initialise(void)
    /* ensure words present at least in one model */
    for (wid = wList.id, j=0; j<nWords; j++, wid++) {
       for (inLM=FALSE,i=0; i<nLModel; i++, li++)
-	 if (l2nId[i][(int) ((*wid)->aux)]!=NULL)
+	 if (l2nId[i][(unsigned long int)((*wid)->aux)]!=NULL)
 	    inLM = TRUE;
       if (!inLM)
 	 HError(16625,"Unable to find word %s in any model\n",(*wid)->name);
@@ -485,7 +488,7 @@ static void Initialise(void)
    /* create equivalence class lookup array */
    eqId = (LabId *) New(&permHeap,(nWords+NumEquiv()+2)*sizeof(NameId));
    for (wid = wList.id, i=0; i<nWords; i++, wid++) {
-      eqId[(int) ((*wid)->aux)] = NULL;
+      eqId[(unsigned long int)((*wid)->aux)] = NULL;
    }
 
    /* link equivalence classes */
@@ -616,7 +619,7 @@ static LabId GetEQLab(LabId id)
    if (id->aux==NULL)
       return id;
 
-   if ((cl = (LabId) eqId[(int) (id->aux)])==NULL)
+   if ((cl = (LabId) eqId[(unsigned long int)(id->aux)])==NULL)
       return id;
    return cl;
 }
@@ -639,7 +642,7 @@ static double GetProb(LabId *wlab, int nSize)
    if (nLModel==1) {
       inThisLM = TRUE;
       for (j=0; j<nSize; j++) {
-	 if ((nGram[j] = l2nId[0][(int) (wlab[j]->aux)])==NULL)
+	 if ((nGram[j] = l2nId[0][(unsigned long int)(wlab[j]->aux)])==NULL)
 	    inThisLM = FALSE;
       }
       if (inThisLM) {
@@ -656,7 +659,7 @@ static double GetProb(LabId *wlab, int nSize)
       inAnyLM = FALSE;
       for (li=lmInfo, i=0; i<nLModel; i++, li++) {
 	 for (inThisLM=TRUE, j=0; j<nSize; j++) {
-	    if ((nGram[j] = l2nId[i][(int) (wlab[j]->aux)])==NULL)
+	    if ((nGram[j] = l2nId[i][(unsigned long int) (wlab[j]->aux)])==NULL)
 	       inThisLM = FALSE;
 	 }
 	 if (!inThisLM)

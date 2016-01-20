@@ -3,29 +3,32 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Machine Intelligence Laboratory                        */
-/*      Department of Engineering                              */
-/*      University of Cambridge                                */
-/*      http://mi.eng.cam.ac.uk/                               */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2002-2003  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLVmodel.h Model handling for HTK LV Decoder  */
+/*      File: HLVModel.h  Model handling for HTK LV decoder    */
 /* ----------------------------------------------------------- */
+
+/* !HVER!HLVModel:   3.5.0 [CUED 12/10/15] */
 
 #ifndef _HLVMODEL_H_
 #define _HLVMODEL_H_
@@ -147,8 +150,7 @@ struct _StateInfo_lv {
 
 StateInfo_lv *ConvertHSet(MemHeap *heap, HMMSet *hset, Boolean useHModel);
 LogFloat OutP_lv (StateInfo_lv *si,  unsigned short s, float *x);
-void OutPBlock (StateInfo_lv *si, Observation **obsBlock, 
-                int n, int sIdx, float acScale, LogFloat *outP);
+void OutPBlock (StateInfo_lv *si, Observation **obsBlock, int n, int sIdx, float acScale, LogFloat *outP, Ptr dec);
 
 
 
@@ -212,9 +214,5 @@ typedef stuct {
 
 #endif  /* _HLVMODEL_H_ */
 
+/* ------------------------ End of HLVModel.h ----------------------- */
 
-/*  CC-mode style info for emacs
- Local Variables:
- c-file-style: "htk"
- End:
-*/

@@ -3,37 +3,45 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Machine Intelligence Laboratory                        */
-/*      Department of Engineering                              */
-/*      University of Cambridge                                */
-/*      http://mi.eng.cam.ac.uk/                               */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2000-2003  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2000-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HDecode.c  HTK Large Vocabulary Decoder       */
+/*         File: HDecode.c  HTK large vocabulary decoder       */
 /* ----------------------------------------------------------- */
 
-char *hdecode_version = "!HVER!HDecode:   3.4.1 [GE 12/03/09]";
-char *hdecode_sccs_id = "$Id: HDecode.c,v 1.1.1.1 2006/10/11 09:54:55 jal58 Exp $";
+char *hdecode_version = "!HVER!HDecode:   3.5.0 [CUED 12/10/15]";
+char *hdecode_sccs_id = "$Id: HDecode.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 /* this is just the tool that handles command line arguments and
    stuff, all the real magic is in HLVNet and HLVRec */
 
 
+#include "config.h"
+#ifdef IMKL
+#include "mkl.h"
+#endif
+#ifdef CUDA
+#include "HCUDA.h"
+#endif
 #include "HShell.h"
 #include "HMem.h"
 #include "HMath.h"
@@ -43,14 +51,18 @@ char *hdecode_sccs_id = "$Id: HDecode.c,v 1.1.1.1 2006/10/11 09:54:55 jal58 Exp 
 #include "HAudio.h"
 #include "HParm.h"
 #include "HDict.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h"
 #include "HTrain.h"
 #include "HAdapt.h"
 #include "HNet.h"       /* for Lattice */
+#include "HArc.h"
 #include "HLat.h"       /* for Lattice */
+#include "HFBLat.h"
+#include "HNCache.h"
 
-#include "config.h"
+#include "lvconfig.h"
 
 #include "HLVNet.h"
 #include "HLVRec.h"
@@ -85,6 +97,9 @@ static Boolean latRescore = FALSE; /* read lattice for each utterance and rescor
 static char *latInDir = NULL;   /* lattice input directory */
 static char *latInExt = "lat";  /* latttice input extension */
 static char *latFileMask = NULL; /* mask for reading lattice */
+/* from mjfg, cz277 - 141022 */
+static char *latOFileMask = NULL; /* mask for writing lattice */
+static char *labOFileMask = NULL; /* mask for writing labels */
 
 static Boolean latGen = FALSE;  /* output lattice? */
 static char *latOutDir = NULL;  /* lattice output directory */
@@ -131,6 +146,11 @@ static Boolean useHModel = FALSE; /* use standard HModel OutP functions */
 static int outpBlocksize = 1;   /* number of frames for which outP is calculated in one go */
 static Observation *obs;        /* array of Observations */
 
+/* cz277 - ANN */
+/*static int batchSamples;*/
+static LabelInfo labelInfo;
+static DataCache *cache[SMAX];
+
 /* transforms/adaptatin */
 /* information about transforms */
 static XFInfo xfInfo;
@@ -147,6 +167,8 @@ static MemHeap lmHeap;
 static MemHeap inputBufHeap;
 static MemHeap transHeap;
 static MemHeap regHeap;
+/* cz277 - ANN */
+static MemHeap cacheHeap;
 
 /* -------------------------- Prototypes -------------------------------- */
 void SetConfParms (void);
@@ -199,6 +221,13 @@ SetConfParms (void)
       if (GetConfStr(cParm,nParm,"LATFILEMASK",buf)) {
          latFileMask = CopyString(&gstack, buf);
       }
+      /* from mjfg, cz277 - 141022 */
+      if (GetConfStr(cParm,nParm,"LATOFILEMASK",buf)) {
+         latOFileMask = CopyString(&gstack, buf);
+      }
+      if (GetConfStr(cParm,nParm,"LABOFILEMASK",buf)) {
+         labOFileMask = CopyString(&gstack, buf);
+      }
    }
 }
 
@@ -211,7 +240,7 @@ ReportUsage (void)
 
    printf (" -d s    dir to find hmm definitions       current\n");
    printf (" -i s    Output transcriptions to MLF s      off\n");
-   printf (" -k i    block size for outP calculation     1\n");
+   /*printf (" -k i    block size for outP calculation     1\n");*/
    printf (" -l s    dir to store label files	    current\n");
    printf (" -o s    output label formating NCSTWMX      none\n");
    printf (" -h s    speaker name pattern                none\n");
@@ -240,7 +269,7 @@ ReportUsage (void)
 #ifdef TSIDOPT
    printf ("TSIDOPT ");
 #endif   
-   printf ("\n  sizes: PronId=%d  LMId=%d \n", sizeof (PronId), sizeof (LMId));
+   printf ("\n  sizes: PronId=%lu  LMId=%lu \n", sizeof (PronId), sizeof (LMId));
 }
 
 int
@@ -248,26 +277,39 @@ main (int argc, char *argv[])
 {
    char *s, *datafn;
    DecoderInst *dec;
+   /* cz277 - ANN */
+   int i;
+   char fnbuf[MAXSTRLEN];
 
    if (InitShell (argc, argv, hdecode_version, hdecode_sccs_id) < SUCCESS)
-      HError (4000, "HDecode: InitShell failed");
+      HError (3900, "HDecode: InitShell failed");
 
    InitMem ();
+#ifdef CUDA
+    InitCUDA();
+#endif   
    InitMath ();
    InitSigP ();
    InitWave ();
    InitLabel ();
    InitAudio ();
+   InitANNet();		/* cz277 - ANN */
    InitModel ();
    if (InitParm () < SUCCESS)
-      HError (4000, "HDecode: InitParm failed");
+      HError (3900, "HDecode: InitParm failed");
    InitUtil ();
    InitDict ();
    InitLVNet ();
+   InitNet();
    InitLVLM ();
    InitLVRec ();
-   InitAdapt (&xfInfo);
+   /* cz277 - xform */
+   /*InitAdapt (&xfInfo);*/
+   InitAdapt();
+   InitXFInfo(&xfInfo);
+   
    InitLat ();
+   InitNCache();	/* cz277 - ANN */
 
    if (!InfoPrinted () && NumArgs () == 0)
       ReportUsage ();
@@ -284,108 +326,105 @@ main (int argc, char *argv[])
    while (NextArg () == SWITCHARG) {
       s = GetSwtArg ();
       if (strlen (s) != 1)
-	 HError (4019, "HDecode: Bad switch %s; must be single letter", s);
+	 HError (3919, "HDecode: Bad switch %s; must be single letter", s);
       switch (s[0]) {
       case 'd':
 	 if (NextArg() != STRINGARG)
-	    HError(4119,"HDecode: HMM definition directory expected");
+	    HError(3919,"HDecode: HMM definition directory expected");
 	 hmmDir = GetStrArg(); 
 	 break;
       case 'x':
 	 if (NextArg() != STRINGARG)
-	    HError(4119,"HDecode: HMM file extension expected");
+	    HError(3919,"HDecode: HMM file extension expected");
 	 hmmExt = GetStrArg(); 
 	 break;
 	 
       case 'i':
 	 if (NextArg () != STRINGARG)
-	    HError (4019, "HDecode: Output MLF file name expected");
+	    HError (3919, "HDecode: Output MLF file name expected");
 	 if (SaveToMasterfile (GetStrArg ()) < SUCCESS)
-	    HError (4014, "HDecode: Cannot write to MLF");
+	    HError (3914, "HDecode: Cannot write to MLF");
 	 break;
 
       case 'P':
 	 if (NextArg () != STRINGARG)
-	    HError (3219, "HVite: Target Label File format expected");
+	    HError (3919, "HDecode: Target Label File format expected");
 	 if ((ofmt = Str2Format (GetStrArg ())) == ALIEN)
-	    HError (-3289,
-		    "HVite: Warning ALIEN Label output file format set");
+	    HError (-3989, "HDecode: Warning ALIEN Label output file format set");
 	 break;
 
       case 'l':
 	 if (NextArg () != STRINGARG)
-	    HError (4019, "HDecode: Label/Lattice output directory expected");
+	    HError (3919, "HDecode: Label/Lattice output directory expected");
 	 labDir = GetStrArg ();
          latOutDir = labDir;
 	 break;
       case 'o':
 	 if (NextArg () != STRINGARG)
-	    HError (4019, "HDecode: Output label format expected");
+	    HError (3919, "HDecode: Output label format expected");
 	 labForm = GetStrArg ();
 	 break;
       case 'y':
 	 if (NextArg () != STRINGARG)
-	    HError (4019, "HDecode: Output label file extension expected");
+	    HError (3919, "HDecode: Output label file extension expected");
 	 labExt = GetStrArg ();
 	 break;
 
       case 'X':
 	 if (NextArg () != STRINGARG)
-	    HError (4019, "HDecode: Input Lattice file extension expected");
+	    HError (3919, "HDecode: Input Lattice file extension expected");
 	 latInExt = GetStrArg ();
 	 break;
       case 'L':
 	 if (NextArg () != STRINGARG)
-	    HError (4019, "HDecode: Input Lattice directory expected");
+	    HError (3919, "HDecode: Input Lattice directory expected");
 	 latInDir = GetStrArg ();
 	 break;
 
       case 'q':
 	 if (NextArg () != STRINGARG)
-	    HError (4019, "HDecode: Output lattice format expected");
+	    HError (3919, "HDecode: Output lattice format expected");
 	 latOutForm = GetStrArg ();
 	 break;
       case 'z':
          latGen = TRUE;
 	 if (NextArg () != STRINGARG)
-	    HError (4019, "HDecode: Output lattice file extension expected");
+	    HError (3919, "HDecode: Output lattice file extension expected");
 	 latOutExt = GetStrArg ();
 	 break;
 
       case 'p':
 	 if (NextArg () != FLOATARG)
-	    HError (4019, "HDecode: word insertion penalty expected");
+	    HError (3919, "HDecode: word insertion penalty expected");
          insPen = GetFltArg ();
-         if (insPen > 0.0)
-            HError (-1, "HDecode: positive word insertion penalty???");
 	 break;
       case 'a':
 	 if (NextArg () != FLOATARG)
-	    HError (4019, "HDecode: acoustic scale factor expected");
+	    HError (3919, "HDecode: acoustic scale factor expected");
 	 acScale = GetFltArg ();
 	 break;
       case 'r':
 	 if (NextArg () != FLOATARG)
-	    HError (4019, "HDecode: pronunciation scale factor expected");
+	    HError (3919, "HDecode: pronunciation scale factor expected");
 	  pronScale = GetFltArg ();
-          silDict = TRUE;       /* #### maybe separate switch for this? */
+          silDict = TRUE;
 	 break;
       case 's':
 	 if (NextArg () != FLOATARG)
-	    HError (4019, "HDecode: LM scale factor expected");
+	    HError (3919, "HDecode: LM scale factor expected");
          lmScale= GetFltArg ();
 	 break;
 
 
       case 'u':
 	 if (NextArg () != INTARG)
-	    HError (4019, "HDecode: max model pruning limit expected");
+	    HError (3919, "HDecode: max model pruning limit expected");
          maxModel = GetIntArg ();
 	 break;
 
       case 't':
 	 if (NextArg () != FLOATARG)
-	    HError (4019, "HDecode: beam width expected");
+	    HError (3919, "HDecode: beam width expected");
 	 beamWidth = GetFltArg ();
          if (latPruneBeam == -LZERO)
             latPruneBeam = beamWidth;
@@ -396,7 +435,7 @@ main (int argc, char *argv[])
 
       case 'v':
 	 if (NextArg () != FLOATARG)
-	    HError (4019, "HDecode: wordend beam width expected");
+	    HError (3919, "HDecode: wordend beam width expected");
          weBeamWidth = GetFltArg ();
          zsBeamWidth = weBeamWidth;
 	 if (NextArg () == FLOATARG)
@@ -405,7 +444,6 @@ main (int argc, char *argv[])
 
       case 'w':
 	 if (NextArg() != STRINGARG) {
-            /*	    HError (4119,"HDecode: LM File name expected"); */
             latRescore = TRUE;
          }
          else
@@ -415,14 +453,15 @@ main (int argc, char *argv[])
       case 'n':
 	 nTok = GetChkedInt (0, 1024, s);
 	 break;
-
       case 'k':
+         HError(-3919, "HDecode: -k option no long supported, ignored");
+         break;
+      /*case 'k':
 	 outpBlocksize = GetChkedInt (0, MAXBLOCKOBS, s);
-	 break;
-
+	 break;*/
       case 'H':
 	 if (NextArg() != STRINGARG)
-	    HError (4119,"HDecode: MMF File name expected");
+	    HError (3919,"HDecode: MMF File name expected");
 	 AddMMF (&hset, GetStrArg()); 
 	 break;
       case 'T':
@@ -431,7 +470,7 @@ main (int argc, char *argv[])
 
       case 'h':
          if (NextArg()!=STRINGARG)
-	    HError (4019, "HDecode: Speaker name pattern expected");
+	    HError (3919, "HDecode: Speaker name pattern expected");
          xfInfo.outSpkrPat = GetStrArg();
          if (NextArg()==STRINGARG) {
             xfInfo.inSpkrPat = GetStrArg();
@@ -439,101 +478,118 @@ main (int argc, char *argv[])
                xfInfo.paSpkrPat = GetStrArg(); 
          }
          if (NextArg() != SWITCHARG)
-	    HError (4019, "HDecode: cannot have -h as the last option");
+	    HError (3919, "HDecode: cannot have -h as the last option");
          break;
       case 'm':
 	 xfInfo.useInXForm = TRUE;
          break;
       case 'E':
          if (NextArg()!=STRINGARG)
-            HError(4019,"HDecode: parent transform directory expected");
+            HError(3919,"HDecode: parent transform directory expected");
 	 xfInfo.usePaXForm = TRUE;
          xfInfo.paXFormDir = GetStrArg(); 
          if (NextArg()==STRINGARG)
             xfInfo.paXFormExt = GetStrArg(); 
 	 if (NextArg() != SWITCHARG)
-            HError(4019,"HDecode: cannot have -E as the last option");	  
+            HError(3919,"HDecode: cannot have -E as the last option");	  
          break;              
       case 'J':
          if (NextArg()!=STRINGARG)
-            HError(4019,"HDecode: input transform directory expected");
+            HError(3919,"HDecode: input transform directory expected");
          AddInXFormDir(&hset,GetStrArg());
          if (NextArg()==STRINGARG)
             xfInfo.inXFormExt = GetStrArg(); 
 	 if (NextArg() != SWITCHARG)
-            HError(4019,"HDecode: cannot have -J as the last option");	  
+            HError(3919,"HDecode: cannot have -J as the last option");	  
          break;              
       case 'K':
-         HError(4019,"HDecode: transform estimation (-K option) not supported yet");	  
+         HError(3919,"HDecode: transform estimation (-K option) not supported yet");	  
          if (NextArg()!=STRINGARG)
-            HError(4019,"HDecode: output transform directory expected");
+            HError(3919,"HDecode: output transform directory expected");
          xfInfo.outXFormDir = GetStrArg(); 
 	 xfInfo.useOutXForm = TRUE;
          if (NextArg()==STRINGARG)
             xfInfo.outXFormExt = GetStrArg(); 
 	 if (NextArg() != SWITCHARG)
-            HError(4019,"HDecode: cannot have -K as the last option");	  
+            HError(3919,"HDecode: cannot have -K as the last option");	  
          break;              
       case 'N':
-         HError (4019, "HDecode: old style fv transform not supported!");
+         HError (3919, "HDecode: old style fv transform not supported!");
 	 break;
       case 'Q':
-         HError (4019, "HDecode: old style mllr transform not supported!");
+         HError (3919, "HDecode: old style mllr transform not supported!");
 	 break;
-
       case 'R':
 	 if (NextArg () != STRINGARG)
-	    HError (4019, "HDecode: best align MLF name expected");
+	    HError (3919, "HDecode: best align MLF name expected");
 	 bestAlignMLF = GetStrArg ();
 	 break;
-
-
       default:
-	 HError (4019, "HDecode: Unknown switch %s", s);
+	 HError (3919, "HDecode: Unknown switch %s", s);
       }
    }
 
    if (NextArg () != STRINGARG)
-      HError (4019, "HDecode Vocab file name expected");
+      HError (3919, "HDecode Vocab file name expected");
    dictfn = GetStrArg ();
 
    if (NextArg () != STRINGARG)
-      HError (4019, "HDecode model list file name expected");
+      HError (3919, "HDecode model list file name expected");
    hmmListfn = GetStrArg ();
 
    if (beamWidth > -LSMALL)
-      HError (4019, "main beam is too wide!");
+      HError (3919, "main beam is too wide!");
 
    if (xfInfo.useInXForm) {
       if (!useHModel) {
-         HError (-4019, "HDecode: setting USEHMODEL to TRUE.");
+         HError (-3919, "HDecode: setting USEHMODEL to TRUE.");
          useHModel = TRUE;
       }
-      if (outpBlocksize != 1) {
+      /*if (outpBlocksize != 1) {
          HError (-4019, "HDecode: outP blocksize >1 not supported with new XForm code! setting to 1.");
          outpBlocksize = 1;
-      }
+      }*/
    }   
 
-
+#ifdef CUDA
+    StartCUDA();
+#endif
+    /* cz277 - 151020 */
+#ifdef MKL
+    StartMKL();
+#endif
    /* load models and initialise decoder */
    dec = Initialise ();
+#ifdef CUDA
+    ShowGPUMemUsage();
+#endif
 
    /* load 1-best alignment */
    if (bestAlignMLF)
       LoadMasterFile (bestAlignMLF);
 
+   /* cz277 - ANN */
+   if (trace & T_TOP) {
+      if (hset.annSet == NULL) {
+         printf("Processing data directly from the input files");
+      }
+      else {
+         printf("Proccesing data through the cache\n");
+      }
+   }
 
    while (NumArgs () > 0) {
       if (NextArg () != STRINGARG)
-	 HError (4019, "HDecode: Data file name expected");
+	 HError (3919, "HDecode: Data file name expected");
       datafn = GetStrArg ();
-
+      /* cz277 - ANN */
+      strcpy(fnbuf, datafn);
       if (trace & T_TOP) {
 	 printf ("File: %s\n", datafn);
 	 fflush (stdout);
       }
-      DoRecognition (dec, datafn);
+      DoRecognition (dec, fnbuf);
+      /*DoRecognition (dec, datafn);*/
       /* perform recognition */
    }
 
@@ -545,6 +601,19 @@ main (int argc, char *argv[])
    /* maybe output transforms for last speaker */
    UpdateSpkrStats(&hset,&xfInfo, NULL); 
 
+   /* cz277 - ANN */
+   /* remove the ANNSet matrices and vectors */
+   if (hset.annSet != NULL) {
+       FreeANNSet(&hset);
+       for (i = 1; i <= hset.swidth[0]; ++i) {
+           FreeCache(cache[i]);
+       }
+   }
+
+#ifdef CUDA
+    StopCUDA();
+#endif
+
    Exit(0);             /* maybe print config and exit */
    return (0);
 }
@@ -555,6 +624,9 @@ DecoderInst *Initialise (void)
    DecoderInst *dec;
    Boolean eSep;
    Boolean modAlign;
+   /* cz277 - ANN */
+   FILE *script;
+   int scriptcount;
 
    /* init Heaps */
    CreateHeap (&netHeap, "Net heap", MSTAK, 1, 0,100000, 800000);
@@ -569,17 +641,24 @@ DecoderInst *Initialise (void)
 
    InitVocab (&vocab);
    if (ReadDict (dictfn, &vocab) < SUCCESS)
-      HError (9999, "Initialise: ReadDict failed");
+      HError (3913, "Initialise: ReadDict failed");
 
    /* Read accoustic models */
    if (trace & T_TOP) {
       printf ("Reading acoustic models...");
       fflush (stdout);
    }
+
    if (MakeHMMSet (&hset, hmmListfn) < SUCCESS) 
-      HError (4128, "Initialise: MakeHMMSet failed");
+      HError (3900, "Initialise: MakeHMMSet failed");
    if (LoadHMMSet (&hset, hmmDir, hmmExt) < SUCCESS) 
-      HError (4128, "Initialise: LoadHMMSet failed");
+      HError (3900, "Initialise: LoadHMMSet failed");
+   CreateTmpNMat(hset.hmem);
+
+   /* cz277 - ANN */
+   if (hset.hsKind == HYBRIDHS || hset.feaMix[1] != NULL) {    /* for Tandem and Hybrid systems, use a different way of batch processing */
+      outpBlocksize = 1;
+   }
    
    /* convert to INVDIAGC */
    ConvDiagC (&hset, TRUE);
@@ -588,24 +667,34 @@ DecoderInst *Initialise (void)
    if (trace&T_TOP) {
       printf("Read %d physical / %d logical HMMs\n",
 	     hset.numPhyHMM, hset.numLogHMM);  
+      /* cz277 - ANN */
+      if (hset.annSet != NULL) {
+         if (hset.hsKind == HYBRIDHS)
+            printf("Hybrid ANN set: ");
+         else
+            printf("Tandem ANN set: ");
+         ShowANNSet(&hset);
+      }
       fflush (stdout);
    }
+
+   SetupNMatRPLInfo(&hset);
+   SetupNVecRPLInfo(&hset);
 
    /* process dictionary */
    startLab = GetLabId (startWord, FALSE);
    if (!startLab) 
-      HError (9999, "HDecode: cannot find STARTWORD '%s'\n", startWord);
+      HError (3920, "HDecode: cannot find STARTWORD '%s'\n", startWord);
    endLab = GetLabId (endWord, FALSE);
    if (!endLab) 
-      HError (9999, "HDecode: cannot find ENDWORD '%s'\n", endWord);
+      HError (3920, "HDecode: cannot find ENDWORD '%s'\n", endWord);
 
    spLab = GetLabId (spModel, FALSE);
    if (!spLab)
-      HError (9999, "HDecode: cannot find label 'sp'");
+      HError (3920, "HDecode: cannot find label 'sp'");
    silLab = GetLabId (silModel, FALSE);
    if (!silLab)
-      HError (9999, "HDecode: cannot find label 'sil'");
-
+      HError (3920, "HDecode: cannot find label 'sil'");
 
    if (silDict) {    /* dict contains -/sp/sil variants (with probs) */
       ConvertSilDict (&vocab, spLab, silLab, startLab, endLab);
@@ -619,27 +708,26 @@ DecoderInst *Initialise (void)
 
          spLab = GetLabId ("sp", FALSE);
          if (!spLab)
-            HError (9999, "cannot find 'sp' model.");
+            HError (3921, "cannot find 'sp' model.");
 
          spML = FindMacroName (&hset, 'l', spLab);
          if (!spML)
-            HError (9999, "cannot find model for sp");
+            HError (3921, "cannot find model for sp");
          spHMM = spML->structure;
          N = spHMM->numStates;
 
          if (spHMM->transP[1][N] > LSMALL)
-            HError (9999, "HDecode: using -/sp/sil dictionary but sp contains tee transition!");
+            HError (3922, "HDecode: using -/sp/sil dictionary but sp contains tee transition!");
       }
    }
    else {       /* lvx-style dict (no sp/sil at wordend */
       MarkAllProns (&vocab);
    }
    
-
    if (!latRescore) {
 
       if (!langfn)
-         HError (9999, "HDecode: no LM or lattice specified");
+         HError (3919, "HDecode: no LM or lattice specified");
 
       /* mark all words  for inclusion in Net */
       MarkAllWords (&vocab);
@@ -665,21 +753,22 @@ DecoderInst *Initialise (void)
       if (strchr (latOutForm, 'd'))
          modAlign = TRUE;
       if (strchr (latOutForm, 'n'))
-         HError (9999, "DoRecognition: likelihoods for model alignment not supported");
+         HError (3901, "DoRecognition: likelihoods for model alignment not supported");
    }
 
    /* create Decoder instance */
    dec = CreateDecoderInst (&hset, lm, nTok, TRUE, useHModel, outpBlocksize,
                             bestAlignMLF ? TRUE : FALSE,
                             modAlign);
-   
+
    /* create buffers for observations */
    SetStreamWidths (hset.pkind, hset.vecSize, hset.swidth, &eSep);
 
-   obs = (Observation *) New (&gcheap, outpBlocksize * sizeof (Observation));
-   for (i = 0; i < outpBlocksize; ++i)
+   obs = (Observation *) New (&gcheap, outpBlocksize * sizeof (Observation));	/* TODO: for Tandem system, might need an extra obs */
+   for (i = 0; i < outpBlocksize; ++i) {
       obs[i] = MakeObservation (&gcheap, hset.swidth, hset.pkind, 
                                 (hset.hsKind == DISCRETEHS), eSep);
+   }
 
    CreateHeap (&inputBufHeap, "Input Buffer Heap", MSTAK, 1, 1.0, 80000, 800000);
 
@@ -697,6 +786,35 @@ DecoderInst *Initialise (void)
       /* online adaptation not supported yet! */
    }
 
+   /* cz277 - ANN */
+   /* ANN and data cache related code */
+   /* set label info */
+   if (hset.annSet != NULL) {
+      labelInfo.labelKind = LABLK;
+      labelInfo.labFileMask = NULL;
+      labelInfo.labDir = labDir;
+      labelInfo.labExt = labExt;
+      labelInfo.latFileMask = NULL;
+      labelInfo.latMaskNum = NULL;
+      labelInfo.numLatDir = NULL;
+      labelInfo.nNumLats = 0;
+      labelInfo.numLatSubDirPat = NULL;
+      labelInfo.latMaskDen = NULL;
+      labelInfo.denLatDir = NULL;
+      labelInfo.nDenLats = 0;
+      labelInfo.denLatSubDirPat = NULL;
+      labelInfo.latExt = NULL;
+      /* get script info */
+      script = GetTrainScript(&scriptcount);
+      /* initialise the cache heap */
+      CreateHeap(&cacheHeap, "cache heap", CHEAP, 1, 0, 100000000, ULONG_MAX);
+      /* initialise DataCache structure */
+      for (i = 1; i <= hset.swidth[0]; ++i) {
+         /*cache[i] = CreateCache(&cacheHeap, script, scriptcount, &hset, &obs[0], 1, -1, NONEVK, &xfInfo, NULL, TRUE);*/
+         cache[i] = CreateCache(&cacheHeap, script, scriptcount, &hset, &obs[0], 1, GetDefaultNCacheSamples(), NONEVK, &xfInfo, NULL, TRUE);
+         InitCache(cache[i]);
+      }
+   }
 
 #ifdef LEGACY_CUHTK2_MLLR
    /* initialise adaptation */
@@ -798,8 +916,8 @@ BestInfo *CreateBestInfo (MemHeap *heap, char *fn, HTime frameDur)
    LLink ll;
    LexNode *ln;
    MLink m;
-   LabId lnLabId;
    BestInfo *bestAlignInfo;
+   LabId lnLabId;
 
    MakeFN (fn, "", "rec", alignFN);
    bestTrans = LOpen (&transHeap, alignFN, HTK);
@@ -829,7 +947,8 @@ BestInfo *CreateBestInfo (MemHeap *heap, char *fn, HTime frameDur)
    printf ("%8.0f %8.0f %8s   ln %p %8s\n", ll->start, ll->end, ll->labid->name, 
            ln, lnLabId->name);
 #endif
-   assert (ll->labid == lnLabId);
+   if(ll->labid != lnLabId)
+     HError(3901,"CreateBestInfo: labels differ");
    bestAlignInfo = New (&transHeap, sizeof (BestInfo));
    bestAlignInfo->start = ll->start / (frameDur*1.0e7);
    bestAlignInfo->end = ll->end / (frameDur*1.0e7);
@@ -862,7 +981,7 @@ void PrintAlignBestInfo (DecoderInst *dec, BestInfo *b)
 
    if (b->ln->type == LN_MODEL) {
       monoPhone =(LabId) b->ln->data.hmm->hook;
-      phonePost = dec->phonePost[(int) monoPhone->aux];
+      phonePost = dec->phonePost[(unsigned long int) monoPhone->aux];
    } else
       phonePost = 999.99;
 
@@ -884,7 +1003,7 @@ void AnalyseSearchSpace (DecoderInst *dec, BestInfo *bestInfo)
 
    monoPhone =(LabId) dec->bestInst->node->data.hmm->hook;
    printf ("frame %4d best %.3f phonePost %.3f\n", dec->frame, 
-           dec->bestScore, dec->phonePost[(int) monoPhone->aux]);
+           dec->bestScore,dec->phonePost[(unsigned long int)monoPhone->aux]);
  
    for (b = bestInfo; b; b = b->next) {
       if (b->start < dec->frame && b->end >= dec->frame) 
@@ -903,270 +1022,404 @@ void AnalyseSearchSpace (DecoderInst *dec, BestInfo *bestInfo)
 
 /*****************  main recognition function  ************************/
 
+/* cz277 - ANN */
+static void LoadCacheVec(DecoderInst *dec, int frameNum, HMMSet *hset) {
+    int s, S, i, j, offset;
+    NMatrix *srcMat;
+    FELink feaElem;
+    LELink layerElem;
+
+    S = hset->swidth[0];
+    for (i = 0; i < frameNum; ++i) {
+        for (s = 1; s <= S; ++s) {
+            offset = 1;
+            if (dec->decodeKind == HYBRIDDK) {  /* hybrid models, cache the outputs */
+                layerElem = hset->annSet->outLayers[s];
+                srcMat = hset->annSet->llhMat[s];
+                CopyNFloatSeg2FloatSeg(srcMat->matElems + i * layerElem->nodeNum, layerElem->nodeNum, dec->cacheVec[i][s] + offset);
+            }
+            else if (dec->decodeKind == TANDEMDK) {    /* tandem models, cache the features */
+                for (j = 0; j < hset->feaMix[s]->elemNum; ++j) {
+                    feaElem = hset->feaMix[s]->feaList[j];
+                    srcMat = feaElem->feaMats[1];
+                    CopyNFloatSeg2FloatSeg(srcMat->matElems + i * feaElem->srcDim + feaElem->dimOff, feaElem->extDim, dec->cacheVec[i][s] + offset); 
+                    offset += feaElem->extDim;
+                }
+            }
+            else {
+                HError(3990, "LoadCacheVec: DataCache is only applicable for hybrid and tandem systems");
+            }
+        }
+    }
+}
+
 void DoRecognition (DecoderInst *dec, char *fn)
 {
-   char buf1[MAXSTRLEN], buf2[MAXSTRLEN];
-   ParmBuf parmBuf;
-   BufferInfo pbInfo;
-   int frameN, frameProc, i, bs;
-   Transcription *trans;
-   Lattice *lat;
-   clock_t startClock, endClock;
-   double cpuSec;
-   Observation *obsBlock[MAXBLOCKOBS];
-   BestInfo *bestAlignInfo = NULL;
+    char buf1[MAXSTRLEN], buf2[MAXSTRLEN];
+    ParmBuf parmBuf;
+    BufferInfo pbInfo;
+    int frameN, frameProc, i, bs, uttCnt;
+    Transcription *trans;
+    Lattice *lat;
+    clock_t startClock, endClock;
+    double cpuSec;
+    Observation *obsBlock[MAXBLOCKOBS];
+    BestInfo *bestAlignInfo = NULL;
+    /* cz277 - ANN */
+    int cUttLen, uttLen, nLoaded;
+    LELink layerElem;
+    /* cz277 - clock */
+    clock_t fwdStClock, fwdClock = 0, decStClock, decClock = 0, loadStClock, loadClock = 0;
+    double fwdSec = 0.0, decSec = 0.0, loadSec = 0.0;
+    /* cz277 - xform */
+    UttElem *uttElem;
 
-   /* This handles the initial input transform, parent transform setting
-      and output transform creation */
-   { 
-      Boolean changed;
+    /* This handles the initial input transform, parent transform setting
+       and output transform creation */
+    { 
+#if 0
+         Boolean changed;
 
-      changed = UpdateSpkrStats(&hset, &xfInfo, fn);
+	 changed =
+#endif
+         UpdateSpkrStats(&hset, &xfInfo, fn);
 
 #if 0   /* not neccessary if for USEHMODEL=T */
       if (changed)
          dec->si = ConvertHSet (&modelHeap, &hset, dec->useHModel);
 #endif
-   }
+    }
 
-   startClock = clock();
+    startClock = clock();
 
-   /* get transcrition of 1-best alignment */
-   if (bestAlignMLF)
-      bestAlignInfo = CreateBestInfo (&transHeap, fn, pbInfo.tgtSampRate/1.0e7);
+    /* get transcrition of 1-best alignment */
+    if (bestAlignMLF)
+        bestAlignInfo = CreateBestInfo(&transHeap, fn, pbInfo.tgtSampRate / 1.0e7);
    
-   parmBuf = OpenBuffer (&inputBufHeap, fn, 50, dataForm, TRI_UNDEF, TRI_UNDEF);
-   if (!parmBuf)
-      HError (9999, "HDecode: Opening input failed");
-   
-   GetBufferInfo (parmBuf, &pbInfo);
-   if (pbInfo.tgtPK != hset.pkind)
-      HError (9999, "HDecode: Incompatible parm kinds %s vs. %s",
-              ParmKind2Str (pbInfo.tgtPK, buf1),
-              ParmKind2Str (hset.pkind, buf2));
+    parmBuf = OpenBuffer(&inputBufHeap, fn, 50, dataForm, TRI_UNDEF, TRI_UNDEF);
+    if (!parmBuf)
+        HError(3910, "HDecode: Opening input failed");
+
+    GetBufferInfo(parmBuf, &pbInfo);
+    if (pbInfo.tgtPK != hset.pkind)
+        HError(3923, "HDecode: Incompatible parm kinds %s vs. %s", ParmKind2Str(pbInfo.tgtPK, buf1), ParmKind2Str(hset.pkind, buf2));
               
-   if (latRescore) {
-      /* read lattice and create LM */
-      char latfn[MAXSTRLEN],buf3[MAXSTRLEN];
-      FILE *latF;
-      Boolean isPipe;
-      Lattice *lat;
+    if (latRescore) {
+        /* read lattice and create LM */
+        char latfn[MAXSTRLEN], buf3[MAXSTRLEN];
+        FILE *latF;
+        Boolean isPipe;
+        Lattice *lat;
 
-      /* clear out previous LexNet, Lattice and LM structures */
-      ResetHeap (&lmHeap);
-      ResetHeap (&netHeap);
+        /* clear out previous LexNet, Lattice and LM structures */
+        ResetHeap(&lmHeap);
+        ResetHeap(&netHeap);
       
-      if (latFileMask != NULL ) { /* support for rescoring lattoce masks */
-         if (!MaskMatch(latFileMask, buf3 , fn))
-            HError(2319,"HDecode: mask %s has no match with segemnt %s",latFileMask,fn);
-         MakeFN (buf3, latInDir, latInExt, latfn);
-      } else {
-         MakeFN (fn, latInDir, latInExt, latfn);
-      }
+        if (latFileMask != NULL) {  /* support for rescoring lattoce masks */
+            if (!MaskMatch(latFileMask, buf3 , fn))
+                HError(3919,"HDecode: mask %s has no match with segemnt %s", latFileMask, fn);
+            MakeFN(buf3, latInDir, latInExt, latfn);
+        } else {
+            MakeFN(fn, latInDir, latInExt, latfn);
+        }
       
-      if (trace & T_TOP)
-         printf ("Loading Lattice from %s\n", latfn);
-      {
-         latF = FOpen (latfn, NetFilter, &isPipe);
-         if (!latF)
-            HError (9999, "DoRecognition: Cannot open lattice file %s\n", latfn);
-         
-         /* #### maybe separate lattice heap? */
-         lat = ReadLattice (latF, &lmHeap, &vocab, FALSE, FALSE);
-         FClose (latF, isPipe);
-         if (!lat)
-            HError (9999, "DoRecognition: cannot read lattice file %s\n", latfn);
-      }
+        if (trace & T_TOP)
+            printf("Loading Lattice from %s\n", latfn);
       
-      /* mark prons of all words in lattice */
-      UnMarkAllWords (&vocab);
-      MarkAllWordsfromLat (&vocab, lat, silDict);
+        {
+            latF = FOpen(latfn, NetFilter, &isPipe);
+            if (!latF)
+                HError(3910, "DoRecognition: Cannot open lattice file %s\n", latfn);
+            /* #### maybe separate lattice heap? */
+            lat = ReadLattice(latF, &lmHeap, &vocab, FALSE, FALSE);
+            FClose(latF, isPipe);
+            if (!lat)
+                HError(3913, "DoRecognition: Cannot read lattice file %s\n", latfn);
+        }
       
-      /* create network of all the words/prons marked (word->aux and pron->aux == 1) */
-      if (trace & T_TOP)
-         printf ("Creating network\n");
-      net = CreateLexNet (&netHeap, &vocab, &hset, startWord, endWord, silDict);
+        /* mark prons of all words in lattice */
+        UnMarkAllWords(&vocab);
+        MarkAllWordsfromLat(&vocab, lat, silDict);
 
-      /* create LM based on pronIds defined by CreateLexNet */
-      if (trace & T_TOP)
-         printf ("Creating language model\n");
-      lm = CreateLMfromLat (&lmHeap, latfn, lat, &vocab);
-      dec->lm = lm;
-   }
+        /* create network of all the words/prons marked (word->aux and pron->aux == 1) */
+        if (trace & T_TOP)
+            printf("Creating network\n");
+        net = CreateLexNet(&netHeap, &vocab, &hset, startWord, endWord, silDict);
 
-   if (weBeamWidth > beamWidth)
-      weBeamWidth = beamWidth;
-   if (zsBeamWidth > beamWidth)
-      zsBeamWidth = beamWidth;
+        /* create LM based on pronIds defined by CreateLexNet */
+        if (trace & T_TOP)
+            printf("Creating language model\n");
+        lm = CreateLMfromLat(&lmHeap, latfn, lat, &vocab);
+        dec->lm = lm;
+    }
 
-   InitDecoderInst (dec, net, pbInfo.tgtSampRate, beamWidth, relBeamWidth,
-                    weBeamWidth, zsBeamWidth, maxModel,
-                    insPen, acScale, pronScale, lmScale, fastlmlaBeam);
+    if (weBeamWidth > beamWidth)
+        weBeamWidth = beamWidth;
+    if (zsBeamWidth > beamWidth)
+        zsBeamWidth = beamWidth;
 
-   net->vocabFN = dictfn;
-   dec->utterFN = fn;
+    InitDecoderInst(dec, net, pbInfo.tgtSampRate, beamWidth, relBeamWidth, weBeamWidth, zsBeamWidth, maxModel, insPen, acScale, pronScale, lmScale, fastlmlaBeam);
 
-   frameN = frameProc = 0;
-   while (BufferStatus (parmBuf) != PB_CLEARED) {
-      ReadAsBuffer (parmBuf, &obs[frameN % outpBlocksize]);
+    net->vocabFN = dictfn;
+    dec->utterFN = fn;
+
+    frameN = frameProc = 0;
+    /* cz277 - ANN */
+    if (hset.annSet == NULL) { /* use conventional way */
+        while (BufferStatus(parmBuf) != PB_CLEARED) {
+            ReadAsBuffer(parmBuf, &obs[frameN % outpBlocksize]);
       
 #ifdef LEGACY_CUHTK2_MLLR
-      if (fvTransMat) {
-         if (trace & T_OBS)
-            printf ("apply full variance transform\n");
+            if (fvTransMat) {
+                if (trace & T_OBS)
+                    printf ("apply full variance transform\n");
 
-         MultBlockMat_Vec (fvTransMat, obs[frameN % outpBlocksize].fv[1], 
-                           obs[frameN % outpBlocksize].fv[1]);
-      }
+                MultBlockMat_Vec(fvTransMat, obs[frameN % outpBlocksize].fv[1], obs[frameN % outpBlocksize].fv[1]);
+            } 
 #endif
 
-      if (frameN+1 >= outpBlocksize) {  /* enough frames available */
-         if (trace & T_OBS)
-            PrintObservation (frameProc+1, &obs[frameProc % outpBlocksize], 13);
-         for (i = 0; i < outpBlocksize; ++i)
-            obsBlock[i] = &obs[(frameProc + i) % outpBlocksize];
+            if (frameN + 1 >= outpBlocksize) {  
+                if (trace & T_OBS)
+                    PrintObservation(frameProc + 1, &obs[frameProc % outpBlocksize], 13);
+                for (i = 0; i < outpBlocksize; ++i)
+                    obsBlock[i] = &obs[(frameProc + i) % outpBlocksize];
 
 #ifdef DEBUG_TRACE
-         fprintf(stdout, "\nProcessing frame %d :\n", frameProc);
-         fflush(stdout);
+                fprintf(stdout, "\nProcessing frame %d :\n", frameProc);
+                fflush(stdout);
 #endif
-         
-         ProcessFrame (dec, obsBlock, outpBlocksize, xfInfo.inXForm);
-         if (bestAlignInfo)
-            AnalyseSearchSpace (dec, bestAlignInfo);
-         ++frameProc;
-      }
-      ++frameN;
-   }
-   CloseBuffer (parmBuf);
 
-   /* process remaining frames (no full blocks available anymore) */
-   for (bs = outpBlocksize-1; bs >=1; --bs) {
-      if (trace & T_OBS)
-         PrintObservation (frameProc+1, &obs[frameProc % outpBlocksize], 13);
-      for (i = 0; i < bs; ++i)
-         obsBlock[i] = &obs[(frameProc + i) % outpBlocksize];
-      
-      ProcessFrame (dec, obsBlock, bs, xfInfo.inXForm);
-      if (bestAlignInfo)
-         AnalyseSearchSpace (dec, bestAlignInfo);
-      ++frameProc;
-   }
-   assert (frameProc == frameN);
+                ProcessFrame(dec, obsBlock, outpBlocksize, xfInfo.inXForm, -1); /* cz277 - ANN */
 
-   
-   endClock = clock();
-   cpuSec = (endClock - startClock) / (double) CLOCKS_PER_SEC;
-   printf ("CPU time %f  utterance length %f  RT factor %f\n",
-           cpuSec, frameN*dec->frameDur, cpuSec / (frameN*dec->frameDur));
-
-   trans = TraceBack (&transHeap, dec);
-
-   /* save 1-best transcription */
-   /* the following is from HVite.c */
-   if (trans) {
-      char labfn[MAXSTRLEN];
-
-      if (labForm != NULL)
-         ReFormatTranscription (trans, pbInfo.tgtSampRate, FALSE, FALSE,
-                                strchr(labForm,'X')!=NULL,
-                                strchr(labForm,'N')!=NULL,strchr(labForm,'S')!=NULL,
-                                strchr(labForm,'C')!=NULL,strchr(labForm,'T')!=NULL,
-                                strchr(labForm,'W')!=NULL,strchr(labForm,'M')!=NULL);
-      
-      MakeFN (fn, labDir, labExt, labfn);
-
-      if (LSave (labfn, trans, ofmt) < SUCCESS)
-         HError(9999, "DoRecognition: Cannot save file %s", labfn);
-      if (trace & T_TOP)
-         PrintTranscription (trans, "1-best hypothesis");
-
-      Dispose (&transHeap, trans);
-   }
-
-   if (latGen) {
-      lat = LatTraceBack (&transHeap, dec);
-
-      /* prune lattice */
-      if (lat && latPruneBeam < - LSMALL) {
-         lat = LatPrune (&transHeap, lat, latPruneBeam, latPruneAPS);
-      }
-
-      /* the following is from HVite.c */
-      if (lat) {
-         char latfn[MAXSTRLEN];
-         char *p;
-         Boolean isPipe;
-         FILE *file;
-         LatFormat form;
-         
-         MakeFN (fn, latOutDir, latOutExt, latfn);
-         file = FOpen (latfn, NetOFilter, &isPipe);
-         if (!file) 
-            HError (999, "DoRecognition: Could not open file %s for lattice output",latfn);
-         if (!latOutForm)
-            form = (HLAT_DEFAULT & ~HLAT_ALLIKE)|HLAT_PRLIKE;
-         else {
-            for (p = latOutForm, form=0; *p != 0; p++) {
-               switch (*p) {
-               case 'A': form|=HLAT_ALABS; break;
-               case 'B': form|=HLAT_LBIN; break;
-               case 't': form|=HLAT_TIMES; break;
-               case 'v': form|=HLAT_PRON; break;
-               case 'a': form|=HLAT_ACLIKE; break;
-               case 'l': form|=HLAT_LMLIKE; break;
-               case 'd': form|=HLAT_ALIGN; break;
-               case 'm': form|=HLAT_ALDUR; break;
-               case 'n': form|=HLAT_ALLIKE; 
-                  HError (9999, "DoRecognition: likelihoods for model alignment not supported");
-                  break;
-               case 'r': form|=HLAT_PRLIKE; break;
-               }
+                if(bestAlignInfo)
+                    AnalyseSearchSpace(dec, bestAlignInfo);
+                ++frameProc;
             }
-         }
-         if (WriteLattice (lat, file, form) < SUCCESS)
-            HError(9999, "DoRecognition: WriteLattice failed");
+            ++frameN;
+        }
+
+        /* process remaining frames (no full blocks available anymore) */
+        for (bs = outpBlocksize - 1; bs >= 1; --bs) {
+            if (trace & T_OBS)
+                PrintObservation(frameProc + 1, &obs[frameProc % outpBlocksize], 13);
+            for (i = 0; i < bs; ++i)
+                obsBlock[i] = &obs[(frameProc + i) % outpBlocksize];
+      
+            ProcessFrame(dec, obsBlock, bs, xfInfo.inXForm, -1);    /* cz277 - ANN */
+            if (bestAlignInfo)
+                AnalyseSearchSpace(dec, bestAlignInfo);
+            ++frameProc;
+        }
+        assert(frameProc == frameN);
+    }
+    else {  /* if hset.feaMix is not empty */
+        /* get utterance name in cache */
+        if (strcmp(GetCurUttName(cache[1]), fn) != 0) 
+            HError(3924, "Mismatched utterance in the cache and script file");
+        uttElem = GetCurUttElem(cache[1]);	/* cz277 - xform */
+        InstallOneUttNMatRPLs(uttElem);
+        InstallOneUttNVecRPLs(uttElem);
+        /* check the observation vector number */
+        uttCnt = 1;
+        uttLen = ObsInBuffer(parmBuf);
+        cUttLen = GetCurUttLen(cache[1]);
+        if (cUttLen != uttLen) 
+            HError(3991, "Unequal utterance length in the cache and the original feature file");
+        /* initialise the obsBlock to hack ProcessFrame */
+        assert(outpBlocksize == 1);
+        obsBlock[0] = &obs[0];
+        /* process each block of frame */
+        while (TRUE) {
+            /* load a data batch */
+            loadStClock = clock();  /* cz277 - clock */
+            for (i = 1; i <= hset.swidth[0]; ++i) {
+
+                FillAllInpBatch(cache[i], &nLoaded, &uttCnt);
+                /* cz277 - mtload */
+                /*UpdateCacheStatus(cache[i]);*/
+                LoadCacheData(cache[i]);
+            }
+            loadClock += clock() - loadStClock;   /* cz277 - clock */
+            /* forward these frames */
+            fwdStClock = clock();   /* cz277 - clock */
+            ForwardProp(hset.annSet, nLoaded, cache[1]->CMDVecPL);
+            /* apply log transform */
+            for (i = 1; i <= hset.swidth[0]; ++i) {
+                layerElem = hset.annSet->outLayers[i];
+                ApplyLogTrans(layerElem->yFeaMats[1], nLoaded, layerElem->nodeNum, hset.annSet->llhMat[i]);
+                AddNVectorTargetPen(hset.annSet->llhMat[i], hset.annSet->penVec[i], nLoaded, hset.annSet->llhMat[i]);
+#ifdef CUDA
+                SyncNMatrixDev2Host(hset.annSet->llhMat[i]);
+#endif
+            }
+            fwdClock += clock() - fwdStClock;   /* cz277 - clock */
+            /* load the ANN outputs into dec->cacheVecs */
+            decStClock = clock();   /* cz277 - clock */
+            LoadCacheVec(dec, nLoaded, &hset);
+            /* decode these frames */
+            for (i = 0; i < nLoaded; ++i) 
+                ProcessFrame(dec, obsBlock, outpBlocksize, xfInfo.inXForm, i);
+            decClock += clock() - decStClock;   /* cz277 - clock */
+            /* analyse the search space */
+            if (bestAlignInfo) 
+                AnalyseSearchSpace(dec, bestAlignInfo);
+            /* update the frame count */
+            frameN += nLoaded;
+            frameProc += GetNBatchSamples();
+            /* whether continue the loop or not */
+            if (frameProc >= uttLen) 
+                break;
+        }
+        /* check the frame number loaded */
+        if (frameN != uttLen) 
+            HError(3991, "The number of frame loaded does not match the utterance length");
+        /* cz277 - mtload */
+        for (i = 1; i <= hset.swidth[0]; ++i) 
+            UnloadCacheData(cache[i]);
+        /* cz277 - xform */
+        ResetNMatRPL();
+        ResetNVecRPL();
+    }
+
+    /* close the buffer */
+    CloseBuffer(parmBuf);
+   
+    endClock = clock();
+    cpuSec = (endClock - startClock) / (double) CLOCKS_PER_SEC;
+    printf ("CPU time %f  utterance length %f  RT factor %f\n", cpuSec, frameN * dec->frameDur, cpuSec / (frameN * dec->frameDur));
+
+    /* cz277 - clock */
+    if (hset.annSet != NULL) {
+        fwdSec = fwdClock / (double) CLOCKS_PER_SEC;
+        decSec = decClock / (double) CLOCKS_PER_SEC;
+        loadSec = loadClock / (double) CLOCKS_PER_SEC;
+        printf("\tForwarding time is %f, which takes %4.2f%% of the time cost    RT factor %f\n", fwdSec, fwdSec / cpuSec * 100, fwdSec / (frameN * dec->frameDur));
+        printf("\tDecoding time is %f, which takes %4.2f%% of the time cost    RT factor %f\n", decSec, decSec / cpuSec * 100, decSec / (frameN * dec->frameDur));
+        printf("\tCache loading time is %f, which takes %4.2f%% of the time cost    RT factor %f\n", loadSec, loadSec / cpuSec * 100, loadSec / (frameN * dec->frameDur));
+        fflush(stdout);
+    }
+    trans = TraceBack(&transHeap, dec);
+    /* save 1-best transcription */
+    /* the following is from HVite.c */
+    if (trans) {
+        char labfn[MAXSTRLEN], lfn[MAXSTRLEN];
+
+        if (labForm != NULL)
+            ReFormatTranscription(trans, pbInfo.tgtSampRate, FALSE, FALSE,
+                                    strchr(labForm, 'X') != NULL,
+                                    strchr(labForm, 'N') != NULL, strchr(labForm, 'S') != NULL,
+                                    strchr(labForm, 'C') != NULL, strchr(labForm, 'T') != NULL,
+                                    strchr(labForm, 'W') != NULL, strchr(labForm, 'M') != NULL);
+
+        /* from mjfg, cz277 - 141022 */
+        if (labOFileMask) {
+            if (!MaskMatch (labOFileMask, lfn, fn))
+                HError(3919,"DoRecognition: LABOFILEMASK %s has no match with segemnt %s", labOFileMask, fn);
+        } else {     
+            strcpy (lfn, fn);
+        }
+        MakeFN(lfn, labDir, labExt, labfn);
+        /*MakeFN(fn, labDir, labExt, labfn);*/
+
+        if (LSave(labfn, trans, ofmt) < SUCCESS)
+            HError(3911, "DoRecognition: Cannot save file %s", labfn);
+        if (trace & T_TOP)
+            PrintTranscription(trans, "1-best hypothesis");
+
+        Dispose(&transHeap, trans);
+    }
+
+    if (latGen) {
+        lat = LatTraceBack(&transHeap, dec);
+        /* prune lattice */
+        if (lat && latPruneBeam < -LSMALL) {
+            lat = LatPrune (&transHeap, lat, latPruneBeam, latPruneAPS);
+        }
+
+        /* the following is from HVite.c */
+        if (lat) {
+            char latfn[MAXSTRLEN], lfn[MAXSTRLEN];
+            char *p;
+            Boolean isPipe;
+            FILE *file;
+            LatFormat form;
          
-         FClose (file,isPipe);
-         Dispose (&transHeap, lat);
-      }
-   }
+            /* from mjfg, cz277 - 141022 */
+            if (latOFileMask) {
+                if (!MaskMatch (latOFileMask, lfn, fn))
+                    HError(3919,"DoRecognition: LATOFILEMASK %s has no match with segemnt %s", latOFileMask, fn);
+            } else {
+                strcpy (lfn, fn);
+            }
+            MakeFN(lfn, latOutDir, latOutExt, latfn);          
+            /*MakeFN(fn, latOutDir, latOutExt, latfn);*/
+ 
+            file = FOpen(latfn, NetOFilter, &isPipe);
+            if (!file) 
+                HError (3913, "DoRecognition: Could not open file %s for lattice output", latfn);
+            if (!latOutForm)
+                form = (HLAT_DEFAULT & ~HLAT_ALLIKE) | HLAT_PRLIKE;
+            else {
+                for (p = latOutForm, form=0; *p != 0; p++) {
+                    switch (*p) {
+                        case 'A': form |= HLAT_ALABS;   break;
+                        case 'B': form |= HLAT_LBIN;    break;
+                        case 't': form |= HLAT_TIMES;   break;
+                        case 'v': form |= HLAT_PRON;    break;
+                        case 'a': form |= HLAT_ACLIKE;  break;
+                        case 'l': form |= HLAT_LMLIKE;  break;
+                        case 'd': form |= HLAT_ALIGN;   break;
+                        case 'm': form |= HLAT_ALDUR;   break;
+                        case 'n': form |= HLAT_ALLIKE; 
+                            HError(3901, "DoRecognition: likelihoods for model alignment not supported");
+                            break;
+                        case 'r': form |= HLAT_PRLIKE;  break;
+                    }
+                }
+            }
+            if (WriteLattice(lat, file, form) < SUCCESS)
+                HError(3913, "DoRecognition: WriteLattice failed");
+         
+            FClose(file, isPipe);
+            Dispose(&transHeap, lat);
+        }
+    }
 
 
 #ifdef COLLECT_STATS
-   printf ("Stats: nTokSet %lu\n", dec->stats.nTokSet);
-   printf ("Stats: TokPerSet %f\n", dec->stats.sumTokPerTS / (double) dec->stats.nTokSet);
-   printf ("Stats: activePerFrame %f\n", dec->stats.nActive / (double) dec->stats.nFrames);
-   printf ("Stats: activateNodePerFrame %f\n", dec->stats.nActivate / (double) dec->stats.nFrames);
-   printf ("Stats: deActivateNodePerFrame %f\n\n", 
-           dec->stats.nDeActivate / (double) dec->stats.nFrames);
+    printf("Stats: nTokSet %lu\n", dec->stats.nTokSet);
+    printf("Stats: TokPerSet %f\n", dec->stats.sumTokPerTS / (double) dec->stats.nTokSet);
+    printf("Stats: activePerFrame %f\n", dec->stats.nActive / (double) dec->stats.nFrames);
+    printf("Stats: activateNodePerFrame %f\n", dec->stats.nActivate / (double) dec->stats.nFrames);
+    printf("Stats: deActivateNodePerFrame %f\n\n", dec->stats.nDeActivate / (double) dec->stats.nFrames);
 #if 0
-   printf ("Stats: LMlaCacheHits %ld\n", dec->stats.nLMlaCacheHit);
-   printf ("Stats: LMlaCacheMiss %ld\n", dec->stats.nLMlaCacheMiss);
+    printf ("Stats: LMlaCacheHits %ld\n", dec->stats.nLMlaCacheHit);
+    printf ("Stats: LMlaCacheMiss %ld\n", dec->stats.nLMlaCacheMiss);
 #endif
 #ifdef COLLECT_STATS_ACTIVATION
-   {
-      int i;
-      for (i = 0; i <= STATS_MAXT; ++i)
-         printf ("T %d Dead %lu Live %lu\n", i, dec->stats.lnDeadT[i], dec->stats.lnLiveT[i]);
-   }
+    {
+        int i;
+        for (i = 0; i <= STATS_MAXT; ++i)
+            printf("T %d Dead %lu Live %lu\n", i, dec->stats.lnDeadT[i], dec->stats.lnLiveT[i]);
+    }
 #endif
 #endif
 
-   if (trace & T_MEM) {
-      printf ("memory stats at end of recognition\n");
-      PrintAllHeapStats ();
-   }
+    if (trace & T_MEM) {
+        printf("memory stats at end of recognition\n");
+        PrintAllHeapStats();
+    }
 
-   ResetHeap (&inputBufHeap);
-   ResetHeap (&transHeap);
-   CleanDecoderInst (dec);
+    ResetHeap(&inputBufHeap);
+    ResetHeap(&transHeap);
+    CleanDecoderInst(dec);
+
 }
 
 #ifdef LEGACY_CUHTK2_MLLR
 void ResetFVTrans (HMMSet *hset, BlockMatrix transMat)
 {
-   HError (9999, "HDecode: switching speakers/transforms not supprted, yet");
+   HError (3901, "HDecode: switching speakers/transforms not supprted, yet");
 }
 
 void LoadFVTrans (char *fn, BlockMatrix *transMat)
@@ -1182,19 +1435,19 @@ void LoadFVTrans (char *fn, BlockMatrix *transMat)
    /* #### the file input should use HModel's/HAdapt's scanner  */
    ReadUntilLine (&src, "~k \"globalSemi\"");
    if (!ReadString (&src, buf) || strcmp (buf, "<SEMICOVAR>"))
-      HError (9999, "LoadSemiTrans: expected <SEMICOVAR> tag in file '%s'");
+      HError (3919, "LoadSemiTrans: expected <SEMICOVAR> tag in file '%s'");
    ReadShort (&src, &nblocks, 1, binary);
 
    ReadInt (&src, &blockSize, 1, binary);
    for(i = 2; i <= nblocks; i++) {
       ReadInt (&src, &bs, 1, binary);
       if (bs != blockSize)
-         HError (9999, "LoadSemiTrans: BlockMats with different size blocks not supported");
+         HError (3901, "LoadSemiTrans: BlockMats with different size blocks not supported");
    }
    if(!*transMat)
       *transMat = CreateBlockMat (&gcheap, nblocks * blockSize, nblocks);
    if (!ReadBlockMat (&src, *transMat, binary))
-      HError (9999, "LoadSemiTrans: cannot read transform matrix");
+      HError (3913, "LoadSemiTrans: cannot read transform matrix");
       
    CloseSource(&src);
 }
@@ -1231,7 +1484,7 @@ Boolean UpdateSpkrModels (char *fn)
    
    /* full-variance transform: apply to means & feature space */
    if (!MaskMatch (spkrPat, spkrName, fn))
-      HError (9999, "UpdateSpkrModels: non-matching speaker mask '%s'", spkrPat);
+      HError (3919, "UpdateSpkrModels: non-matching speaker mask '%s'", spkrPat);
    
    if (!curSpkrName || strcmp (spkrName, curSpkrName)) {
       if (trace & T_ADP)
@@ -1241,7 +1494,7 @@ Boolean UpdateSpkrModels (char *fn)
       if (mllrTransDir) {
          if (curSpkrName) {
             /* apply back tranform */
-            HError (9999, "UpdateSpkrModels: switching speakers not supported, yet!");
+            HError (3901, "UpdateSpkrModels: switching speakers not supported, yet!");
          }
          if (trace & T_ADP)
             printf (" applying MLLR transform");
@@ -1275,14 +1528,13 @@ Boolean UpdateSpkrModels (char *fn)
 #else
 Boolean UpdateSpkrModels (char *fn)
 {
-   HError (1, "MLLR or FV transforms not supported");
+   HError (3901, "MLLR or FV transforms not supported");
    return FALSE;
 }
 #endif
 
 
-/*  CC-mode style info for emacs
- Local Variables:
- c-file-style: "htk"
- End:
-*/
+/* ----------------------------------------------------------- */
+/*                      END:  HDecode.c                        */
+/* ----------------------------------------------------------- */
+

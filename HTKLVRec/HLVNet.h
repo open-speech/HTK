@@ -3,29 +3,33 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Machine Intelligence Laboratory                        */
-/*      Department of Engineering                              */
-/*      University of Cambridge                                */
-/*      http://mi.eng.cam.ac.uk/                               */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2002-2003  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLVNet.c Network data types for HTK LV Decoder*/
+/*    File: HLVNet.c   Network data types for HTK LV decoder   */
 /* ----------------------------------------------------------- */
+
+/* !HVER!HLVNet:   3.5.0 [CUED 12/10/15] */
+
 
 /*
    every LexNet has a single root node
@@ -85,6 +89,8 @@ struct _LexNode {
 #ifdef COLLECT_STATS_ACTIVATION
    int eventT;          /* frame # of last (de)activation */
 #endif
+
+   LabId labid;			/* sxz20: logical HMM label (if not NULL) */
 };
 
 /* ####GE  maybe we can get rid of the links alltogether? we don't
@@ -175,6 +181,9 @@ struct _TLexNode {
    int loWE;            /* lowest WE LMId reachable from here */
    int hiWE;            /* highest WE LMId reachable from here */
    int lmlaIdx;         /* index of node in (compressed) LMlaTree */
+
+   /* sxz20 */
+   LabId labid;
 };
 
 
@@ -300,8 +309,6 @@ void MarkAllWordsfromLat (Vocab *voc, Lattice *lat, Boolean silDict);
 
 #endif  /* _HLVNET_H_ */
 
-/*  CC-mode style info for emacs
- Local Variables:
- c-file-style: "htk"
- End:
-*/
+
+/* ------------------------ End of HLVNet.h ----------------------- */
+

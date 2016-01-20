@@ -3,23 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*     File: HParse.c: HParse based word-network definition    */
+/*     File: HParse.c  HParse based word-network definition    */
 /* ----------------------------------------------------------- */
 
-char *hparse_version = "!HVER!HParse:   3.4.1 [CUED 12/03/09]";
+char *hparse_version = "!HVER!HParse:   3.5.0 [CUED 12/10/15]";
 char *hparse_vc_id = "$Id: HParse.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $";
 
 /* The HParse program reads in a set of HTK  HParse rewrite rules
@@ -102,6 +118,7 @@ char *hparse_vc_id = "$Id: HParse.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $";
 #include "HVQ.h"
 #include "HParm.h" 
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h" 
 #include "HDict.h"
@@ -114,8 +131,9 @@ typedef struct _Node *Link;
 
 typedef struct {
    int nUse;         /* num sharing this LinkSet */
-   short numLinks;   /* number of links in set */
-   short maxLinks;   /* max number of links */
+   /* swapped short to int */
+   int numLinks;   /* number of links in set */
+   int maxLinks;   /* max number of links */
    Link *links;      /* array[1..numLinks]of Link */
    Ptr  user;       /* for attaching user defined data */
 } LinkSet;
@@ -379,7 +397,7 @@ static void PrModelName(Link p)
       strcpy(name,"????");
    else
       strcpy(name,p->modelName->name);
-   printf("%s[%03d] ",name, ((int)p % 4000) / 4 );
+   printf("%s[%03ld] ",name, ((long int)p % 4000) / 4 );
 }
 
 /* PrintLinkSet: print first n slots of given LinkSet to stdout */
@@ -2000,7 +2018,7 @@ void LabelInternal(Link p)
       }  
    }
    else if ((ni->nType != wdEnd) && (ni->nType != wdInternal))
-      HError(3131,"LabelInternal: incorrect WD_BEGIN/WD_END node connection, node %d is %d",((int)p % 4000) / 4,ni->nType);
+      HError(3131,"LabelInternal: incorrect WD_BEGIN/WD_END node connection, node %d is %d",((long int)p % 4000) / 4,ni->nType);
 }
 
 /* FindNodeTypes: mark each node as wdInternal or wdExternal */
@@ -2326,4 +2344,4 @@ static void ConvertHParseNetwork(HPNetwork *theNet, char *latFn, char *dictFn)
    SaveLattice(lat,latFn,format);
 }
 
-/* ------------------- End of HParse.c --------------------------------- */
+/* -------------------------- End of HParse.c --------------------------- */

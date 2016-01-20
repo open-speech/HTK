@@ -3,33 +3,34 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           Cambridge University Engineering Department       */
+/*           http://svr-www.eng.cam.ac.uk/                     */
 /*                                                             */
-/* author: Gareth Moore <glm20@eng.cam.ac.uk>                  */
+/* author:                                                     */
+/*           Gareth Moore <glm20@eng.cam.ac.uk>                */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*                                                             */
-/*          1999-2002 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            1999-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*            Cluster.c: Cluster words into classes            */
+/*          File: Cluster.c  Cluster words into classes        */
+/* ----------------------------------------------------------- */
 
-
-char *Cluster_version = "!HVER!Cluster:   3.4.1 [CUED 12/03/09]";
+char *Cluster_version = "!HVER!Cluster:   3.5.0 [CUED 12/10/15]";
 char *Cluster_vc_id = "$Id: Cluster.c,v 1.1.1.1 2006/10/11 09:54:43 jal58 Exp $";
 
 /* HTK/HLM libraries: */
@@ -867,11 +868,13 @@ void do_recovery(char *fname, int words)
    
    file = FOpen(fname, NoFilter, &pipe_status);
    check_file(file, fname, "do_recovery");
-   fgets(tmp, 256, file);
+   if(fgets(tmp, 256, file)==NULL)
+     HError(17013,"Cluster:do_recovery: Error reading from %s",fname);
    if (strncmp(tmp, "Clustering automatic", 20)!=0) {
       HError(17013, "This is not a recovery status file");
    }
-   fgets(tmp, 256, file);
+   if(fgets(tmp, 256, file)==NULL)
+     HError(17013,"Cluster:do_recovery: Error reading from %s",fname);
    ptr = strchr(tmp, ':');
    if (!ptr) {
       HError(17013, "Failure to read current word point from status file");
@@ -884,7 +887,8 @@ void do_recovery(char *fname, int words)
    else {
       from = atoi(ptr);
    }
-   fgets(tmp, 256, file);
+   if(fgets(tmp, 256, file)==NULL)
+     HError(17013,"Cluster:do_recovery: Error reading from %s",fname);
    ptr = strchr(tmp, ':');
    if (!ptr) {
       HError(17013, "Failure to read recovery class map file name from status file");
@@ -893,7 +897,8 @@ void do_recovery(char *fname, int words)
    ptr = strtok(ptr, " \t\n");
    import_classmap(ptr, words);
 
-   fgets(tmp, 256, file);
+   if(fgets(tmp, 256, file)==NULL)
+     HError(17013,"Cluster:do_recovery: Error reading from %s",fname);
    ptr = strchr(tmp, ':');
    if (!ptr) {
       HError(17013, "Failure to read recovery unknown word status from status file");
@@ -903,7 +908,8 @@ void do_recovery(char *fname, int words)
    unk_sep = (*ptr=='1');
    start_class = unk_sep?3:2;
 
-   fgets(tmp, 256, file);
+   if(fgets(tmp, 256, file)==NULL)
+     HError(17013,"Cluster:do_recovery: Error reading from %s",fname);
    ptr = strchr(tmp, ':');
    if (!ptr) {
       HError(17013, "Failure to read recovery word sort order status from status file");
@@ -1351,7 +1357,8 @@ void import_classmap(char *fname, int numb_words)
          size = atoi(ptr); /* Read number of words in class */
 
          for (i=0; i<size; i++) {
-            fgets(line, max_line_len, file);
+	   if(fgets(line, max_line_len, file)==NULL)
+	     HError(17013,"Cluster:import_classmap: Failure reading from %s",fname);
             ptr = strtok(line, " \t\n");
             if (!ptr) {
                /* Warn about the blank line */
@@ -1598,15 +1605,15 @@ static void *get_space(int size)
       return New(&global_stack, size);
 
    /* Use New() again if necessary to get a new block */
-   if (((int)block+(int)size) >= (int)block_end) {
+   if (((int)(unsigned long int)block+(int)size) >= (int)(unsigned long int)block_end) {
       block = New(&global_heap, block_grab_size);
-      block_end = (void *) ((int)block+(int)block_grab_size);
+      block_end = (void *)(unsigned long int)((int)(unsigned long int)block+(int)block_grab_size);
    }
 
    /* Hand back the next free space */
    ptr = block;
-   block = (void*) ((int) block + (int) size);     /* Next free byte */
-   block = (void*) ((((int)block)+3) & (~(int)3)); /* Word-align */
+   block = (void*)(unsigned long int)((int)(unsigned long int)block + (int) size);     /* Next free byte */
+   block = (void*)(unsigned long int)((((int)(unsigned long int)block)+3) & (~(int)3)); /* Word-align */
 
    return ptr;
 }

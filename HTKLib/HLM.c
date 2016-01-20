@@ -3,36 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*          2001-2002 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLM.c  language model handling                */
+/*             File: HLM.c  language model handling            */
 /* ----------------------------------------------------------- */
 
-char *hlm_version = "!HVER!HLM:   3.4.1 [CUED 12/03/09]";
+char *hlm_version = "!HVER!HLM:   3.5.0 [CUED 12/10/15]";
 char *hlm_vc_id = "$Id: HLM.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Exp $";
 
 #include "HShell.h"
@@ -232,12 +235,11 @@ static int WriteNGrams(FILE *file,NGramLM *nglm,int n,float scale)
    SEntry *se;
    LogFloat prob;
    lmId ndx[NSIZE+1];
-   int c,i,j,k,N,g=1,hash,neCnt,total;
+   int c,i,j,k,g=1,hash,neCnt,total;
 
    if (trace&T_TIO)
       printf("\nn%1d ",n),fflush(stdout);
    fprintf(file,"\n\\%d-grams:\n",n);
-   N=VectorSize(nglm->unigrams);
 
    neTab=(NEntry **) New(&gstack,sizeof(NEntry*)*nglm->counts[0]);
 
@@ -376,7 +378,7 @@ static int ReadNGrams(NGramLM *nglm,int n,int count, Boolean bin)
    lmId ndx[NSIZE+1];
    NEntry *ne,*le=NULL;
    int i, g, idx, total;
-   unsigned char size, flags=0;
+   unsigned char flags=0;
 
    cse = (SEntry *) New(nglm->heap,count*sizeof(SEntry));
    for (i=1;i<=NSIZE;i++) ndx[i]=0;
@@ -389,7 +391,7 @@ static int ReadNGrams(NGramLM *nglm,int n,int count, Boolean bin)
       PROGRESS(g);
 
       if (bin) {
-         size = GetCh (&source);
+         GetCh (&source);
          flags = GetCh (&source);
       }
       
@@ -401,7 +403,7 @@ static int ReadNGrams(NGramLM *nglm,int n,int count, Boolean bin)
          if (wdid->aux != NULL)
             HError(8150,"ReadNGrams: Duplicate word (%s) in 1-gram list",
                    wdid->name);
-         wdid->aux = (Ptr)g;
+         wdid->aux = (Ptr)(unsigned long int)g;
          nglm->wdlist[g] = wdid;
          nglm->unigrams[g] = prob;
          ndx[0]=g;
@@ -411,20 +413,20 @@ static int ReadNGrams(NGramLM *nglm,int n,int count, Boolean bin)
                if (flags & BIN_ARPA_INT_LMID) {
                   unsigned int ui;
                   if (!ReadInt (&source, (int *) &ui, 1, bin))
-                     HError (9999, "ReadNGrams: failed reading int lm word id");
+                     HError (8113, "ReadNGrams: failed reading int lm word id");
                   idx = ui;
                }
                else {
                   unsigned short us;
                   if (!ReadShort (&source, (short *) &us, 1, bin))
-                     HError (9999, "ReadNGrams: failed reading short lm word id at");
+                     HError (8113, "ReadNGrams: failed reading short lm word id at");
                   idx = us;
                }
             }
             else {
                ReadLMWord(wd);
                wdid = GetLabId(wd, FALSE);
-               idx = (wdid==NULL?0:(int)wdid->aux);
+               idx = (wdid==NULL?0:(unsigned long int)wdid->aux);
             }
             if (idx<1 || idx>nglm->vocSize)
                HError(8150,"ReadNGrams: Unseen word (%s) in %dGram",wd,n);
@@ -517,7 +519,7 @@ static void ReadBoNGram(LModel *lm,char *fn)
          ngBin[j] = TRUE;
          break;
       default:
-         HError (9999, "ReadARPALM: unknown ngram format type '%c'", ngFmtCh);
+         HError (8191, "ReadARPALM: unknown ngram format type '%c'", ngFmtCh);
       }
       counts[j]=k;
    }
@@ -670,9 +672,9 @@ static void ReadMatBigram(LModel *lm,char *fn)
       if (p>P)
          HError(8150,"ReadMatBigram: More rows than columns in bigram %s",fn);
       id=GetLabId(buf,TRUE);
-      if ((int)id->aux != 0) 
+      if ((unsigned long int)id->aux != 0) 
          HError(8150,"ReadMatBigram: Duplicated name %s in bigram %s",buf,fn);
-      id->aux = (Ptr) p;
+      id->aux = (Ptr)(unsigned long int)p;
       matbi->wdlist[p] = id;
       SkipWhiteSpace(&source);
       if (ReadRow(matbi->bigMat[p])!=P)
@@ -764,12 +766,12 @@ float GetLMProb(LModel *lm, LabId prid[NSIZE], LabId wdid)
   
    switch (lm->type) {
    case boNGram:
-      word = (int)wdid->aux;
+      word = (int)(unsigned long int)wdid->aux;
       if (word==0 || word>lm->data.ngram->vocSize)
          return(LZERO);
       for (s=-1,i=0;i<NSIZE;i++)
          if (prid[i]!=NULL) 
-            ndx[i]=(int)prid[i]->aux, cpid[i]=prid[i], s=i;
+	   ndx[i]=(int)(unsigned long int)prid[i]->aux, cpid[i]=prid[i], s=i;
          else
             ndx[i]=0, cpid[i]=NULL;
 
@@ -800,8 +802,8 @@ float GetLMProb(LModel *lm, LabId prid[NSIZE], LabId wdid)
          return(bowt+GetLMProb(lm,cpid,wdid)); /* else recurse */
       break;
    case matBigram:
-      p=(int) prid[0]->aux;
-      q=(int) wdid->aux;
+     p=(int)(unsigned long int)prid[0]->aux;
+     q=(int)(unsigned long int)wdid->aux;
       return(lm->data.matbi->bigMat[p][q]);
    default:
       prob=LZERO;
@@ -914,10 +916,10 @@ LogFloat LMTrans (LModel *lm, LMState src, LabId wdid, LMState *dest)
    assert (lm->type == boNGram);
    nglm = lm->data.ngram;
 
-   word = (int) wdid->aux;
+   word = (unsigned long int) wdid->aux;
 
    if (word==0 || word>lm->data.ngram->vocSize) {
-      HError (-9999, "word %d not in LM wordlist", word);
+      HError (-8120, "word %d not in LM wordlist", word);
       *dest = NULL;
       return (LZERO);
    }

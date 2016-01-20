@@ -3,36 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*          2001-2002 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HShell.h:   Interface to the Shell            */
+/*          File: HShell.h   Interface to the Shell            */
 /* ----------------------------------------------------------- */
 
-/* !HVER!HShell:   3.4.1 [CUED 12/03/09] */
+/* !HVER!HShell:   3.5.0 [CUED 12/10/15] */
 
 #ifndef _HSHELL_H_
 #define _HSHELL_H_
@@ -72,9 +75,9 @@ extern "C" {
 #endif
 
 
-#define MAXSTRLEN 256    /* max length of a string */
+#define MAXSTRLEN 2048   /* max length of a string */
 #define MAXFNAMELEN 1034 /* max length of a file name */
-#define SMAX      5      /* max num data streams + 1 */
+#define SMAX      128      /* max num data streams + 1 */
 #define MAXGLOBS  256    /* max num global config parms */
 
 #define SING_QUOTE '\''  /* character used as quote */
@@ -84,10 +87,19 @@ extern "C" {
 #ifdef UNIX
 #include <sys/types.h>
 #include <sys/ioctl.h>
+/* cz277 - ANN */
+#include <sys/stat.h> 
 #endif
 
 #undef FALSE
 #undef TRUE
+
+/*#ifdef DOUBLEANN
+typedef double NFloat;
+#else
+typedef float NFloat;
+#endif
+*/
 
 typedef int int32;
 
@@ -154,12 +166,15 @@ typedef union {      /* union of possible config param kinds */
    Boolean b;
 }ConfVal;
 
-typedef struct {     /* Configuration Parameter */
+/* cz277 - 150811 */
+typedef struct _ConfParam *CPLink;
+typedef struct _ConfParam {     /* Configuration Parameter */
    char *user;          /* name of module/tool to use this param */
    char *name;          /* name of param - upper case always */
    ConfKind kind;       /* kind of config param value */
    ConfVal val;         /* value */
    Boolean seen;        /* set true when read by any module */
+   CPLink append;	/* cz277 - 150811 */
 } ConfParam;
 
 
@@ -547,6 +562,16 @@ char *RetrieveCommandLine(void);
    Retrieves the savedCommandLine, that contains the
    actual command line used to run the program at hand.
 */
+
+/* cz277 - ANN */
+char *GetNextScpWord(FILE *script, char *scriptBuf);
+FILE *GetTrainScript(int *scriptCnt);
+Boolean GetConfAny(ConfParam **list, int size, char *name, ConfParam **item);
+char *CatDirs(char *baseDir, char *extDir, char *newDir);
+void SetupDir(char *targetDir);
+/*Boolean GetConfVectorList(ConfParam **list, int size, char *name, Vector *vectorList)
+Boolean GetConfIntVecList(ConfParam **list, int size, char *name, IntVec *intVecList);*/
+
 
 #ifdef __cplusplus
 }

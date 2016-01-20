@@ -1,0 +1,205 @@
+#!/bin/tcsh
+#$ -S /bin/tcsh
+
+#set verbose
+
+# Layer-by-layer discriminative DNN pre-training
+set ALLARGS = ($*)
+set HNTRAINSGD = HNTrainSGD
+set CHANGED
+while ($?CHANGED)
+    unset CHANGED
+    if ("$argv[1]" == "-HNTRAINSGD") then
+        set CHANGED
+        shift argv
+        set HNTRAINSGDCMD = $argv[1]
+        shift argv
+    endif
+    if ("$argv[1]" == "-LIB") then
+        set CHANGED
+        shift argv
+        set LIBCMD = $argv[1]
+        shift argv
+    endif
+end
+
+if ($#argv != 1) then
+    echo "Usage: $0 [-HNTRAINSGD path] [-LIB path] DNNenv"
+    echo "-HNTRAINSGD path: use a specified HNTrainSGD binary"
+    echo "-LIB path: CUDA/MKL library path for GPU/MKL computing"
+    exit 1
+endif
+
+
+set ENV = $argv[1]
+if (! -f $ENV) then
+   echo "ERROR: cannot find environment file $ENV"
+   exit 1
+endif
+# Read the environment file
+source $ENV
+if ($?LIBCMD) then 
+    set LIB = $LIBCMD
+endif
+if ($?LIB) then
+    setenv LD_LIBRARY_PATH ${LIB}:${LD_LIBRARY_PATH}
+endif
+if ($?HNTRAINSGDCMD) then
+    set HNTRAINSGD = $HNTRAINSGDCMD
+endif
+
+# parse DNNSTRUCTURE
+if (! $?LEARNRATEVALS) then
+    echo "ERROR: environment variable LEARNRATEVALS is missing"
+    exit 1
+endif
+# get layer sizes
+set lrvals = `echo $LEARNRATEVALS | awk 'BEGIN{FS=","}{for (i=1; i<=NF; i++) print $i}'`
+set niters = $#lrvals
+
+set lastdir = 'hmm0'
+set index = 0
+while ($index <= $niters)
+    set LABTYPE = 'LATTICE'
+    #'*/%%%%%%_*.mfc'
+    set DENLATDIRPATTERN = '%%%%%%_*'
+    set NUMLATDIRPATTERN = '%%%%%%_*'
+    set MLFPATH = ''
+    # generate config.dnn.mpe-iter${index}
+    echo 'MAXTRYOPEN = 3' > config.dnn.mpe-iter${index}
+    echo 'HFBLAT: TRACE = 1' >> config.dnn.mpe-iter${index}
+    echo 'HARC:TRACE = 2' >> config.dnn.mpe-iter${index}
+    echo 'MIXLEVELD = TRUE' >> config.dnn.mpe-iter${index}
+    echo 'HNETFILTER = '"'"'gunzip -c < $.gz'"'" >> config.dnn.mpe-iter${index}
+    echo 'MATCHMPETONE = TRUE' >> config.dnn.mpe-iter${index}
+    echo 'HANNET: TRACE = 1' >> config.dnn.mpe-iter${index}
+    echo 'HNCACHE: TRACE = 1' >> config.dnn.mpe-iter${index}
+    echo 'HNCACHE: DATAACCESSKIND = UTTERANCERAND' >> config.dnn.mpe-iter${index}
+    echo 'HNCACHE: SHUFFLEKIND = QUICKNET' >> config.dnn.mpe-iter${index}
+    echo 'HNTRAINSGD: TRACE = 1' >> config.dnn.mpe-iter${index}
+    echo 'HNTRAINSGD: UPDATETARGETPEN = FALSE' >> config.dnn.mpe-iter${index}
+    # data cache and batch setup
+    if ($?MINIBATCHSIZE) then
+        echo "HANNET: MINIBATCHSIZE = $MINIBATCHSIZE" >> config.dnn.mpe-iter${index}
+    endif 
+    if ($?DATACACHESIZE) then
+        echo "HNCACHE: DATACACHESIZE = $DATACACHESIZE" >> config.dnn.mpe-iter${index}
+    endif
+    if ($?SHUFFLEKIND) then
+        echo "HNCACHE: SHUFFLEKIND = $SHUFFLEKIND" >> config.dnn.mpe-iter${index}
+    endif
+    echo 'HNTRAINSGD: UPDATEMODE = UTTERANCELEVEL' >> config.dnn.mpe-iter${index}
+    echo 'HNTRAINSGD: CRITERION = MPE' >> config.dnn.mpe-iter${index}
+    # f-smoothing setup
+    if ($?FSMOOTHHVALUE) then
+        echo "HNTRAINSGD: FSMOOTHHVALUE = $FSMOOTHHVALUE" >> config.dnn.mpe-iter${index}
+    endif
+    if ($?FSMOOTHCRITERION) then
+        echo "HNTRAINSGD: FSMOOTHCRITERION = $FSMOOTHCRITERION" >> config.dnn.mpe-iter${index}
+    endif
+    if ($?FSMOOTHHVALUE || $?FSMOOTHCRITERION) then
+        set LABTYPE = 'LABLAT'
+        set MLFPATH = '-I train.mlf'
+    endif
+    # prob scales and insertion correctness
+    if ($?PROBSCALE) then
+        echo "HFBLAT: PROBSCALE = $PROBSCALE" >> config.dnn.mpe-iter${index}
+    endif
+    if ($?LATPROBSCALE) then
+        echo "HFBLAT: LATPROBSCALE = $LATPROBSCALE" >> config.dnn.mpe-iter${index}
+    endif
+    if ($?INSCORRECTNESS) then
+        echo "HFBLAT: INSCORRECTNESS = $INSCORRECTNESS" >> config.dnn.mpe-iter${index}
+    endif
+    # learning rates
+    echo "HNTRAINSGD: LEARNRATE = $lrvals[$index]" >> config.dnn.mpe-iter${index}
+    if ($?NORMLEARNRATE) then
+        echo "HNTRAINSGD: NORMLEARNRATE = $NORMLEARNRATE" >> config.dnn.mpe-iter${index}
+    endif
+    if ($?LEARNRATEKIND) then
+        echo "HNTRAINSGD: LRSCHEDULER = $LEARNRATEKIND" >> config.dnn.mpe-iter${index}
+        if ($LEARNRATEKIND == NEWBOB) then
+            if ($?NEWBOBCRITERION) then
+                echo "HNTRAINSGD: NEWBOBCRT = $NEWBOBCRITERION" >> config.dnn.mpe-iter${index}
+            endif
+            if ($?NEWBOBRAMPSTART) then
+                echo "HNTRAINSGD: RAMPSTART = $NEWBOBRAMPSTART" >> config.dnn.mpe-iter${index}
+            endif
+            if ($?NEWBOBSTOPDIFF) then
+                echo "HNTRAINSGD: STOPDIFF = $NEWBOBSTOPDIFF" >> config.dnn.mpe-iter${index}
+            endif
+        else if ($LEARNRATEKIND == EXPONENTIAL) then
+            if ($?EXPGAMMA) then
+                echo "HNTRAINSGD: GAMMA = $EXPGAMMA" >> config.dnn.mpe-iter${index}
+            endif
+            if ($?EXPBASE) then
+                echo "HNTRAINSGD: BASE = $EXPBASE" >> config.dnn.mpe-iter${index}
+            endif
+        else if ($LEARNRATEKIND == ADAGRAD) then
+            if ($?ADAGRADK) then
+                echo "HNTRAINSGD: K = $ADAGRADK" >> config.dnn.mpe-iter${index}
+            endif 
+        endif
+    endif
+    if ($?MINEPOCHNUM) then
+        echo "HNTRAINSGD: MINEPOCHNUM = $MINEPOCHNUM" >> config.dnn.mpe-iter${index}
+    endif
+    if ($?MAXEPOCHNUM) then
+        echo "HNTRAINSGD: MAXEPOCHNUM = $MAXEPOCHNUM" >> config.dnn.mpe-iter${index}
+    endif
+    # momentum and weight decay
+    if ($?MOMENTUM) then
+        echo "HNTRAINSGD: MOMENTUM = $MOMENTUM" >> config.dnn.mpe-iter${index}
+    endif
+    if ($?NORMMOMENTUM) then
+        echo "HNTRAINSGD: NORMMOMENTUM = $NORMMOMENTUM" >> config.dnn.mpe-iter${index}
+    endif
+    if ($?WEIGHTDECAY) then
+        echo "HNTRAINSGD: WEIGHTDECAY = $WEIGHTDECAY" >> config.dnn.mpe-iter${index}
+    endif
+    if ($?NORMWEIGHTDECAY) then
+        echo "HNTRAINSGD: NORMWEIGHTDECAY = $NORMWEIGHTDECAY" >> config.dnn.mpe-iter${index} 
+    endif 
+    # update flags
+    if ($?ANNUPDATEFLAG) then
+        echo "HANNET: ANNUPDATEFLAG = $ANNUPDATEFLAG" >> config.dnn.mpe-iter${index}
+    endif
+    if ($?LAYERUPDATEFLAG) then
+        echo "HANNET: LAYERUPDATEFLAG = $LAYERUPDATEFLAG" >> config.dnn.mpe-iter${index}
+    endif
+    if ($?ACTFUNUPDATEFLAG) then
+        echo "HANNET: ACTFUNUPDATEFLAG = $ACTFUNUPDATEFLAG" >> config.dnn.mpe-iter${index}
+    endif
+    echo "\n" >> config.dnn.mpe-iter${index}
+    # for -S
+    if ( -f cv.scp) then
+        set SCPARGS = '-S train.scp -N cv.scp'
+    else
+        set SCPARGS = '-S train.scp'
+    endif
+    # for -J
+    set OPTJstr = ""
+    if ($?OPTJXFORM) then
+        while ($#OPTJXFORM > 0)
+            set OPTJstr = "$OPTJstr -J $OPTJXFORM[1]"
+            shift OPTJXFORM
+        end
+    endif
+
+    # setup the directory
+    if (! -f $lastdir/MODELS) then
+        echo "ERROR: Missing models generated by the last step $lastdir/MODELS"
+        exit 1
+    endif
+    if (! -d hmm${index}) then
+        mkdir hmm${index}
+    endif
+    if (! -f hmm${index}/MODELS) then
+        $HNTRAINSGD -A -D -V -T 1 -C config.dnnbasic -C config.dnn.mpe-iter${index} -H ${lastdir}/MODELS -M hmm${index} -l ${LABTYPE} $SCPARGS $OPTJstr ${MLFPATH} -r lattices/den -q lattices/num -rp "${DENLATDIRPATTERN}" -qp "${NUMLATDIRPATTERN}" treeg.list > hmm${index}/LOG
+    endif
+
+    set lastdir = hmm${index}
+    @ index ++
+end
+
+

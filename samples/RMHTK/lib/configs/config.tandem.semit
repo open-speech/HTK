@@ -1,0 +1,18 @@
+HADAPT:TRACE                  = 61 
+
+HADAPT:TRANSKIND              = SEMIT
+HADAPT:USEBIAS                = FALSE
+HADAPT:BASECLASS              = global
+HADAPT:ADAPTKIND              = BASE
+HADAPT:SPLITTHRESH            = 0.0
+HADAPT:SEMITIEDMACRO          = SEMITIED
+HADAPT:MAXXFORMITER           = 100
+HADAPT:MAXSEMITIEDITER        = 20
+#HADAPT:BLOCKSIZE              = IntVec 1 78
+ 
+HMODEL:SAVEBINARY             = FALSE
+HMODEL:TRACE                  = 512
+
+USEOLDXFORMCVN                = FALSE
+
+

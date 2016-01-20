@@ -1,0 +1,81 @@
+#!/bin/bash
+
+#set verbose
+
+############################################################
+# Step 16: Hybrid DNN-HMM cross-entropy training
+############################################################
+
+source environment
+
+if [[ ! -d ${RMWORK}/R16/dnntrain ]]; then
+    mkdir -p ${RMWORK}/R16/dnntrain 
+fi
+
+# 16.1 Forced alignment by R11/mpe to produce the training labels
+if [[ ! -d ${RMWORK}/R9/ml/hmm4 ]]; then
+    echo "ERROR: ${RMWORK}/R9/ml/hmm4 required for alignment"
+fi
+
+# link/copy the resources
+cd ${RMWORK}/R16/dnntrain
+
+if [[ ! -d hmm0 ]]; then
+    mkdir hmm0
+fi
+#     link R11/mpe/hmm2 for alignment & bottleneck DNN output target states
+if [[ ! -f hmm0/MODELS ]]; then
+    ln -s ${RMWORK}/R9/ml/hmm4/MODELS hmm0/MODELS
+fi
+
+#     copy the (logical triphone state) alignment HTE for DNN training 
+cp $RMHTK/lib/htefiles/HTE.align.trn .
+
+# perform forced alignment
+htestrm HTE.align.trn ind trn109 hmm0
+ln -s $PWD/hmm0/align_ind_trn109.1/ind_trn109.mlf train.mlf
+egrep -w 'lab|rec' train.mlf | awk -f $RMHTK/lib/awks/mlflabs2scp.awk - a=1 $RMLIB/flists/ind_trn109.scp | sort > ind_trn109.scp
+
+# 16.2 Generate intial DNN-HMM and prepare for DNN training
+cp $RMHTK/lib/configs/config.dnncvn .
+cp $RMHTK/lib/configs/config.dnnbasic .
+cp $RMHTK/lib/info/ident_MFCC_E_D_A_Z_cvn .
+
+# do CMN & CVN
+if [[ ! -d cvn/mfc ]]; then
+    mkdir -p cvn/mfc
+fi
+HCompV -p '*%%%' -k '*.%%%' -A -D -V -T 1 -C config.dnncvn -q v -c cvn -S ind_trn109.scp > cvn/LOG
+
+# split the train and validation sets
+python $RMHTK/python_scripts/SubsetSCP.py --percent 0.1 --speakermask '%%%%%%' --speaker ind_trn109.scp cv.scp
+comm -3 ind_trn109.scp cv.scp > train.scp
+
+# generate the initial 3-layer DNN-HMMs
+cp $RMHTK/lib/htefiles/HTE.dnn.am .
+source HTE.dnn.am
+cp $RMHTK/python_scripts/GenInitDNN.py .
+cp $RMLIB/mlists/treeg.list treeg.list
+#    convert to single silence state model
+if [[ ! -f proto/work ]]; then
+    mkdir -p proto/work 
+fi
+cp hmm0/MODELS proto/work/
+
+# 14.3 Do layerwise discriminative pretraining and finetuning
+if [[ ! -z $HTKLIB ]]; then
+    HTKLIB='-LIB '$HTKLIB
+else
+    HTKLIB=''
+fi
+pretrain $HTKLIB -HNTRAINSGD $HTKBIN/HNTrainSGD -HHED $HTKBIN/HHEd HTE.dnn.am
+finetune $HTKLIB -HNTRAINSGD $HTKBIN/HNTrainSGD HTE.dnn.am
+
+
+# Finally evaluate the performance
+cp $RMHTK/lib/htefiles/HTE.dnn.decode .
+htestrm $HTKLIB -HVITE $HTKBIN/HVite HTE.dnn.decode wp feb89 dnn7.finetune
+
+echo step 16 completed
+
+

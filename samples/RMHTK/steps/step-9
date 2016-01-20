@@ -1,0 +1,230 @@
+#!/bin/bash
+############################################################
+# Step 9: Tree-Clustered Tied-State Triphones
+############################################################
+source environment
+# 9.1  State clustering
+
+# In this section the triphones created in Step 5 or 7 will be state
+# clustered.  However rather than using the data-driven method of
+# state clustering used in Step 8 a decision tree based one is used.
+# This allows the synthesis of unseen triphones and thus makes it
+# possible to produce cross-word context dependent systems.  The
+# clustering is used in a very similar way to that in Step 8 with
+# sharing only possible within the same state of the same base phone.
+# However the clustering proceeds in a top down manner by initially
+# grouping all contexts and then splitting on the basis of questions
+# about context.  The questions used are chosen to maximise the
+# likelihood of the training data whilst ensuring that each tied-state
+# has a minimum occupancy (again using the HHEd RO command).
+
+
+# 9.2  Initial models
+
+# The clustering process is performed by HHEd. To simplify preparing
+# the HHEd script, mkclscript does most of the work and an example set
+# of questions are supplied with the demo.  Given the monophone model
+# list it generates for each model commands to tie all the transition
+# matrices of each triphone together and also to cluster the
+# states. It is assumed that each model in the list has three states.
+
+# However, the clustering commands should not be applied to the sil
+# and sp models. First make a lost copy of mono.list and delete the
+# entries for sp and sil.
+
+mkdir -p $RMWORK/R9/ml
+cd $RMWORK/R9/ml
+egrep -v 'sil|sp' $RMLIB/mlists/mono.list > mono.list
+
+# We also need to generate a list of the complete set of models needed
+# during recognition.
+# If we are still using word internal models (from R5) we just use the
+# same triphone list
+
+export src=R5
+export list=tri.list
+cp $RMLIB/mlists/tri.list unseen.list
+
+# However for a cross-word system there are many contexts that we have
+# not seen that can occur in our recognition networks.  Rather than
+# actually find out which models are needed it is easier to generate
+# all possible monophones, biphones and triphones and this would also
+# allow us to work with an arbitrary vocabulary.
+
+
+export src=R7
+export list=xwrd.list
+awk -f $RMLIB/awks/full.list.awk mono.list > unseen.list
+
+# Use the mkclscript to create the HHEd script
+
+echo 'RO 1000.0 stats' > cluster.hed
+cat $RMHTK/lib/quests.hed >> cluster.hed
+mkclscript TB 1000.0 mono.list >> cluster.hed
+echo 'ST "trees"' >> cluster.hed
+echo 'AU "unseen.list"' >> cluster.hed
+echo 'CO "treeg.list"' >> cluster.hed
+
+# These lines tell HHEd to allow a minimum number of state occupations
+# of 100 and to compact the model set so that identical logical models
+# share the same physical model list.  Also make the file stats
+# generated in R5 or R7 present in the current directory by executing
+
+ln -s $RMWORK/$src/ml/hmm2/stats stats
+
+# Make a directory for the new state-clustered models and run HHEd
+
+cd $RMWORK/R9/ml
+mkdir hmm0
+HHEd -A -D -V -T 1 -B -H $RMWORK/$src/ml/hmm2/MODELS -w hmm0/MODELS \
+    cluster.hed $RMWORK/$src/ml/$list > clog
+
+# and copy the HMM list created to $RMLIB/mlists.
+
+cp treeg.list $RMLIB/mlists
+
+
+# 9.3  Building state-clustered models
+
+# Copy $RMWORK/$src/HTE to the R9 directory, edit the title, and
+# change the HMMLIST variable to $RMLIB/mlists/treeg.list and change
+# the recognition configuration to use the cross word file.  This sets
+# FORCECXTEXP = TRUE to ensure that the cross word triphones are used
+# rather than using the models with monophone or biphone context. It
+# is also necessary to increase the pruning beam width somewhat as
+# well as increase the word insertion penalty
+cat <<__EOF__ > $RMWORK/R9/ml/HTE
+#---------------------------------------------------------------#
+# HTK RM Environment File                08/09/95               #
+#                                                               #
+# This version is for:                                          #
+#                                                               #
+#         Baseline - Monophones                                 #
+#         39th Order MFCC_E_D_A Data (data in MFCC_E format)    #
+#         1 Mixture/Diagonal/3 State no Skip + sp model         #
+#                                                               #
+#---------------------------------------------------------------#
+
+# Set priority at which processes are run
+set NICE = 5
+
+# Define the rmwork and rmdata areas
+set rmwork=\$RMWORK
+set rmdata=\$RMDATA
+set rmlib=\$RMLIB
+
+# define input filters
+setenv HNETFILTER 'gzip -d -c \$.gz'          # Networks compress well
+
+# Define input configuration files
+setenv HECONFIG \$rmlib/configs/config.basic  # Basic configuration
+setenv HVCONFIG \$rmlib/configs/config.xwrd  # Basic configuration
+
+# Define HMMs - should reflect current models set
+set HMMLIST=\$rmlib/mlists/treeg.list # ****** #
+
+# Define Training Data and Label files for current models
+set TRAINDATALIST=\$rmlib/flists/ind_trn109.scp
+set TRAINMLF=\$rmlib/labs/xwrd.mlf   # ****** #
+
+# Define Test Data
+# Note that TESTSET is defined by htestrm before sourcing HTE
+set SETLIST=(feb89 oct89 feb91 sep92)
+if (\$?TESTSET) then
+   set TESTDATALIST=\$rmlib/flists/ind_\${TESTSET}.scp
+   set TESTMLF=\$rmlib/wlabs/ind_tst.mlf
+endif
+
+# HERest Program Options
+set HETRACE=1
+set HEMINWEIGHT=2.0
+set HETMTHRESH=20.0    # Only needs to be same order as numerical accuracy
+set HEPRUNE=600.0      # 250==VERY TIGHT, 500==TIGHT, 1000==LOOSE #
+set HESTATS=stats      # stats files aren't always needed but are interesting #
+set HEMINEG=0          # Potentially bad choice for unclustered models
+#set HEUPD=
+
+# Define possible test conditions
+set TYPELIST=(ng wp)
+
+# HVite Network Defn & Program Options
+set HVTRACE=1
+set HVNET=(\$rmlib/nets/net.ng \$rmlib/nets/net.wp)
+set HVVOC=(\$rmlib/dicts/mono.dct \$rmlib/dicts/mono.dct)
+set HVPRUNE=(200.0 300.0)
+set HVIMPROB=(0.0 0.0)
+set HVMAXACTIVE=(0 0)
+set HVGSCALE=(7.0 7.0)
+
+# HResults Results Analysis
+set WORDLIST=\$rmlib/wordlist
+set HREQSETS=(\$rmlib/eq.ng \$rmlib/eq.wp)
+set HRNIST
+
+#---------------------------------------------------------------#
+#                END OF ENVIRONMENT DEFINITION                  #
+#---------------------------------------------------------------#
+__EOF__
+
+
+# Now build a set of single mixture-state clustered triphones
+
+hbuild 1 4
+
+# and test them as before.
+
+htestrm HTE wp feb89 hmm4
+
+
+# 9.4  Multiple mixture state-clustered triphones
+
+# Multiple mixture models for the state-clustered cross-word triphones
+# are built exactly as for the word-internal triphone models. It is
+# suggested that 2 mixture, 3 mixture, 4 mixture, 5 mixture and then 6
+# mixture models be built, and at each stage 4 iterations of HERest be
+# performed.
+
+# To obtain the initial 2 mixture state-clustered triphones create the
+# file $RMWORK/R9/edfile4.10 containing the line
+
+
+# run hedit to build a new set of models in hmm10 and then hbuild
+echo  "MU 2 {*.state[2-4].mix}" > edfile4.10
+echo  "MU 3 {*.state[2-4].mix}" > edfile14.20
+echo  "MU 4 {*.state[2-4].mix}" > edfile24.30
+echo  "MU 5 {*.state[2-4].mix}" > edfile34.40
+echo  "MU 6 {*.state[2-4].mix}" > edfile44.50
+hedit 4 10
+hbuild 11 14
+htestrm HTE wp feb89 hmm14
+hedit 14 20
+hbuild 21 24
+htestrm HTE wp feb89 hmm24
+hedit 24 30
+hbuild 31 34
+htestrm HTE wp feb89 hmm34
+hedit 34 40
+hbuild 41 44
+htestrm HTE wp feb89 hmm44
+hedit 44 50
+hbuild 51 54
+htestrm HTE wp feb89 hmm54
+
+# etc., until the 6 mixture models are built.
+
+# After each set of models have been build they can be tested using
+# htestrm as usual.
+
+#NOTE:  Due to the 'two' pronunciations for each word, one ending
+#       in sil and the other in sp, it is possible to get errors
+#       due to no token reaching the end of the network when sp
+#       is a significantly better model than sil.  These can be
+#       avoided by raising the beam width (potentially wasteful)
+#       or by tying the center state of the sil model to the emitting
+#       state of the sp model and adding a transitions from 2->4,
+#       3->2, 4->3 and 4->2 in the sil model.  This reduces its
+#       minimum duration to 2 frames but more importantly allows
+#       it to circulate between states.  See Step 7 of the Tutorial
+#       in the HTKBook.
+
+echo step 9 completed

@@ -1,0 +1,60 @@
+#!/bin/tcsh
+
+#set verbose
+
+set ALLARGS=($*)
+set HCOPY = HCopy
+set CHANGED
+if ( $#argv > 1 ) then
+while ( $?CHANGED )
+    unset CHANGED
+    if ( "$argv[1]" == "-HCOPY" )  then
+        set CHANGED
+        shift argv
+        set HCOPY = $argv[1]
+        shift argv
+    endif
+    if ("$argv[1]" == "-LIB") then
+        set CHANGED
+        shift argv
+        set LIBCMD = $argv[1]
+        shift argv
+    endif
+end
+endif
+
+if( $#argv != 3 ) then
+    echo "usage : $0 [-HCOPY path] [-LIB path] mfcSCP mlpDIR tandemDIR"
+    exit 0 
+endif
+
+set mfcSCP = $argv[1]
+set mlpDIR = $argv[2]
+set tandemDIR = $argv[3]
+
+if ($?LIBCMD) then
+    setenv LD_LIBRARY_PATH ${LIBCMD}:${LD_LIBRARY_PATH}
+endif
+
+if ( ! -d data/work) then
+    mkdir -p data/work
+endif
+
+foreach mfcpath (`cat $mfcSCP`)
+    set mfcname = `basename $mfcpath`
+    set filename = $mfcname:r
+    set mlppath = $mlpDIR/${filename}.mlp
+    set tandempath = ${tandemDIR}/${filename}.pma
+    set tmpmfc = data/work/${filename}.mfc
+    set tmpmlp = data/work/${filename}.mlp
+    set tmptandem = data/work/${filename}.pma
+    $HCOPY -A -D -T 1 -C config.mfc.uncompress $mfcpath $tmpmfc >> data/work/LOG.mfc
+    $HCOPY -A -D -T 1 -C config.mlp.uncompress $mlppath $tmpmlp >> data/work/LOG.mlp
+    python CatHTKFeatures.py $tmpmfc $tmpmlp $tmptandem >> data/work/LOG.tandem
+    $HCOPY -A -D -T 1 -C config.tandem.compress $tmptandem $tandempath >> data/work/LOG.tandem
+    rm $tmpmfc
+    rm $tmpmlp
+    rm $tmptandem
+end
+
+

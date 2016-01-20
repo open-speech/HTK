@@ -1,0 +1,26 @@
+#!/bin/bash
+source environment
+
+# dependencies
+if [ ! -d $RMWORK/R9/ml/hmm4 ]
+then
+                echo ERROR: step 13 depends on completion of step 9
+                exit 1
+fi
+
+
+# As an example of the flexibility of HTK, tis section describes how multiple
+# stream systems can be built (it also is used as a regression test for internal
+# HTK development).
+
+mkdir -p $RMWORK/R13/ml
+cd $RMWORK/R13/ml
+cp $RMWORK/R9/ml/HTE .
+mkdir hmm0
+echo  "SS 3" > edfile.ss.hed
+HHEd -A -D -V -T 1 -B -H $RMWORK/R9/ml/hmm54/MODELS -w hmm0/MODELS edfile.ss.hed $RMLIB/mlists/treeg.list > hmm0/LOG
+hbuild 1 2
+hbuild 3 4
+htestrm HTE wp feb89 hmm4
+
+echo step 13 completed

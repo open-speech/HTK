@@ -1,0 +1,5 @@
+# DATATYPE = MFCC
+# DATADIFF = _E_D_A_Z
+# DATADIM  = 13 * 3
+TARGETKIND = MFCC_E_D_A_Z    #   Basic parameterisation
+

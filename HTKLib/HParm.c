@@ -3,37 +3,40 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*          2001-2002 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*       File: HParm.c:  Speech Parameter File Input/Output    */
+/*       File: HParm.c  Speech parameter file input/output     */
 /* ----------------------------------------------------------- */
 
-char *hparm_version = "!HVER!HParm:   3.4.1 [CUED 12/03/09]";
-char *hparm_vc_id = "$Id: HParm.c,v 1.1.1.1 2006/10/11 09:54:58 jal58 Exp $";
+char *hparm_version = "!HVER!HParm:   3.5.0 [CUED 12/10/15]";
+char *hparm_vc_id = "$Id: HParm.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 #include "HShell.h"
 #include "HMem.h"
@@ -44,7 +47,9 @@ char *hparm_vc_id = "$Id: HParm.c,v 1.1.1.1 2006/10/11 09:54:58 jal58 Exp $";
 #include "HVQ.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
+#include "HUtil.h"
 #include "esignal.h"
 #ifdef UNIX
 #include <sys/ioctl.h>
@@ -70,7 +75,7 @@ extern Boolean vaxOrder;              /* true if byteswapping needed to
 /* varScale stuff: acts as a cache to stop the scaling file being re-read 
    on each file opening */
 
-static float varScale[100];
+static float varScale[1000];
 static int varScaleDim=0;
 static char varScaleFN[MAXFNAMELEN] = "\0";
 
@@ -80,6 +85,7 @@ static ParmKind ForcePKind = ANON; /* force to output a customized parm kind to 
                                     happy for all the parm kind types supported here */
 
 static HMMSet *hset = NULL;        /* hmmset to be used for frontend */
+static MemHeap hstak;	/* cz277 - xform hcopy */
 
 /* ------------------------------------------------------------------- */
 /* 
@@ -167,7 +173,36 @@ typedef struct {
    char* varScaleMask;        /* variance estimate file selection mask */
    char* varScalePathMask;    /* variance estimate file path selection mask */
    char* sideXFormMask;       /* side XForm mask */
-   char* sideXFormExt;       /* side XForm mask */
+   char* sideXFormExt;        /* side XForm mask */
+   char* sideXFormDir;        /* dir to find side XForm */
+   /* from xl207, cz277 - gau */
+   char* sideGMMMask;         /* side XForm mask */
+   char* sideGMMExt;          /* side XForm mask */
+   char* sideGMMDir;          /* side XForm mask */
+   char* sideGMMList;
+   char* sideGMMMMF;          /* All the GMMs are in a single MMF and appropriately named */
+
+   /* cz277 - aug: only 5 are supported, could be extended later */
+   char* augFea1DN;           /* dir to find the files for augmented feature 1 */
+   char* augFea1Mask;         /* augmented feature 1 selection mask */
+   char* augFea1PathMask;     /* augmented feature 1 path selection mask */
+   char* augFea2DN;           /* dir to find the files for augmented feature 2 */
+   char* augFea2Mask;         /* augmented feature 2 selection mask */
+   char* augFea2PathMask;     /* augmented feature 2 path selection mask */
+   char* augFea3DN;           /* dir to find the files for augmented feature 3 */
+   char* augFea3Mask;         /* augmented feature 3 selection mask */
+   char* augFea3PathMask;     /* augmented feature 3 path selection mask */
+   char* augFea4DN;           /* dir to find the files for augmented feature 4 */
+   char* augFea4Mask;         /* augmented feature 4 selection mask */
+   char* augFea4PathMask;     /* augmented feature 4 path selection mask */
+   char* augFea5DN;           /* dir to find the files for augmented feature 5 */
+   char* augFea5Mask;         /* augmented feature 5 selection mask */
+   char* augFea5PathMask;     /* augmented feature 5 path selection mask */
+
+   /* from mjfg, cz277 - 141022 */
+   char* appendXFormMask;       /* append XForm mask */
+   char* appendXFormExt;        /* append XForm ext */
+   int appendXFormSize;         /* number of parameters to append */
 
    VQTable vqTab;             /* VQ table */
    Matrix MatTran;            /* Stores transformation matrix */ 
@@ -215,12 +250,25 @@ typedef struct {
    Vector varScale;   /* var scaling vector  */
    Vector cMeanVector;   /* vector loaded from cmean dir */
    Vector varScaleVector; /* vector loaded from varscale dir */
+   /* cz277 - aug */
+   Vector augFea1Vector; /* vector loaded from augmented feature 1 */
+   Vector augFea2Vector; /* vector loaded from augmented feature 2 */
+   Vector augFea3Vector; /* vector loaded from augmented feature 3 */
+   Vector augFea4Vector; /* vector loaded from augmented feature 4 */
+   Vector augFea5Vector; /* vector loaded from augmented feature 5 */
+
    ParmKind matPK;
    int preFrames;
    int postFrames;
    Boolean preQual;
    InputXForm *xform;
    AdaptXForm *sideXForm;
+   /* from xl207, cz277 - gau */
+   HMMSet *sideGMM;
+   StateInfo *siGMM;  /* for when a GMM MMF is used for storage */
+   char *sideGMMFn;
+   /* mjfg, cz277 - 141022 */
+   AdaptXForm *appendXForm;
 }IOConfigRec;
 
 typedef IOConfigRec *IOConfig;
@@ -298,7 +346,35 @@ typedef enum {
    VARSCALEPATHMASK, /* label mask to idenitfy the path of the variance estimate files */
    SIDEXFORMMASK,/* mask for use with side-based xforms */
    SIDEXFORMEXT, /* extension for use with side-based xforms */
+   SIDEXFORMDIR, /* directory to find side xform */
+   /* from xl207, cz277 - gau */
+   SIDEGMMMASK,  /* mask for use with side-based GMM normalisation */
+   SIDEGMMEXT,   /* mask for use with side-based GMM normalisation */
+   SIDEGMMDIR,   /* mask for use with side-based GMM normalisation */
+   SIDEGMMLIST,  /* name of side-based GMM normalsisation */
+   SIDEGMMMMF,   /* all side-based GMM normalisation is in a single MMF (names appropriate) */
+   /* cz277 - aug */
+   AUGFEA1DIR,   /* dir to find the augmented feature 1 file */
+   AUGFEA1MASK,  /* label mask to identify the augmented feature 1 file */
+   AUGFEA1PATHMASK, /* label mask to identify the path of the augmented feature 1 files */
+   AUGFEA2DIR,   /* dir to find the augmented feature 2 file */
+   AUGFEA2MASK,  /* label mask to identify the augmented feature 2 file */
+   AUGFEA2PATHMASK, /* label mask to identify the path of the augmented feature 2 files */
+   AUGFEA3DIR,   /* dir to find the augmented feature 3 file */
+   AUGFEA3MASK,  /* label mask to identify the augmented feature 3 file */
+   AUGFEA3PATHMASK, /* label mask to identify the path of the augmented feature 3 files */
+   AUGFEA4DIR,   /* dir to find the augmented feature 4 file */
+   AUGFEA4MASK,  /* label mask to identify the augmented feature 4 file */
+   AUGFEA4PATHMASK, /* label mask to identify the path of the augmented feature 4 files */
+   AUGFEA5DIR,   /* dir to find the augmented feature 5 file */
+   AUGFEA5MASK,  /* label mask to identify the augmented feature 5 file */
+   AUGFEA5PATHMASK, /* label mask to identify the path of the augmented feature 5 files */
 
+   /* from mjfg, cz277 - 141022 */
+   APPENDXFORMMASK,/* mask for use with append xforms */
+   APPENDXFORMEXT, /* extension for use with append xforms */
+   APPENDXFORMSIZE, /* size of the append xforms */
+ 
    /* MatTran file */
    MATTRANFN,     /* File name for MatTran file */
    MATTRAN,
@@ -328,7 +404,16 @@ static char * ioConfName[CFGSIZE] = {
    "DOUBLEFFT",
    "VARSCALEFN", 
    "CMEANDIR" , "CMEANMASK", "CMEANPATHMASK",
-   "VARSCALEDIR", "VARSCALEMASK" , "VARSCALEPATHMASK" , "SIDEXFORMMASK", "SIDEXFORMEXT",
+   "VARSCALEDIR", "VARSCALEMASK" , "VARSCALEPATHMASK" , "SIDEXFORMMASK", "SIDEXFORMEXT", "SIDEXFORMDIR", 
+   /* from xl207, cz277 - gau */
+   "SIDEGMMMASK", "SIDEGMMEXT", "SIDEGMMDIR", "SIDEGMMLIST",  "SIDEGMMMMF",
+   /* cz277 - aug */
+   "AUGFEA1DIR", "AUGFEA1MASK", "AUGFEA1PATHMASK", "AUGFEA2DIR", "AUGFEA2MASK", "AUGFEA2PATHMASK",
+   "AUGFEA3DIR", "AUGFEA3MASK", "AUGFEA3PATHMASK", "AUGFEA4DIR", "AUGFEA4MASK", "AUGFEA4PATHMASK",
+   "AUGFEA5DIR", "AUGFEA5MASK", "AUGFEA5PATHMASK", 
+   /* from mjfg, cz277 - 141022 */
+   "APPENDXFORMMASK", "APPENDXFORMEXT", "APPENDXFORMSIZE",
+
    "MATTRANFN", "MATTRAN", "THIRDWINDOW", "FOURTHWINDOW"
 };
 
@@ -359,8 +444,19 @@ static const IOConfigRec defConf = {
    NULL,                  /* VARSCALEFN */
    NULL,NULL,NULL,        /* CMEANDIR CMEANMASK CMEANPATHMASK */
    NULL,NULL,NULL,        /* VARSCALEDIR VARSCALEMASK VARSCALEPATHMASK */
+   NULL,NULL,NULL,        /* SIDEXFORMMASK SIDEXFORMEXT SIDEXFORMDIR*/
+   /* from xl207, cz277 - gau */
+   NULL,NULL,NULL,NULL,   /* SIDEGMMMASK SIDEGMMEXT SIDEGMMDIR SIDEGMMLIST */
+   NULL,                  /* SIDEGMMMMF */
+   /* cz277 - aug */
+   NULL, NULL, NULL,      /* AUGFEA1DIR, AUGFEA1MASK, AUGFEA1PATHMASK */
+   NULL, NULL, NULL,      /* AUGFEA2DIR, AUGFEA2MASK, AUGFEA2PATHMASK */
+   NULL, NULL, NULL,      /* AUGFEA3DIR, AUGFEA3MASK, AUGFEA3PATHMASK */
+   NULL, NULL, NULL,      /* AUGFEA4DIR, AUGFEA4MASK, AUGFEA4PATHMASK */
+   NULL, NULL, NULL,      /* AUGFEA5DIR, AUGFEA5MASK, AUGFEA5PATHMASK */
 
-   NULL,NULL,             /* SIDEXFORMMASK SIDEXFORMEXT*/
+   /* from mjfg, cz277 - 141022 */
+   NULL,NULL,0,             /* APPENDXFORMMASK APPENDXFORMEXT APPENDXFORMSIZE */
 
    NULL,                  /* vqTab */
    NULL, NULL, 2, 2      /* MATTRANFN, MATTRAN THIRDWIN FOURTHWIN */
@@ -543,6 +639,8 @@ static ConfParam *cParm[MAXGLOBS];      /* config parameters */
 static int nParm = 0;
 
 static MemHeap parmHeap;                /* HParm no longer uses gstack */
+/* from xl207, cz277 - gau */
+static MemHeap gmmStack;                 /* for the side GMMs */
 
 static Boolean hparmBin=TRUE; /* HTK format files are binary */
 
@@ -660,10 +758,10 @@ void SetParmHMMSet(Ptr aset)
                by ensuring that the transforms have the same macroname.
             */
             if (strcmp(hmm_xf->xformName,cfg_xf->xformName))
-               HError(6396,"Incompatible XForm macros in MMF and config file %s and %s",
+               HError(-1,"Incompatible XForm macros in MMF and config file %s and %s",
                       hmm_xf->xformName,cfg_xf->xformName);     
             else if (cfg_xf != hmm_xf)
-               HRError(6396,"Assumed compatible XForm macro %s in files %s and %s",
+               HRError(-1,"Assumed compatible XForm macro %s in files %s and %s",
                        hmm_xf->xformName,hmm_xf->fname,cfg_xf->fname);  
          } else {
             /* 
@@ -731,13 +829,24 @@ static AdaptXForm *LoadSideXForm(IOConfig cf, char *fname)
    AdaptXForm *xf;
    char macroname[MAXSTRLEN];
    char side[MAXSTRLEN];
+   char xfname[MAXSTRLEN];
    Boolean maskMatch;
+
+   if (hset == NULL)  {	/* cz277 - xform hcopy */
+      CreateHeap(&hstak,"temporary HMM stack", MSTAK, 1, 1.0, 5000000, 50000000);
+      hset = (HMMSet*) New(&gcheap, sizeof(HMMSet) );
+      CreateHMMSet(hset, &hstak, TRUE);
+      hset->swidth[0] = 1;
+      hset->hsKind = PLAINHS;
+   }
 
    maskMatch = MaskMatch(cf->sideXFormMask,side, fname);
    if ((!maskMatch) && (fname != NULL))
       HError(999,"Side xform mask %s does not match filename %s",cf->sideXFormMask,fname);
    MakeFN(side,NULL,cf->sideXFormExt,macroname);
-   xf = LoadOneXForm(hset,macroname,NULL);
+   MakeFN(side, cf->sideXFormDir, cf->sideXFormExt, xfname);	/* cz277 - xform hcopy */
+   /*xf = LoadOneXForm(hset,macroname,NULL);*/
+   xf = LoadOneXForm(hset, macroname, xfname);
    if (xf == NULL)
       HError(999,"Cannot correctly load side transform %s",macroname);
 
@@ -745,6 +854,70 @@ static AdaptXForm *LoadSideXForm(IOConfig cf, char *fname)
    if (xf->bclass->numClasses != 1) HError(999,"Can only use global bseclasses for sideXforms");
    if (xf->parentXForm != NULL) HError(999,"Cannot have parent xforms with sideXforms");
    if (xf->xformSet->xkind != CMLLR) HError(999,"Can only use CMLLR as sideXforms");
+
+   return xf;
+}
+
+/* from xl207, cz277 - gau */
+static HMMSet *LoadSideGMM(IOConfig cf, char *fname)
+{
+   char macroname[MAXSTRLEN];
+   char side[MAXSTRLEN];
+   Boolean maskMatch;
+   LabId id;
+   MLink m;
+
+   maskMatch = MaskMatch(cf->sideGMMMask,side, fname);
+   if ((!maskMatch) && (fname != NULL))
+      HError(999,"Side GMM mask %s does not match filename %s",cf->sideGMMMask,fname);
+   MakeFN(side,cf->sideGMMDir,cf->sideGMMExt,macroname);
+   if (strcmp(macroname,cf->sideGMMFn) != 0) {
+      printf("Loaded new side GMM %s\n",macroname);
+      if (cf->sideGMMMMF == NULL) {
+         if (cf->sideGMM->vecSize != 0)
+            ResetHMMSet(cf->sideGMM);
+         AddMMF(cf->sideGMM,macroname);
+         if (cf->sideGMMList != NULL)
+            MakeHMMSet(cf->sideGMM,cf->sideGMMList);
+         else
+            HError(999,"Must specify the model list sideGMMList as well");
+         LoadHMMSet(cf->sideGMM,NULL,NULL);
+         if (cf->sideGMM->numStates != 1)
+            HError(999,"Only a GMM may be used for side normalisation");
+      } else {
+         /* Need to set the stateInfo from the GMM MMF */
+         id = GetLabId(macroname,FALSE);
+         m = FindMacroName(cf->sideGMM,'s',id);
+         if (id == NULL || m == NULL) { 
+            HError(999,"LoadSideGMM: no macro %s, type s exists in GMM MMF %s",macroname,cf->sideGMMMMF);
+         }
+         cf->siGMM = (StateInfo *)(m->structure);
+      }
+      /* I think this is a memory leak - has it been fixed? */
+      cf->sideGMMFn = CopyString(&gmmStack,macroname);
+   }
+   return cf->sideGMM;
+}
+
+/* from mjfg, cz277 - 141022 */
+static AdaptXForm *LoadAppendXForm(IOConfig cf, char *fname)
+{
+   AdaptXForm *xf;
+   char macroname[MAXSTRLEN];
+   char side[MAXSTRLEN];
+   Boolean maskMatch;
+
+   maskMatch = MaskMatch(cf->appendXFormMask,side, fname);
+   if ((!maskMatch) && (fname != NULL))
+      HError(999,"Side xform mask %s does not match filename %s",cf->appendXFormMask,fname);
+   MakeFN(side,NULL,cf->appendXFormExt,macroname);
+   xf = LoadOneXForm(hset,macroname,NULL);
+   if (xf == NULL)
+      HError(999,"Cannot correctly load append transform %s",macroname);
+
+   /* Check that this is a valid side XForm */
+   if (xf->bclass->numClasses != 1) HError(999,"Can only use global bseclasses for appendXforms");
+   if (xf->parentXForm != NULL) HError(999,"Cannot have parent xforms with appendXforms");
 
    return xf;
 }
@@ -866,6 +1039,33 @@ static IOConfig ReadIOConfig(IOConfig p)
          case CMEANPATHMASK:  p->cMeanPathMask = CopyString(&gcheap,GS(s)); break;
          case SIDEXFORMMASK:  p->sideXFormMask = CopyString(&gcheap,GS(s)); break;
          case SIDEXFORMEXT:   p->sideXFormExt = CopyString(&gcheap,GS(s)); break;
+         case SIDEXFORMDIR:   p->sideXFormDir = CopyString(&gcheap,GS(s)); break;
+         /* from xl207, cz277 - gau */
+         case SIDEGMMMASK:    p->sideGMMMask = CopyString(&gcheap,GS(s)); break;
+         case SIDEGMMEXT:     p->sideGMMExt = CopyString(&gcheap,GS(s)); break;
+         case SIDEGMMDIR:     p->sideGMMDir = CopyString(&gcheap,GS(s)); break;
+         case SIDEGMMLIST:    p->sideGMMList = CopyString(&gcheap,GS(s)); break;
+         case SIDEGMMMMF:     p->sideGMMMMF = CopyString(&gcheap,GS(s)); break;
+         /* cz277 - aug */
+         case AUGFEA1DIR:     p->augFea1DN = CopyString(&gcheap, GS(s)); break;
+         case AUGFEA1MASK:    p->augFea1Mask = CopyString(&gcheap, GS(s)); break;
+         case AUGFEA1PATHMASK:    p->augFea1PathMask = CopyString(&gcheap, GS(s)); break;
+         case AUGFEA2DIR:     p->augFea2DN = CopyString(&gcheap, GS(s)); break;
+         case AUGFEA2MASK:    p->augFea2Mask = CopyString(&gcheap, GS(s)); break;
+         case AUGFEA2PATHMASK:    p->augFea2PathMask = CopyString(&gcheap, GS(s)); break;
+         case AUGFEA3DIR:     p->augFea3DN = CopyString(&gcheap, GS(s)); break;
+         case AUGFEA3MASK:    p->augFea3Mask = CopyString(&gcheap, GS(s)); break;
+         case AUGFEA3PATHMASK:    p->augFea3PathMask = CopyString(&gcheap, GS(s)); break;
+         case AUGFEA4DIR:     p->augFea4DN = CopyString(&gcheap, GS(s)); break;
+         case AUGFEA4MASK:    p->augFea4Mask = CopyString(&gcheap, GS(s)); break;
+         case AUGFEA4PATHMASK:    p->augFea4PathMask = CopyString(&gcheap, GS(s)); break;
+         case AUGFEA5DIR:     p->augFea5DN = CopyString(&gcheap, GS(s)); break;
+         case AUGFEA5MASK:    p->augFea5Mask = CopyString(&gcheap, GS(s)); break;
+         case AUGFEA5PATHMASK:    p->augFea5PathMask = CopyString(&gcheap, GS(s)); break;
+         /* from mjfg, cz277 - 141022 */
+         case APPENDXFORMMASK:  p->appendXFormMask = CopyString(&gcheap,GS(s)); break;
+         case APPENDXFORMEXT:   p->appendXFormExt = CopyString(&gcheap,GS(s)); break;
+         case APPENDXFORMSIZE:  p->appendXFormSize = GI(s); break;
          case MATTRANFN:      p->MatTranFN= CopyString(&gcheap, GS(s)); break;
 
          case THIRDWINDOW:    p->thirdWin = GI(s); break;
@@ -875,6 +1075,18 @@ static IOConfig ReadIOConfig(IOConfig p)
    
    if (p->MatTranFN != NULL){
       LoadMat (&gcheap,p);
+   }
+
+   /* from xl207, cz277 - from gau */
+   if ((p->sideGMMList != NULL) || (p->sideGMMMMF != NULL)) {
+      p->sideGMMFn = NewString(&gmmStack,MAXFNAMELEN);
+      p->sideGMM = (HMMSet *)New(&gmmStack,sizeof(HMMSet));
+      CreateHMMSet(p->sideGMM,&gmmStack,TRUE);
+      if (p->sideGMMMMF != NULL) {
+         printf("Using GAUSS GMMs from %s\n",p->sideGMMMMF);
+         AddMMF(p->sideGMM,p->sideGMMMMF);
+         LoadHMMSet(p->sideGMM,NULL,NULL);
+      }
    }
    
    if (p->varScaleFN != NULL){
@@ -910,6 +1122,8 @@ ReturnStatus InitParm(void)
    char buf[MAXSTRLEN];
 
    CreateHeap(&parmHeap, "HPARM C Heap",  MSTAK, 1, 1.0, 20000, 80000 );
+   /* from xl207, cz277 - gau */
+   CreateHeap(&gmmStack,"GMMStore", MSTAK, 1, 1.0, 5000, 50000);
 
    Register(hparm_version,hparm_vc_id);
    nParm = GetConfig("HPARM", TRUE, cParm, MAXGLOBS);
@@ -977,7 +1191,7 @@ ReturnStatus SetChannel(char *confName)
       if (((curChan->cf).MatTranFN == NULL) &&  ((curChan->cf).xform != NULL))
          (curChan->cf).MatTranFN = (defChan->cf).MatTranFN;
       /* This should be after setting the model up. Set input xform if HPARM1 is being used */
-      if ((hset->xf == NULL) && (strcmp("HPARM1",buf)==0)) {
+      if ((hset != NULL) && (hset->xf == NULL) && (strcmp("HPARM1",buf)==0)) {
          hset->xf = (curChan->cf).xform;
       } else {
          /* commented out so that stored in header, rather than separately */
@@ -1086,7 +1300,7 @@ static char *pmkmap[] = {"WAVEFORM", "LPC", "LPREFC", "LPCEPSTRA",
                          "LPDELCEP", "IREFC", 
                          "MFCC", "FBANK", "MELSPEC",
                          "USER", "DISCRETE", "PLP",
-                         "ANON"};
+                         "ANON", "ANN"};	/* cz277 - ANN */
 
 /* EXPORT-> ParmKind2Str: convert given parm kind to string */
 char *ParmKind2Str(ParmKind kind, char *buf)
@@ -1279,6 +1493,50 @@ static void ApplyStaticMat(IOConfig cf, float *data, Matrix trans, int vSize, in
    cf->nUsed = mrows;
 }
 
+/* from xl207, cz277 - gau */
+/* Apply the global feature transform */
+static void ApplyGMMNorm(IOConfig cf, float *data, HMMSet *hset, int vSize, int n, int step, int offset)
+{
+   int d,i,j,k;
+   float cum, *fp;
+   StreamElem *se;
+   MixtureElem *me;
+   StateInfo *si=NULL;
+   HMMScanState hss;
+
+   HError(999,"Gaussianisation is disabled");
+   d = hset->vecSize;
+   if (d != hset->swidth[0])
+      HError(999,"Only GMMs with streams equal to the dimensions can be used");
+   step = cf->nCols;
+
+   if (cf->sideGMMMMF == NULL) {
+      /* extract the state */
+      NewHMMScan(hset,&hss);
+      do {
+         while (GoNextState(&hss,TRUE))
+            si = hss.si;
+      } while (GoNextHMM(&hss));
+      EndHMMScan(&hss);
+   } else { /* MMF used for storage and StateInfo already selected */
+      si = cf->siGMM;
+   }
+
+   se = si->pdf+1;
+   for (i=0; i<d ; i++,se++){
+      fp = data+i;
+      for (j=0; j<n; j++) {
+         cum = 0;
+         me = se->spdf.cpdf+1;
+         for (k=1;k<=se->nMix;k++,me++)
+            cum += me->weight * CumGauss(*fp,me->mpdf->mean[1],me->mpdf->cov.var[1]);
+         *fp = GaussInv(cum);
+         fp += step;
+      }
+   }
+
+}
+
 /* ---------------- Data Sizing and Memory allocation --------------- */
 
 /* MakeIOConfig: Create an IOConfig object.  Initial values are copied
@@ -1386,20 +1644,21 @@ static void ValidCodeParms(IOConfig cf)
 /* EXPORT->ValidConversion: checks that src -> tgt conversion is possible */
 Boolean ValidConversion (ParmKind src, ParmKind tgt)
 {
-   static short xmap[13][13] = {
-      { 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0},    /* src = WAVEFORM */
-      { 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0},    /* src = LPC */
-      { 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0},    /* src = LPREFC */
-      { 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0},    /* src = LPCEPSTRA */
-      { 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0},    /* src = LPDELCEP */
-      { 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0},    /* src = IREFC */
-      { 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0},    /* src = MFCC */
-      { 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0},    /* src = FBANK */
-      { 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0},    /* src = MELSPEC */
-      { 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0},    /* src = USER */
-      { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0},    /* src = DISCRETE */
-      { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0},    /* src = PLP */
-      { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},    /* src = ANON */
+   static short xmap[14][14] = {
+      { 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0},    /* src = WAVEFORM */
+      { 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},    /* src = LPC */
+      { 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},    /* src = LPREFC */
+      { 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},    /* src = LPCEPSTRA */
+      { 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1},    /* src = LPDELCEP */
+      { 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},    /* src = IREFC */
+      { 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1},    /* src = MFCC */
+      { 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1},    /* src = FBANK */
+      { 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1},    /* src = MELSPEC */
+      { 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1},    /* src = USER */
+      { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1},    /* src = DISCRETE */
+      { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1},    /* src = PLP */
+      { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},    /* src = ANON */
+      { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},    /* cz277 - ANN */
    };
    if (src == tgt) return TRUE;
    if (xmap[src&BASEMASK][tgt&BASEMASK] == 0 ) return FALSE;
@@ -1630,7 +1889,11 @@ static void AddQualifiers(ParmBuf pbuf,float *data, int nRows, IOConfig cf,
        HError (6371, "AddQualifiers: HIGHDIFF=T not supported with source features that contain derivatives already");
 
 
-   if ((cf->curPK == cf->tgtPK) && (cf->MatTranFN == NULL)) return;
+/* cz277 - cmvnbug */
+   /*if ((cf->curPK == cf->tgtPK) && (cf->MatTranFN == NULL) && (cf->varScale == NULL) && (cf->varScaleVector == NULL) && (cf->cMeanVector == NULL)) 
+       return;
+*/
+
    if (trace&T_QUA)
       printf("HParm:  adding Qualifiers to %s ...",ParmKind2Str(cf->curPK,buf));
    if (cf->MatTranFN != NULL) { /* Do the generic checks that the matrix is appropriate */
@@ -1706,9 +1969,10 @@ static void AddQualifiers(ParmBuf pbuf,float *data, int nRows, IOConfig cf,
    }
 
    /* Zero Mean the static coefficients if required */
-   if ((cf->tgtPK&HASZEROM) && !(cf->curPK&HASZEROM)) {
+   /*if ((cf->tgtPK&HASZEROM) && !(cf->curPK&HASZEROM)) {*/	/* cz277 - cmvnbug */
       /* if a global mean vector is not available  */
       if (cf->cMeanVector ==  0) {
+         if ((cf->tgtPK&HASZEROM) && !(cf->curPK&HASZEROM)) {	/* cz277 - cmvnbug */
          if (cf->MatTranFN == NULL || (!cf->preQual)) {
             d = span[1]-span[0]+1;
             if (cf->tgtPK&HASZEROC && !(cf->curPK&HASNULLE))  /* zero mean c0 too */
@@ -1723,6 +1987,7 @@ static void AddQualifiers(ParmBuf pbuf,float *data, int nRows, IOConfig cf,
          FZeroMean(data,d,nRows,cf->nCols);
          
          cf->curPK |= HASZEROM;
+         }	/* cmvnbug */
       }
       /* if a global cepstral mean file is available */
       else {
@@ -1739,7 +2004,7 @@ static void AddQualifiers(ParmBuf pbuf,float *data, int nRows, IOConfig cf,
          }
          cf->curPK |= HASZEROM;
       }
-   }
+   /*}*/	/* cz277 - cmvnbug */
 
    if (UseOldXFormCVN){
       
@@ -1755,9 +2020,10 @@ static void AddQualifiers(ParmBuf pbuf,float *data, int nRows, IOConfig cf,
       }  
       /*  Scale the variances */
       if (cf->varScaleFN) {
-         if ((VectorSize (cf->varScale) != cf->tgtUsed) && (highDiff != TRUE))
+         if ((VectorSize (cf->varScale) != cf->tgtUsed) && (highDiff != TRUE)) {
             HError(6376 ,"AddQualifiers: Mismatch beteen varScale (%d) and target size %d",
                    VectorSize (cf->varScale), cf->tgtUsed);
+         }
          if (trace&T_QUA)
             printf("\nHParm:  variance normalisation for %d cols from %d rows",
                    cf->tgtUsed, nRows);
@@ -1786,18 +2052,43 @@ static void AddQualifiers(ParmBuf pbuf,float *data, int nRows, IOConfig cf,
             }
          }
       }
-   }
-   
-   else {
+      /* from xl207, cz277 - gau */
+      /*  Do any GMM normalisation */
+      if ((cf->sideGMMList != NULL) || (cf->sideGMMMMF != NULL)) {
+         ApplyGMMNorm(cf,data,cf->sideGMM,cf->nCols,nRows,0,0);
+      }      
+
+      /* Now apply any side specific xforms */
+      if (cf->sideXForm != NULL) {
+         if (cf->sideXForm->xformSet->numXForms == 1) {
+            xf = cf->sideXForm->xformSet->xforms[1];
+            /*          if (cf->varScaleFN) { */
+            /*             if (xf->vecSize != d) */
+            /*                HError(999,"Incompatible sizes %d and %d",xf->vecSize,d); */
+            /*          } */
+            d = xf->vecSize;
+            tmp = CreateVector(&gstack,d);
+            step = cf->nCols; fp = data;
+            for (j=0;j<nRows;j++) {
+               for (i=0;i<d;i++) tmp[i+1]=*(fp+i);
+               ApplyXForm2Vector(xf,tmp);
+               for (i=0;i<d;i++) *(fp+i)=tmp[i+1];
+               fp += step;
+            }
+            FreeVector(&gstack,tmp);
+         }
+      }
+   } else {
       /*  Scale the variances */
       if (cf->varScaleFN) {
          if (cf->varScaleVector == 0) {
             HError (6376, "AddQualifiers: no variance scaling vector found");
          }
          d = VectorSize(cf->varScaleVector);
-         if (VectorSize (cf->varScale) != d)
+         if (VectorSize (cf->varScale) != d) {
             HError(6376 ,"AddQualifiers: Mismatch beteen varScale (%d) and target size %d",
                    VectorSize (cf->varScale), d);
+         }
          if (trace&T_QUA)
             printf("\nHParm:  variance normalisation for %d cols from %d rows",
                    cf->tgtUsed, nRows);
@@ -1811,25 +2102,6 @@ static void AddQualifiers(ParmBuf pbuf,float *data, int nRows, IOConfig cf,
             }
          }
       }
-
-      /* Now apply any side specific xforms */
-      if (cf->sideXForm != NULL) {
-         xf = cf->sideXForm->xformSet->xforms[1];
-         if (cf->varScaleFN) {
-            if (xf->vecSize != d)
-               HError(999,"Incompatible sizes %d and %d",xf->vecSize,d);
-         }
-         d = xf->vecSize;
-         tmp = CreateVector(&gstack,d);
-         step = cf->nCols; fp = data;
-         for (j=0;j<nRows;j++) {
-            for (i=0;i<d;i++) tmp[i+1]=*(fp+i);
-            ApplyXForm2Vector(xf,tmp);
-            for (i=0;i<d;i++) *(fp+i)=tmp[i+1];
-            fp += step;
-         }
-         FreeVector(&gstack,tmp);
-      }
       
       if ((cf->MatTranFN != NULL) && (!cf->preQual)) {      
          if (cf->matPK != cf->curPK) {
@@ -1841,6 +2113,63 @@ static void AddQualifiers(ParmBuf pbuf,float *data, int nRows, IOConfig cf,
          pbuf->main.nRows -= (cf->postFrames + cf->preFrames);
          cf->nSamples = pbuf->main.nRows;
       }      
+      /* from xl207, cz277 - gau */
+      /*  Do any GMM normalisation */
+      if ((cf->sideGMMList != NULL) || (cf->sideGMMMMF != NULL)) {
+         ApplyGMMNorm(cf,data,cf->sideGMM,cf->nCols,nRows,0,0);         
+      }
+
+      /* cz277 - 141022 */
+      /* Now apply any side specific xforms */
+      if ((cf->sideXForm != NULL) && ( cf->sideXForm->xformSet->numXForms == 1)) {
+         xf = cf->sideXForm->xformSet->xforms[1];
+         d = xf->vecSize;
+         tmp = CreateVector(&gstack,d);
+         step = cf->nCols; fp = data;
+         for (j=0;j<nRows;j++) {
+            for (i=0;i<d;i++) tmp[i+1]=*(fp+i);
+            ApplyXForm2Vector(xf,tmp);
+            for (i=0;i<d;i++) *(fp+i)=tmp[i+1];
+            fp += step;
+         }
+         FreeVector(&gstack,tmp);
+      }
+      /* cz277 - 141022 */
+      /* Finally append the append XForm */
+      if (cf->appendXForm != NULL) {
+         Vector appendVec, bias;
+         int b,j,cnti,bsize;
+         Matrix A;
+
+         xf = cf->appendXForm->xformSet->xforms[1];
+         /* convert parametes to a vector and check */
+         appendVec = CreateVector(&gstack,cf->appendXFormSize);
+         d = xf->vecSize;
+         for (b=1,cnti=1;b<=IntVecSize(xf->blockSize);b++) {
+            bsize = xf->blockSize[b];
+            A = xf->xform[b];
+            for (i=1;i<=bsize;i++) {
+               for (j=1;j<=bsize;j++,cnti++)
+                  appendVec[cnti] = A[i][j];
+            }
+         }
+         /* Append bias if required */
+         bias = xf->bias;
+         if (bias != NULL) {
+            for (i=1;i<=d;i++,cnti++)
+               appendVec[cnti] = bias[i];
+         }
+         if (cnti != cf->appendXFormSize+1) {
+            HError(999,"Incompatible append XForm size (%d %d)",cnti-1,cf->appendXFormSize);
+         }
+         step = cf->nCols; fp = data + step-cf->appendXFormSize;
+         for (j=0;j<nRows;j++) {
+            for (i=0;i<cf->appendXFormSize;i++) *(fp+i) = appendVec[i+1];
+            fp += step;
+         }
+         FreeVector(&gstack,appendVec);
+      }
+
    }
 
    if (trace&T_QUA)
@@ -2204,6 +2533,13 @@ static void SetUpForCoding(MemHeap *x, IOConfig cf, int frSize)
       else  
 	cf->tgtUsed = NumRows(cf->MatTran);
    }
+
+   /* from mjfg, cz277 - 141022 */
+   /* expand the size of the cfg to support the append transform */
+   if (cf->appendXFormMask != NULL) {
+      cf->tgtUsed += cf->appendXFormSize;
+   }
+
    cf->nCols=TotalComps(NumStatic(cf->nUsed,cf->curPK),cf->tgtPK);
    cf->nCols = (cf->nCols>cf->tgtUsed)?cf->nCols:cf->tgtUsed;
    cf->nCvrt = cf->nUsed;
@@ -2579,15 +2915,14 @@ static void SetAudioSpDetParms(ParmBuf pbuf, float dur, Boolean warn)
 static void SetWaveSpDetParms(ParmBuf pbuf)
 {
    IOConfig cf = pbuf->cf;
-   Vector v,eFr;
+   Vector eFr;
    float mlRes[ml_cnt],x,m,e,range,off;
-   int i,j,n,nFr,nBl,xMin=32767,xMax=-32768;
+   int i,j,n,nFr,xMin=32767,xMax=-32768;
    short *data;
    long nSamp;
  
    off = 0.0;
    n=cf->frSize;
-   v=CreateVector(&gstack,cf->frSize);
    data = GetWaveDirect(pbuf->in.w,&nSamp);
    nFr = (nSamp-cf->frSize)/cf->frRate + 1;
   
@@ -2606,7 +2941,7 @@ static void SetWaveSpDetParms(ParmBuf pbuf)
       
       off += m;
    }   
-   off=off/nFr; nBl=nFr/ML_PARTS;
+   off=off/nFr;
    range=(xMax-xMin)/65536.0;
    
    CalcSilDetParms(pbuf,mlRes,eFr,off,range);
@@ -2825,7 +3160,7 @@ void RunSilDet(ParmBuf pbuf,Boolean cleared)
 
 /* EXPORT ReadESIGPHeader: get header from Esignal pamameter file;
    return FALSE in case of failure */
-Boolean ReadESIGPHeader(FILE *f, long *nSamp, long *sampP, short *sampS,
+Boolean ReadESIGPHeader(FILE *f, long *nSamp, long *sampP, unsigned short *sampS,
                         short *kind, Boolean *bSwap, Boolean isPipe)
 {
    long hdrS;
@@ -3348,6 +3683,77 @@ static void LoadVarScaleVector(MemHeap* x, IOConfig cf, char *fname)
    CloseSource (&src);      
 }
 
+/* cz277 - aug */
+/* load appropriate vectors for augmented features */
+static void LoadAugFeaVector(MemHeap *x, IOConfig config, char *fileName, char *augFeaDN, char *augFeaMask, char *augFeaPathMask, Vector *augFeaVecPtr) {
+    static char augFeaNamePrev[MAXFNAMELEN] = "";
+    static Vector augFeaVector = NULL;
+    char augFeaName[MAXFNAMELEN];
+    char pathName[MAXFNAMELEN];
+    char buf1[MAXFNAMELEN], buf2[MAXFNAMELEN];
+    Source source;
+    int dim;
+
+    /* make the file name and open it */
+    if (augFeaDN == 0 || augFeaMask == 0) {
+        HError(9999, "LoadAugFeaVector: Mask or dir missing");
+    }
+    if (!MaskMatch(augFeaMask, augFeaName, fileName)) {
+        HError(9999, "LoadAugFeaVector: Non-matching mask %s", augFeaMask);
+    }
+    if (augFeaPathMask != 0) {
+        if (!MaskMatch(augFeaPathMask, pathName, fileName)) {
+            HError(9999, "LoadAugFeaVector: Non-matching path mask %s", augFeaPathMask);
+        }
+        MakeFN(pathName, augFeaDN, 0, buf2);
+        MakeFN(augFeaName, buf2, 0, buf1);
+    }
+    else {
+        MakeFN(augFeaName, augFeaDN, 0, buf1);
+    }
+    /* caching of vector */
+    if (strcmp(buf1, augFeaNamePrev) == 0) { /* names match, old vector must be the same */
+        *augFeaVecPtr = CreateVector(x, VectorSize(augFeaVector));
+        CopyVector(augFeaVector, *augFeaVecPtr);
+        return;
+    }
+    else {
+        strcpy(augFeaNamePrev, buf1);
+    }
+    
+    /* read file header and the augFea vector kind */
+    if (InitSource(buf1, &source, NoFilter) < SUCCESS) {
+        HError(9999, "LoadAugFeaVector: Can't open augmented feature file %s", buf1);
+    }
+    SkipComment(&source);
+    ReadString(&source, buf2);
+    if (strcmp(buf2, "<AUGFEA>") != 0) {
+        HError(9999, "LoadAugFeaVector: <AUGFEA> is missing, read %s", buf2);
+    }
+    ReadString(&source, buf2);
+    /* load augFea vector */
+    while ((strcmp(buf2, "<VECTOR>") != 0) && (!feof(source.f))) {
+        ReadString(&source, buf2);
+    }
+    if (feof(source.f)) {
+        HError(9999, "LoadAugFeaVector: <VECTOR> is missing, read %s", buf2);
+    }
+    ReadInt(&source, &dim, 1, FALSE);
+
+    /* cachubg of vector */
+    if (augFeaVector) {
+        Dispose(&gcheap, augFeaVector);
+    }
+    augFeaVector = CreateVector(&gcheap, dim);
+    if (!ReadVector(&source, augFeaVector, FALSE)) {
+        HError(9999, "LoadAugFeaVector: Couldn't read augmented feature vector from file");
+    }
+
+    *augFeaVecPtr = CreateVector(x, dim);
+    CopyVector(augFeaVector, *augFeaVecPtr);
+    CloseSource(&source);
+}
+
 /* ---------- Parameter File Channel Operations ----------- */
 
 #define CRCC_NONE 65535
@@ -3474,8 +3880,12 @@ static int GetParm(ParmBuf pbuf,int nFrame,void *data)
 
    r=n=0;
    size=(cf->srcUsed>cf->tgtUsed)?cf->srcUsed:cf->tgtUsed;
-   v=CreateVector(&gstack,size);
-   s=CreateShortVec(&gstack,size);
+   /* cz277 - mtload */
+   /*v=CreateVector(&gstack,size);
+   s=CreateShortVec(&gstack,size);*/
+   v = CreateVector(&gcheap, size);
+   s = CreateShortVec(&gcheap, size);
+
    while (r<nFrame && r==n) {
       n++;
       /* DISCRETE starts as shorts and stays as shorts without changing */
@@ -3526,8 +3936,12 @@ static int GetParm(ParmBuf pbuf,int nFrame,void *data)
    else {
       if (pbuf->inRow+r>=pbuf->lastRow) pbuf->chClear=TRUE;
    }
-   FreeShortVec(&gstack,s);
-   FreeVector(&gstack,v);
+   /* cz277 - mtload */
+   /*FreeShortVec(&gstack,s);
+   FreeVector(&gstack,v);*/
+   FreeShortVec(&gcheap, s);
+   FreeVector(&gcheap, v);
+
    return(r);
 }
 
@@ -3566,7 +3980,9 @@ static ReturnStatus OpenParmChannel(ParmBuf pbuf,char *fname, int *ret_val)
    FILE *f;
    long nSamples,sampPeriod;
    int initRows,i, tmp;
-   short sampSize,kind;
+   /*short sampSize,kind;*/
+   short kind;
+   unsigned short sampSize;	/* cz277 - cbu */
    char b1[50],b2[50];
    Boolean isEXF;
    char actfname[MAXFNAMELEN];
@@ -3630,12 +4046,12 @@ static ReturnStatus OpenParmChannel(ParmBuf pbuf,char *fname, int *ret_val)
       if (enIndex < 0) 
          enIndex = nSamples-1;
       if (nSamples < enIndex - stIndex + 1) {
-         HRError(6313,"OpenParmChannel: EXF segment bigger than file");
-         return (FAIL);
+	 HRError(-6313,"OpenParmChannel: EXF segment [%d,%d] bigger than file [%d,%d]",stIndex,enIndex,0,nSamples-1);
+	 enIndex=nSamples-1;
       }
       if (nSamples < enIndex + 1) {
-         HRError(6313,"OpenParmChannel: EXF segment bigger than file");
-         return (FAIL);
+	 HRError(-6313,"OpenParmChannel: EXF segment [%d,%d] bigger than file [%d,%d]",stIndex,enIndex,0,nSamples-1);
+         enIndex=nSamples-1;
       }
       preskip = stIndex * sampSize; 
 
@@ -4148,7 +4564,7 @@ static ReturnStatus OpenAsChannel(ParmBuf pbuf, int maxObs,
 {
    ChannelType chType;
    BufferInfo info;
-   int initRows;
+   int initRows=-1;
    long dBytes;
    char b1[50];
    IOConfig cf = pbuf->cf;
@@ -4372,20 +4788,70 @@ ParmBuf OpenBuffer(MemHeap *x, char *fn, int maxObs, FileFormat ff,
 
    /* side based normalisation -- #### should maybe be in OpenAsChannel? */
    /* Load mean vector into pbuf->cf */
-   if (HasZerom (pbuf->cf->tgtPK) && !HasZerom (pbuf->cf->srcPK) && 
-       (pbuf->cf->cMeanDN || pbuf->cf->cMeanMask))
+   /*if (HasZerom (pbuf->cf->tgtPK) && !HasZerom (pbuf->cf->srcPK) && 
+       (pbuf->cf->cMeanDN || pbuf->cf->cMeanMask))*/
+   /* cz277 - cmvnbug */
+   if (pbuf->cf->cMeanDN || pbuf->cf->cMeanMask) {
       LoadCMeanVector (pbuf->mem, pbuf->cf, fn);
-   
+   }
+
    /* Load variance estimate into pbuf->cf */
    if (pbuf->cf->varScaleDN || pbuf->cf->varScaleMask) {
       LoadVarScaleVector (pbuf->mem, pbuf->cf, fn);
    }
+   /* from xl207, cz277 - gau */
+   /* Load xform associated with this side if necessary */
+   if (curChan->cf.sideGMMMask != NULL) {
+      LoadSideGMM(&(curChan->cf),fn);
+      pbuf->cf->sideGMM = curChan->cf.sideGMM;
+      pbuf->cf->siGMM = curChan->cf.siGMM;
+   }
+   /*if (pbuf->cf->sideXFormMask != NULL) {
+      pbuf->cf->sideXForm = LoadSideXForm(pbuf->cf,fn);
+   }*/
 
    /* Load xform associated with this side if necessary */
    if (pbuf->cf->sideXFormMask != NULL) {
       pbuf->cf->sideXForm = LoadSideXForm(pbuf->cf,fn);
    }
 
+   /* from mjfg, cz277 - 141022 */
+   /* Load append xform associated with this side if necessary */
+   if (pbuf->cf->appendXFormMask != NULL) {
+      pbuf->cf->appendXForm = LoadAppendXForm(pbuf->cf,fn);
+   }
+
+   /* cz277 - aug */
+   if (pbuf->cf->augFea1DN || pbuf->cf->augFea1Mask) {
+      LoadAugFeaVector(pbuf->mem, pbuf->cf, fn, pbuf->cf->augFea1DN, pbuf->cf->augFea1Mask, pbuf->cf->augFea1PathMask, &pbuf->cf->augFea1Vector);
+   }
+   else {
+       pbuf->cf->augFea1Vector = NULL;
+   }
+   if (pbuf->cf->augFea2DN || pbuf->cf->augFea2Mask) {
+      LoadAugFeaVector(pbuf->mem, pbuf->cf, fn, pbuf->cf->augFea2DN, pbuf->cf->augFea2Mask, pbuf->cf->augFea2PathMask, &pbuf->cf->augFea2Vector);
+   }
+   else {
+       pbuf->cf->augFea2Vector = NULL;
+   }
+   if (pbuf->cf->augFea3DN || pbuf->cf->augFea3Mask) {
+      LoadAugFeaVector(pbuf->mem, pbuf->cf, fn, pbuf->cf->augFea3DN, pbuf->cf->augFea3Mask, pbuf->cf->augFea3PathMask, &pbuf->cf->augFea3Vector);
+   }
+   else {
+       pbuf->cf->augFea3Vector = NULL;
+   }
+   if (pbuf->cf->augFea4DN || pbuf->cf->augFea4Mask) {
+      LoadAugFeaVector(pbuf->mem, pbuf->cf, fn, pbuf->cf->augFea4DN, pbuf->cf->augFea4Mask, pbuf->cf->augFea4PathMask, &pbuf->cf->augFea4Vector);
+   }
+   else {
+       pbuf->cf->augFea4Vector = NULL;
+   }
+   if (pbuf->cf->augFea5DN || pbuf->cf->augFea5Mask) {
+      LoadAugFeaVector(pbuf->mem, pbuf->cf, fn, pbuf->cf->augFea5DN, pbuf->cf->augFea5Mask, pbuf->cf->augFea5PathMask, &pbuf->cf->augFea5Vector);
+   }
+   else {
+       pbuf->cf->augFea5Vector = NULL;
+   }
    if(OpenAsChannel(pbuf,maxObs,fn,ff,silMeasure)<SUCCESS){
       Dispose(x, pbuf);
       HRError(6316,"OpenBuffer: OpenAsChannel failed");   
@@ -4394,6 +4860,28 @@ ParmBuf OpenBuffer(MemHeap *x, char *fn, int maxObs, FileFormat ff,
 
    return pbuf;
 }
+
+/* cz277 - aug */
+Vector GetAugFeaVector(ParmBuf parmBuf, int feaIdx) {
+
+    switch (feaIdx) {
+        case 1:
+            return parmBuf->cf->augFea1Vector;    
+        case 2:
+            return parmBuf->cf->augFea2Vector;
+        case 3:
+            return parmBuf->cf->augFea3Vector;
+        case 4:
+            return parmBuf->cf->augFea4Vector;
+        case 5:
+            return parmBuf->cf->augFea5Vector;
+        default:
+            HError(9999, "GetAugFeaVector: Unavailable index of the augmented feature vector");
+    }
+
+    return NULL;
+}
+
 
 /* EXPORT->OpenExtBuffer: open and return an input buffer */
 ParmBuf OpenExtBuffer(MemHeap *x, char *fn, int maxObs, 
@@ -4747,6 +5235,13 @@ ParmBuf EmptyBuffer(MemHeap *x, int size, Observation o, BufferInfo info)
    return pbuf;
 }
 
+/* cz277 - ANN */
+/* need to be extended later */
+/*void CopyParmBufInfo(ParmBuf srcPBuf, ParmBuf dstPBuf) {
+    dstPBuf->chType = srcPBuf->chType;
+    dstPBuf->crcc = CRCC_NONE;
+}*/
+
 /* EXPORT->WriteESIGPHeader: Write header info to ESIG parameter file f */
 void WriteESIGPHeader(FILE *f, IOConfig cf, HTime sampPeriod, short sampSize, short pKind)
 {
@@ -4942,13 +5437,12 @@ static void CalcCompress(ParmBuf pbuf, PBlock *pbInit,int nCols, Boolean irefc)
 static void CompressPBlock(ParmBuf pbuf, PBlock *pb, short *sp, int nCols)
 {
    IOConfig cf = pbuf->cf;
-   int i,nx,ix,count;
+   int i,nx,ix;
    float *fp,x;
 
    if (trace&T_CPX)
       printf("HParm: Compressing pblock: nRows=%d, nCols=%d\n",
              pb->nRows,nCols);
-   count = pb->nRows * cf->nCols;
    /* Convert floats to shorts */
    fp = (float *)pb->data;
    for (i=0;i<pb->nRows;i++)
@@ -4968,7 +5462,9 @@ ReturnStatus SaveBuffer(ParmBuf pbuf, char *fname, FileFormat ff)
    FILE *f;
    IOConfig cf = pbuf->cf;
    Boolean bSwap,isPipe;
-   short sampSize,kind,*sp;
+   /*short sampSize,kind,*sp;*/
+   short kind, *sp;
+   unsigned short sampSize;	/* cz277 - cbu */
    long nSamples,sampPeriod;
    char buf[50];
    
@@ -5088,6 +5584,7 @@ ReturnStatus SaveBuffer(ParmBuf pbuf, char *fname, FileFormat ff)
       pbFin->next=NULL;
       pbuf->main.next=pbInit;
    }
+   
    return(SUCCESS);
 }
 

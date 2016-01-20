@@ -3,36 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*          2002-2004 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HERest.c: Embedded B-W ReEstimation           */
+/*          File: HERest.c  Embedded B-W re-estimation         */
 /* ----------------------------------------------------------- */
 
-char *herest_version = "!HVER!HERest:   3.4.1 [CUED 12/03/09]";
+char *herest_version = "!HVER!HERest:   3.5.0 [CUED 12/10/15]";
 char *herest_vc_id = "$Id: HERest.c,v 1.2 2006/12/07 11:09:08 mjfg Exp $";
 
 /*
@@ -64,6 +67,7 @@ char *herest_vc_id = "$Id: HERest.c,v 1.2 2006/12/07 11:09:08 mjfg Exp $";
 #include "HVQ.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HTrain.h"
 #include "HUtil.h"
@@ -100,7 +104,6 @@ static Boolean stats = FALSE;    /* enable statistics reports */
 static char * mmfFn  = NULL;     /* output MMF file, if any */
 static int trace     = 0;        /* Trace level */
 static Boolean saveBinary = FALSE;  /* save output in binary  */
-static Boolean ldBinary = TRUE;        /* load/dump in binary */
 static FileFormat dff=UNDEFF;       /* data file format */
 static FileFormat lff=UNDEFF;       /* label file format */
 static int updateMode = UPMODE_UPDATE; /* dump summed accs, update models or do both? */
@@ -158,7 +161,6 @@ void SetConfParms(void)
       if (GetConfInt(cParm,nParm,"TRACE",&i)) trace = i;
       if (GetConfFlt(cParm,nParm,"VARFLOORPERCENTILE",&f)) varFloorPercent = f;
       if (GetConfBool(cParm,nParm,"SAVEBINARY",&b)) saveBinary = b;
-      if (GetConfBool(cParm,nParm,"BINARYACCFORMAT",&b)) ldBinary = b;
       /* 2-model reestimation alignment model set */
       if (GetConfStr(cParm,nParm,"ALIGNMODELMMF",buf)) {
           strcpy(al_hmmMMF,buf); al_hmmUsed = TRUE;
@@ -178,6 +180,9 @@ void SetConfParms(void)
       }
       if (GetConfStr(cParm,nParm,"ALIGNXFORMDIR",buf)) {
          xfInfo.alXFormDir = CopyString(&hmmStack,buf);
+      }
+      if (GetConfStr(cParm,nParm,"OUTXFORMMASK",buf)) {
+         xfInfo.outSpkrPat = CopyString(&hmmStack,buf);
       }
       if (GetConfStr(cParm,nParm,"INXFORMMASK",buf)) {
          xfInfo.inSpkrPat = CopyString(&hmmStack,buf);
@@ -297,7 +302,6 @@ int main(int argc, char *argv[])
    char *datafn=NULL;
    char *datafn2=NULL;
    char *s;
-   char *scriptFile;
    char datafn1[MAXSTRLEN];
    char newFn[MAXSTRLEN];
    FILE *f;
@@ -308,6 +312,7 @@ int main(int argc, char *argv[])
    float tmpFlt;
    int tmpInt;
    int numUtt,spUtt=0;
+   Boolean ldBinary=TRUE;
 
    void Initialise(FBInfo *fbInfo, MemHeap *x, HMMSet *hset, char *hmmListFn);
    void DoForwardBackward(FBInfo *fbInfo, UttInfo *utt, char *datafn, char *datafn2);
@@ -322,9 +327,14 @@ int main(int argc, char *argv[])
    InitLabel();  InitModel();
    if(InitParm()<SUCCESS)  
       HError(2300,"HERest: InitParm failed");
-   InitTrain();
+   InitTrain(); ldBinary=LoadDumpAccBinary();
    InitUtil();   InitFB();
-   InitAdapt(&xfInfo); InitMap();
+   /* cz277 - xform */
+   /*InitAdapt(&xfInfo);*/
+   InitAdapt();
+   InitXFInfo(&xfInfo);
+
+   InitMap();
 
    if (!InfoPrinted() && NumArgs() == 0)
       ReportUsage();
@@ -349,7 +359,9 @@ int main(int argc, char *argv[])
       case 'b':
          if (NextArg()!=STRINGARG)
             HError(2319,"HERest: script file expected");
-         scriptFile = GetStrArg(); break;
+         GetStrArg();
+	 HError(-2319,"HERest: -b option is not used anymore\n");
+	 break;
       case 'c':
          minFrwdP = GetChkedFlt(0.0,1000.0,s);
          break;
@@ -569,7 +581,7 @@ int main(int argc, char *argv[])
 void Initialise(FBInfo *fbInfo, MemHeap *x, HMMSet *hset, char *hmmListFn)
 {   
    HSetKind hsKind;
-   int L,P,S,vSize,maxM; 
+   int L,P,vSize,maxM; 
 
    /* Load HMMs and init HMMSet related global variables */
    if(MakeHMMSet( hset, hmmListFn )<SUCCESS)
@@ -582,7 +594,6 @@ void Initialise(FBInfo *fbInfo, MemHeap *x, HMMSet *hset, char *hmmListFn)
    P = hset->numPhyHMM;
    L = hset->numLogHMM;
    vSize = hset->vecSize;
-   S = hset->swidth[0];
    maxM = MaxMixInSet(hset);
 
    hsKind = hset->hsKind;
@@ -739,7 +750,7 @@ void StatReport(HMMSet *hset)
    px=1;
    do {
       hmm = hss.hmm;
-      PrintStats(hset,f,px,hmm,(int)hmm->hook);
+      PrintStats(hset,f,px,hmm,(int)(unsigned long int)hmm->hook);
       px++;
    } while (GoNextHMM(&hss));
    EndHMMScan(&hss);
@@ -764,6 +775,7 @@ void DoForwardBackward(FBInfo *fbInfo, UttInfo *utt, char * datafn, char * dataf
    }
    else
       strcpy (datafn_lab, datafn);
+
    LoadLabs(utt, lff, datafn_lab, labDir, labExt);
    /* Load the data */
    LoadData(fbInfo->al_hset, utt, dff, datafn, datafn2);
@@ -1108,8 +1120,6 @@ void UpdateVars(HMMSet *hset, int px, HLink hmm)
                      }
                   }
                   else{
-                    MixtureElem *me2;
-                    me2 = ste->spdf.cpdf + 1; M = ste->nMix;
                     HError(-2330,"UpdateVars: Model %d[%s]: no use of variance %d.%d.%d",
                            px,HMMPhysName(hset,hmm),i,s,m);
                   }
@@ -1282,7 +1292,7 @@ void MLUpdateModels(HMMSet *hset, UPDSet uFlags)
    px=1;
    do {   
       hmm = hss.hmm;
-      n = (int)hmm->hook;
+      n = (int)(unsigned long int)hmm->hook;
       if (n<minEgs && !(trace&T_UPD))
          HError(-2331,"UpdateModels: %s[%d] copied: only %d egs\n",
                 HMMPhysName(hset,hmm),px,n);
@@ -1325,8 +1335,7 @@ void MLUpdateModels(HMMSet *hset, UPDSet uFlags)
    new files have newExt if set */
 void UpdateModels(HMMSet *hset, ParmBuf pbuf2)
 {
-   int maxM;
-   static char str[100];
+   static char str[MAXSTRLEN];
    BufferInfo info2;
    char macroname[MAXSTRLEN];
 
@@ -1337,7 +1346,6 @@ void UpdateModels(HMMSet *hset, ParmBuf pbuf2)
       ForceDiagC(hset); /* invert the variances again */
       ConvExpWt(hset);
    }
-   maxM = MaxMixInSet(hset);
 
    /* 
       This routine tidies up the semi-tied transform and 

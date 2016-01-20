@@ -1,0 +1,78 @@
+#!/bin/bash
+source environment
+# dependencies
+if [ ! -d $RMWORK/R9/ml/hmm4 ]
+then
+                echo ERROR: step 12 depends on completion of step 9
+                exit 1
+fi
+
+# This section uses two semi-tied transforms (one speech, one silence) to 
+# reduce the impact of the diagonal coavariance matrix approximation.
+
+mkdir -p $RMWORK/R12/ml
+cd $RMWORK/R12/ml
+mkdir hmm0
+cp $RMWORK/R9/ml/hmm4/MODELS hmm0
+cp $RMWORK/R10/ml/hmm0/regtree_2.* hmm0
+
+# 12.1 Estimating semi-tied transforms
+
+# Copy the HTE file associated with semi-tied training.
+
+cp $RMHTK/lib/htefiles/HTE.semit .
+
+# Estimate the semi-tied transform
+
+herest HTE.semit hmm0 hmm1 
+
+# Then do a further iteration of ML training. This can be simply done
+# by commenting out the line associated with "HEUPD=stw". THen run
+
+cp HTE.semit HTE 
+cat <<__EOF__ | ed HTE
+/HEUPD/s/^/# /
+wq
+__EOF__
+
+herest HTE hmm1 hmm2
+herest HTE hmm2 hmm3
+herest HTE hmm3 hmm4
+
+# Finally evaluate the performance
+
+htestrm HTE wp feb89 hmm4
+
+# 12.2 Estimating HLDA transforms
+
+# Global HLDA transforms are efficiently stored as input transforms.
+# Copy the HTE file associated with HLDA training.
+
+cp $RMHTK/lib/htefiles/HTE.hlda .
+
+# Create a global base class in hmm0/global containing
+
+cat <<__EOF__ >hmm0/global
+  ~b "global"
+  <MMFIDMASK> CUED_WSJ* 
+  <PARAMETERS> MIXBASE
+  <NUMCLASSES> 1
+    <CLASS> 1  {*.state[2-4].mix[1-100]}      
+__EOF__
+
+# Estimate the semi-tied transform
+
+herest HTE.hlda hmm0 hmm1_hlda
+
+# Then do a further iteration of ML training. 
+
+herest HTE hmm1_hlda hmm2_hlda
+herest HTE hmm2_hlda hmm3_hlda
+herest HTE hmm3_hlda hmm4_hlda
+
+# Finally evaluate the performance
+
+htestrm HTE wp feb89 hmm4_hlda
+
+echo step 12 completed
+

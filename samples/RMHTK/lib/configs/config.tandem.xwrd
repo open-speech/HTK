@@ -1,0 +1,6 @@
+TARGETKIND     = USER    #   Basic parameterisation
+HNET:TRACE     = 1             #   Want this for recognition
+ALLOWXWRDEXP   = T             #   Needed for cross word systems
+FORCECXTEXP    = T             #   Needed for cross word systems
+
+HMODEL:TRACE    = 512           #   Enables tracking of transforms

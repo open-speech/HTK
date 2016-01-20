@@ -1,0 +1,12 @@
+TARGETKIND     = MFCC_E_D_A_Z     #   Basic parameterisation
+
+HPARM: VARSCALEDIR      = cvn
+HPARM: VARSCALEMASK     = '*.%%%'
+HPARM: VARSCALEPATHMASK = '*.%%%'
+HPARM: VARSCALEFN       = ident_MFCC_E_D_A_Z_cvn
+
+HNET:TRACE     = 1                #   Want this for recognition
+ALLOWXWRDEXP   = TRUE             #   Needed for cross word systems
+FORCECXTEXP    = TRUE             #   Needed for cross word systems
+
+HMODEL:TRACE    = 512             #   Enables tracking of transforms

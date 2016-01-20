@@ -1,6 +1,0 @@
-export CPU=sgi
-export HTKCF='-O -DSGI_AUDIO'
-export HTKLF='-laudio -lmalloc'
-export HTKCC='cc'
-export SHRLF='-shared'
-export LIBEXT='so'

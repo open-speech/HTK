@@ -1,0 +1,99 @@
+#!/bin/bash
+############################################################
+# Step 0: Setting Up
+############################################################
+# set verbose
+source environment
+mkdir -p $RMWORKBASE $RMWORK $RMDATA $RMLIB
+
+# 0.0 pre-requisites
+cp -r $RMHTK/lib/{configs,corrupt,awks} $RMLIB/
+cp $RMHTK/lib/{eq.ng,eq.wp,wordlist} $RMLIB/
+cp $RMHTK/scripts/{w_edit,w_decode} $RMLIB/
+
+# 0.1 copy the NIST file lists from RMCD2
+cd $RMLIB
+mkdir ndx
+find $RMCD2/rm1/doc -name '*.ndx' -exec cp {} ndx \;
+chmod -R +w $RMWORK
+
+# extract file lists for adaptation
+grep 'dms0' ndx/6a_deptr.ndx | head -100 > ndx/step0.ndx
+chmod +w ndx/6a_deptr.ndx
+/bin/rm -f ndx/6a_deptr.ndx
+mv ndx/step0.ndx ndx/6a_deptr.ndx
+grep -h 'dms0' ndx/*deptst*.ndx > ndx/dms0_tst.ndx
+
+# 0.2 Coding the data using the coderm script
+# This can code either the speaker independent or speaker dependent
+# data and uses the file lists created in Step 0.1. Here just the
+# speaker independent data is used. Allow approximately 100MB of disk
+# space for this.  The file-lists created are stored in $RMLIB/flists.
+
+mkdir $RMLIB/flists
+cd $RMLIB
+$RMHTK/scripts/coderm ndx $RMCD1 ind train $RMDATA configs/config.code flists/train.scp
+$RMHTK/scripts/coderm ndx $RMCD2 ind dev_aug $RMDATA configs/config.code flists/dev_aug.scp
+
+# Now make script files for both the mfc data and label files.
+
+cd $RMLIB/flists
+cat train.scp dev_aug.scp > ind_trn109.scp
+sed 's:\.mfc:\.lab:' ind_trn109.scp > ind_trn109.lab
+
+# Also code the four speaker independent test sets and create script
+# files for complete test label files.
+
+cd $RMLIB
+$RMHTK/scripts/coderm ndx $RMCD2 ind feb89 $RMDATA configs/config.code flists/ind_feb89.scp
+$RMHTK/scripts/coderm ndx $RMCD2 ind oct89 $RMDATA configs/config.code flists/ind_oct89.scp
+$RMHTK/scripts/coderm ndx $RMCD2 ind feb91 $RMDATA configs/config.code flists/ind_feb91.scp
+$RMHTK/scripts/coderm ndx $RMCD2 ind sep92 $RMDATA configs/config.code flists/ind_sep92.scp
+cat flists/ind_???[89][912].scp | sed 's:\.mfc:\.lab:' > flists/ind_tst.lab
+
+
+# 0.3 Fixing the coded data files that are corrupt on the CD-ROM
+
+# A very few files on the CD-ROM have a long series of identical
+# time-domain values. These should be removed since the net effect is
+# to cause the differential and second differential components to be
+# zero with zero variance. The files which are corrupted were
+# identified automatically as having a run of 250 or more identical
+# time domain samples.  Use the script fixrm and the file list
+# $RMLIB/corrupt to delete these frames. Note that $RMLIB/corrupt
+# includes the corrupt frame numbers and this assumes that the default
+# 10ms frames have been used by coderm.  All the corrupt frames are in
+# the silence portion of the files.  Note that no speaker dependent
+# data has been checked for corrupt files.
+# Using alternative approach by setting HPARM:ADDDITHER=0.2 in config.code
+# fixrm $RMLIB/corrupt $RMDATA
+
+# 0.4 Create word-level label files (and associated lists) for the
+# test sets
+
+# This uses grep, gawk and sed to convert the SNOR word-level
+# transcriptions distributed on the CD-ROMs into HTK format.  gawk is
+# the public domain GNU version of awk which is specified because of
+# its built in tolower command that allows the uppercase file names in
+# SNOR format to be converted to lower-case.  Many versions of nawk
+# also have this functionality, if gawk is not installed but nawk is,
+# use nawk, otherwise use perl on this occasion and awk elsewhere.
+# First we create generic label files based on the prompts.
+
+cd $RMLIB
+cp $RMCD2/rm1/doc/al_sents.snr sents.snr
+mkdir wlabs
+grep -v '^;' $RMCD2/rm1/doc/al_sents.snr | \
+   gawk 'BEGIN { printf("#\!MLF\!#\n"); } \
+    { printf("%c*%s.lab%c\n",34,tolower(substr($NF,2,length($NF)-2)),34); \
+      for (i=1;i<NF;i++) printf("%s\n",$i); printf(".\n"); }' > wlabs/all.mlf
+
+# Now create specific lables for the actual files.
+cd $RMLIB
+touch wlabs/null.hled
+HLEd -A -D -V -l '*' -i wlabs/ind_trn109.mlf -I wlabs/all.mlf \
+	-S flists/ind_trn109.lab wlabs/null.hled
+HLEd -A -D -V -l '*' -i wlabs/ind_tst.mlf -I wlabs/all.mlf \
+	-S flists/ind_tst.lab wlabs/null.hled
+
+echo step 0 completed

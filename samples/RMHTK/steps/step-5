@@ -1,0 +1,155 @@
+#!/bin/bash
+############################################################
+# Step 5: Single-Mixture Word-Internal Triphones
+############################################################
+source environment
+# 5.1  Triphone dictionary and model-list creation
+
+# First a new dictionary is needed. This can be created using the tool
+# HDMan with the supplied script tri.ded. This creates word-internal
+# triphones for each word in the dictionary and creates a
+# context-dependent model list as a by-product. Create a triphone
+# dictionary as follows.
+
+cd $RMLIB/dicts
+HDMan -A -D -V -T 1 -n $RMLIB/mlists/tri.list -g $RMHTK/lib/dicts/tri.ded \
+    tri.dct mono.dct
+
+
+# 5.2  Triphone training label files
+
+# Create the triphone phone-level training label files
+# in the file $RMLIB/labs/tri.mlf.
+
+cd $RMLIB
+HLEd -A -D -V -l '*' -i labs/tri.mlf -d dicts/tri.dct $RMHTK/lib/labs/tri.hled wlabs/ind_trn109.mlf
+
+# 5.3  Initial models
+
+# Next an initial set of triphone models are created by cloning the
+# monophone models using HHEd. First create a directory with a copy of
+# R1/HTE.
+
+cd $RMWORK 
+mkdir -p R5/ml
+cat <<__EOF__ > $RMWORK/R5/ml/HTE
+#---------------------------------------------------------------#
+# HTK RM Environment File                08/09/95               #
+#                                                               #
+# This version is for:                                          #
+#                                                               #
+#         Baseline - Monophones                                 #
+#         39th Order MFCC_E_D_A Data (data in MFCC_E format)    #
+#         1 Mixture/Diagonal/3 State no Skip + sp model         #
+#                                                               #
+#---------------------------------------------------------------#
+
+# Set priority at which processes are run
+set NICE = 5
+
+# Define the rmwork and rmdata areas
+set rmwork=\$RMWORK
+set rmdata=\$RMDATA
+set rmlib=\$RMLIB
+
+# define input filters
+setenv HNETFILTER 'gzip -d -c \$.gz'          # Networks compress well
+
+# Define input configuration files
+setenv HECONFIG \$rmlib/configs/config.basic  # Basic configuration
+setenv HVCONFIG \$rmlib/configs/config.basic  # Basic configuration
+
+# Define HMMs - should reflect current models set
+set HMMLIST=\$rmlib/mlists/tri.list # ****** #
+
+# Define Training Data and Label files for current models
+set TRAINDATALIST=\$rmlib/flists/ind_trn109.scp
+set TRAINMLF=\$rmlib/labs/tri.mlf   # ****** #
+
+# Define Test Data
+# Note that TESTSET is defined by htestrm before sourcing HTE
+set SETLIST=(feb89 oct89 feb91 sep92)
+if (\$?TESTSET) then
+   set TESTDATALIST=\$rmlib/flists/ind_\${TESTSET}.scp
+   set TESTMLF=\$rmlib/wlabs/ind_tst.mlf
+endif
+
+# HERest Program Options
+set HETRACE=1
+set HEMINWEIGHT=2.0
+set HETMTHRESH=20.0    # Only needs to be same order as numerical accuracy
+set HEPRUNE=1000.0      # 250==VERY TIGHT, 500==TIGHT, 1000==LOOSE #
+set HESTATS=stats      # stats files aren't always needed but are interesting #
+set HEMINEG=0          # Potentially bad choice for unclustered models
+#set HEUPD=
+
+# Define possible test conditions
+set TYPELIST=(ng wp)
+
+# HVite Network Defn & Program Options
+set HVTRACE=1
+set HVNET=(\$rmlib/nets/net.ng \$rmlib/nets/net.wp)
+set HVVOC=(\$rmlib/dicts/tri.dct \$rmlib/dicts/tri.dct)
+set HVPRUNE=(150.0 200.0)
+set HVMAXACTIVE=(0 0)
+set HVGSCALE=(7.0 7.0)
+set HVIMPROB=(0.0 0.0)
+
+# HResults Results Analysis
+set WORDLIST=\$rmlib/wordlist
+set HREQSETS=(\$rmlib/eq.ng \$rmlib/eq.wp)
+set HRNIST
+
+#---------------------------------------------------------------#
+#                END OF ENVIRONMENT DEFINITION                  #
+#---------------------------------------------------------------#
+__EOF__
+
+
+# Edit R5/ml/HTE to change the title, HMMLIST, TRAINMLF and HVVOC
+# parameters replacing mono with tri.
+
+# For convenience, create local copies (links) of both the monophone
+# list and the triphone list.
+
+cd $RMWORK/R5/ml
+ln -s $RMLIB/mlists/mono.list mono.list
+ln -s $RMLIB/mlists/tri.list tri.list
+
+# Create an HHEd edit file in $RMWORK/R5/ml called clone.hed containing
+# the following commands.
+
+cat<<EOF > $RMWORK/R5/ml/clone.hed
+MM "trP_" { *.transP }
+CL "tri.list"
+EOF
+
+# Create a directory for the initial cloned triphones and run HHEd.
+
+mkdir hmm0
+HHEd -A -D -V -B -T 1 -H $RMWORK/R1/ml/hmm4/MODELS -w hmm0/MODELS clone.hed mono.list
+
+# 5.4  Triphone training
+
+# The HERest pruning threshold should be increased for triphone
+# models.  In HTE, change the value of HEPRUNE to 1000.0. Then build
+# the new set of models using hbuild.
+
+# Note that for future use (state-clustering) a statistics file for
+# the final run should be created. This is achieved by the following
+# line in the HTE file.
+
+export HESTATS=stats
+cd $RMWORK/R5/ml
+hbuild 1 2
+
+# 5.5  Triphone Testing
+
+# Test the models using  htestrm as usual.
+
+htestrm HTE wp feb89 hmm2
+
+# It may be found that it is necessary to adjust some of the
+# word-insertion or pruning penalties for triphone models.
+
+echo step 5 complete

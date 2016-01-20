@@ -3,36 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*              2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HFB.c: Forward Backward routines module       */
+/*         File: HFB.c: Forward backward routines module       */
 /* ----------------------------------------------------------- */
 
-char *hfb_version = "!HVER!HFB:   3.4.1 [CUED 12/03/09]";
+char *hfb_version = "!HVER!HFB:   3.5.0 [CUED 12/10/15]";
 char *hfb_vc_id = "$Id: HFB.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Exp $";
 
 #include "HShell.h"     /* HMM ToolKit Modules */
@@ -44,6 +47,7 @@ char *hfb_vc_id = "$Id: HFB.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Exp $";
 #include "HVQ.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HTrain.h"
 #include "HUtil.h"
@@ -996,7 +1000,6 @@ static void Setotprob(AlphaBeta *ab, FBInfo *fbInfo, ParmBuf pbuf,
    StreamElem *ste;
    HLink hmm;
    LogFloat sum;
-   PruneInfo *p;
    int skipstart, skipend;
    HMMSet *hset;
    Boolean seenState=FALSE;
@@ -1004,7 +1007,6 @@ static void Setotprob(AlphaBeta *ab, FBInfo *fbInfo, ParmBuf pbuf,
    hset = fbInfo->al_hset;
    skipstart = fbInfo->skipstart;
    skipend = fbInfo->skipend;
-   p = ab->pInfo;
    otprob = ab->otprob;
    ReadAsTable(pbuf,t-1,&ot);
    if (hset->hsKind == TIEDHS)
@@ -1158,9 +1160,7 @@ static LogDouble SetBeta(AlphaBeta *ab, FBInfo *fbInfo, UttInfo *utt)
    HLink hmm;
    PruneInfo *p;
    int skipstart, skipend;
-   HMMSet *hset;
    
-   hset = fbInfo->al_hset;
    skipstart = fbInfo->skipstart;
    skipend = fbInfo->skipend;
    pbuf=utt->pbuf;
@@ -1751,33 +1751,33 @@ static void UpMixParms(FBInfo *fbInfo, int q, HLink hmm, HLink al_hmm,
 
 static void StepForward(FBInfo *fbInfo, UttInfo *utt)
 {
-   int q,t,start,end,negs;
-   DVector aqt,aqt1,bqt,bqt1,bq1t;
-   HLink al_hmm, up_hmm;
-   AlphaBeta *ab;
+    int q, t, start, end;
+    unsigned long int negs;
+    DVector aqt, aqt1, bqt, bqt1, bq1t;
+    HLink al_hmm, up_hmm;
+    AlphaBeta *ab;
 
-   /* reset the memory heap for alpha for a new utterance */
-   /* ResetHeap(&(fbMemInfo.alphaStack)); */
-  
-   ab = fbInfo->ab;
-   CreateAlpha(ab,fbInfo->al_hset,utt->Q); /* al_hset may be idential to up_hset */
-   InitAlpha(ab,&start,&end,utt->Q,fbInfo->skipstart,fbInfo->skipend);
-   ab->occa = NULL;
-   if (trace&T_OCC) 
-      CreateTraceOcc(ab,utt);
-   for (q=1;q<=utt->Q;q++){             /* inc access counters */
-      up_hmm = ab->up_qList[q];
-      negs = (int)up_hmm->hook+1;
-      up_hmm->hook = (void *)negs;
-   }
+    /* reset the memory heap for alpha for a new utterance */
+    /* ResetHeap(&(fbMemInfo.alphaStack)); */
+    ab = fbInfo->ab;
+    CreateAlpha(ab, fbInfo->al_hset, utt->Q); /* al_hset may be idential to up_hset */
+    InitAlpha(ab, &start, &end, utt->Q, fbInfo->skipstart, fbInfo->skipend);
+    ab->occa = NULL;
+    if (trace & T_OCC) {
+        CreateTraceOcc(ab, utt);
+    }
+    for (q = 1; q <= utt->Q; q++) {	/* inc access counters */
+        up_hmm = ab->up_qList[q];
+        negs = (unsigned long int)up_hmm->hook + 1;
+        up_hmm->hook = (void *)negs;
+    }
+    ResetObsCache();
 
-   ResetObsCache();
+    for (t = 1; t <= utt->T; t++) {
 
-   for (t=1;t<=utt->T;t++) {
+        GetInputObs(utt, t, fbInfo->hsKind);
 
-      GetInputObs(utt, t, fbInfo->hsKind);
-
-      if (fbInfo->hsKind == TIEDHS)
+        if (fbInfo->hsKind == TIEDHS)
          PrecomputeTMix(fbInfo->al_hset,&(utt->ot),pruneSetting.minFrwdP,0);
 
       if (t>1)

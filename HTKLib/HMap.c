@@ -3,33 +3,36 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*          2001-2002 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*            File: HMap.c  - MAP Model Updates               */
+/*                File: HMap.c  MAP model updates              */
 /* ----------------------------------------------------------- */
 
 /*
@@ -38,7 +41,7 @@
   (ie the forward-backward allignments have been performed).
 */
 
-char *hmap_version = "!HVER!HMap: 3.4.1 [CUED 12/03/09]";
+char *hmap_version = "!HVER!HMap: 3.5.0 [CUED 12/10/15]";
 char *hmap_vc_id = "$Id: HMap.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Exp $";
 
 #include <stdio.h>      /* Standard C Libraries */
@@ -56,6 +59,7 @@ char *hmap_vc_id = "$Id: HMap.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Exp $";
 #include "HAudio.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HTrain.h"
 #include "HUtil.h"
@@ -381,12 +385,10 @@ static void UpdateVars(HMMSet *hset, int px, HLink hmm)
 static int TotMixInSet(HMMSet *hset)
 {
    HMMScanState hss;
-   HLink hmm;
    int nmix=0;
 
    NewHMMScan(hset,&hss);
    do {
-     hmm = hss.hmm;
      while (GoNextState(&hss,TRUE)) {
        while (GoNextStream(&hss,TRUE)) {
 	 if (hss.isCont)                     /* PLAINHS or SHAREDHS */
@@ -429,7 +431,7 @@ void MAPUpdateModels(HMMSet *hset, UPDSet uFlags)
   px=1;
   do {   
     hmm = hss.hmm;
-    n = (int)hmm->hook;
+    n = (int)(unsigned long int)hmm->hook;
     if (n<minEgs && !(trace&T_UPD))
       HError(-2331,"UpdateModels: %s[%d] copied: only %d egs\n",
 	     HMMPhysName(hset,hmm),px,n);
@@ -458,3 +460,6 @@ void MAPUpdateModels(HMMSet *hset, UPDSet uFlags)
     fflush(stdout);
   }
 }
+
+/* ------------------------- End of HMap.c ------------------------- */
+

@@ -1,0 +1,255 @@
+#!/bin/bash
+############################################################
+# Step 4: Discrete Density Monophones
+############################################################
+source environment
+# 4.1  Vector quantiser creation
+
+# Since all the observation have to be held in memory for this
+# operation (which can be computationally expensive) we will perform
+# this on a subset of the data. Please note that this process can take
+# a considerable amount of time.
+
+if [ ! -d $RMWORK/R4/ml ]
+then
+	mkdir -p $RMWORK/R4/ml
+fi
+if [ ! -d $RMWORK/R4/ml/hmm0 ]
+then
+	mkdir -p $RMWORK/R4/ml/hmm0
+fi
+
+cd $RMWORK/R4/ml
+gawk '{ if ((++i%10)==1) print }' $RMLIB/flists/ind_trn109.scp \
+	 > ind_trn109.sub.scp
+HQuant -A -D -V -T 1 -d -n 1 128 -n 2 128 -n 3 128 -n 4 32 -s 4 -S \
+     ind_trn109.sub.scp -C $RMLIB/configs/config.basic vq.table
+
+# 4.2  Align data and initialise discrete models
+
+# To create some discrete models we are going to use HInit and HRest
+# both of which need data aligned at the phone level.  We will use the
+# monophones from either R1 or R2 to generate phone labels for the
+# subset of the data used for the codebook.
+
+HVite -A -D -V -T 1 -C $RMLIB/configs/config.basic -H ../../R1/ml/hmm4/MODELS \
+    -a -m -o SW -i ind_trn109.sub.mlf -X lab -b '!SENT_START' \
+    -l '*' -y lab -I $RMLIB/wlabs/ind_trn109.mlf -t 500.0 -s 0.0 -p 0.0 \
+    -S ind_trn109.sub.scp $RMLIB/dicts/mono.dct $RMLIB/mlists/mono.list
+
+# 4.3  Create a prototype hmm set
+
+# This can be done using the MakeProtoHMMSet discrete.pcf or by
+# creating a file like the one below for each of the models apart from
+# sp which should only have three states so that is reproduced in
+# full.
+for i  in `cat $RMLIB/mlists/mono.list`
+do
+cat<<EOF > hmm0/$i
+  ~o <VecSize> 39 <MFCC_E_D_A_V> <StreamInfo> 4 12 12 12 3
+  ~h "${i}"
+<BeginHMM>
+  <NumStates> 5
+  <State> 2 <NumMixes> 128 128 128 32
+  <Stream> 1
+      <DProb> 11508*128
+  <Stream> 2
+      <DProb> 11508*128
+  <Stream> 3
+      <DProb> 11508*128
+  <Stream> 4
+      <DProb> 8220*32
+
+  <State> 3 <NumMixes> 128 128 128 32
+  <Stream> 1
+      <DProb> 11508*128
+  <Stream> 2
+      <DProb> 11508*128
+  <Stream> 3
+      <DProb> 11508*128
+  <Stream> 4
+      <DProb> 8220*32
+
+  <State> 4 <NumMixes> 128 128 128 32
+  <Stream> 1
+      <DProb> 11508*128
+  <Stream> 2
+      <DProb> 11508*128
+  <Stream> 3
+      <DProb> 11508*128
+  <Stream> 4
+      <DProb> 8220*32
+
+  <TransP> 5
+   0.000e+0   1.000e+0   0.000e+0   0.000e+0   0.000e+0
+   0.000e+0   6.000e-1   4.000e-1   0.000e+0   0.000e+0
+   0.000e+0   0.000e+0   6.000e-1   4.000e-1   0.000e+0
+   0.000e+0   0.000e+0   0.000e+0   6.000e-1   4.000e-1
+   0.000e+0   0.000e+0   0.000e+0   0.000e+0   0.000e+0
+<EndHMM>
+EOF
+done
+
+cat<<EOF > hmm0/sp
+  ~o <VecSize> 39 <MFCC_E_D_A_V> <StreamInfo> 4 12 12 12 3
+  ~h "sp"
+<BeginHMM>
+  <NumStates> 5
+  <State> 2 <NumMixes> 128 128 128 32
+  <Stream> 1
+      <DProb> 11508*128
+  <Stream> 2
+      <DProb> 11508*128
+  <Stream> 3
+      <DProb> 11508*128
+  <Stream> 4
+      <DProb> 8220*32
+  <State> 3 <NumMixes> 128 128 128 32
+  <Stream> 1
+      <DProb> 11508*128
+  <Stream> 2
+      <DProb> 11508*128
+  <Stream> 3
+      <DProb> 11508*128
+  <Stream> 4
+      <DProb> 8220*32
+  <State> 4 <NumMixes> 128 128 128 32
+  <Stream> 1
+      <DProb> 11508*128
+  <Stream> 2
+      <DProb> 11508*128
+  <Stream> 3
+      <DProb> 11508*128
+  <Stream> 4
+      <DProb> 8220*32
+  <TransP> 5
+   0.000e+0   4.000e-1   2.000e-1   2.000e-1   2.000e-1
+   0.000e+0   4.000e-1   2.000e-1   2.000e-1   2.000e-1
+   0.000e+0   0.000e+0   4.000e-1   3.000e-1   3.000e-1
+   0.000e+0   0.000e+0   0.000e+0   5.000e-1   5.000e-1
+   0.000e+0   0.000e+0   0.000e+0   0.000e+0   0.000e+0
+<EndHMM>
+EOF
+
+# MakeProtoHMMSet $RMLIB/discrete.pcf
+
+# Then initialise the models. Note that the following script commands
+# assume that you running csh unix shell. These commands vary for
+# different shells.
+
+mkdir hmm1
+for i  in `cat $RMLIB/mlists/mono.list`
+do
+   HInit -T 1 -C $RMLIB/configs/config.discrete -M hmm1 -l $i \
+     -I ind_trn109.sub.mlf -S ind_trn109.sub.scp hmm0/$i > hmm1/LOG.$i
+done
+
+# And reestimate them.
+
+mkdir hmm2
+for i in `cat $RMLIB/mlists/mono.list`
+do
+   HRest -T 1 -C $RMLIB/configs/config.discrete -M hmm2 -l $i \
+     -I ind_trn109.sub.mlf -S ind_trn109.sub.scp hmm1/$i > hmm2/LOG.$i
+done
+
+# Create an HHEd script edfile2.3 with the single command
+cat<<EOF > edfile2.3
+AT 1 5 0.8 { sp.transP }
+EOF
+
+# This will add back the tee-transition in sp deleted by HInit and
+# HRest and will also produce a single MMF
+
+mkdir hmm3
+HHEd -A -D -V -T 1 -d hmm2 -w hmm3/MODELS edfile2.3 $RMLIB/mlists/mono.list
+
+# Copy the standard HTE file from the R1 directory and change the
+# configuration file names to use the discrete configuration file.
+
+cat <<__EOF__ > $RMWORK/R4/ml/HTE
+#---------------------------------------------------------------#
+# HTK RM Environment File                08/09/95               #
+#                                                               #
+# This version is for:                                          #
+#                                                               #
+#         Baseline - Monophones                                 #
+#         39th Order MFCC_E_D_A Data (data in MFCC_E format)    #
+#         1 Mixture/Diagonal/3 State no Skip + sp model         #
+#                                                               #
+#---------------------------------------------------------------#
+
+# Set priority at which processes are run
+set NICE = 5
+
+# Define the rmwork and rmdata areas
+set rmwork=\$RMWORK
+set rmdata=\$RMDATA
+set rmlib=\$RMLIB
+
+# define input filters
+setenv HNETFILTER 'gzip -d -c \$.gz'          # Networks compress well
+
+# Define input configuration files
+setenv HECONFIG \$rmlib/configs/config.discrete  # Basic configuration
+setenv HVCONFIG \$rmlib/configs/config.discrete  # Basic configuration
+
+# Define HMMs - should reflect current models set
+set HMMLIST=\$rmlib/mlists/mono.list # ****** #
+
+# Define Training Data and Label files for current models
+set TRAINDATALIST=\$rmlib/flists/ind_trn109.scp
+set TRAINMLF=\$rmlib/labs/mono.mlf   # ****** #
+
+# Define Test Data
+# Note that TESTSET is defined by htestrm before sourcing HTE
+set SETLIST=(feb89 oct89 feb91 sep92)
+if (\$?TESTSET) then
+   set TESTDATALIST=\$rmlib/flists/ind_\${TESTSET}.scp
+   set TESTMLF=\$rmlib/wlabs/ind_tst.mlf
+endif
+
+# HERest Program Options
+set HETRACE=1
+set HEMINWEIGHT=2.0
+set HETMTHRESH=20.0    # Only needs to be same order as numerical accuracy
+set HEPRUNE=600.0      # 250==VERY TIGHT, 500==TIGHT, 1000==LOOSE #
+set HESTATS=stats      # stats files aren't always needed but are interesting #
+set HEMINEG=0          # Potentially bad choice for unclustered models
+#set HEUPD=
+
+# Define possible test conditions
+set TYPELIST=(ng wp)
+
+# HVite Network Defn & Program Options
+set HVTRACE=1
+set HVNET=(\$rmlib/nets/net.ng \$rmlib/nets/net.wp)
+set HVVOC=(\$rmlib/dicts/mono.dct \$rmlib/dicts/mono.dct)
+set HVPRUNE=(150.0 100.0)
+set HVMAXACTIVE=(0 0)
+set HVGSCALE=(2.0 2.0)
+set HVIMPROB=(0.0 0.0)
+
+# HResults Results Analysis
+set WORDLIST=\$rmlib/wordlist
+set HREQSETS=(\$rmlib/eq.ng \$rmlib/eq.wp)
+set HRNIST
+
+#---------------------------------------------------------------#
+#                END OF ENVIRONMENT DEFINITION                  #
+#---------------------------------------------------------------#
+__EOF__
+
+# Then train the models
+
+hbuild 4 7
+
+# and then test them with HVite (recognition settings will need
+# adjusting.  Try setting the grammar scale to 2.0 rather than 7.0 and
+# speed things up a little by changing the pruning beam width from
+# 200.0 to 100.0).
+
+
+htestrm HTE wp feb89 hmm7
+
+echo step 4 complete

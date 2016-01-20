@@ -3,37 +3,40 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*              2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HUtil.c      HMM utility routines             */
+/*            File: HUtil.c     HMM utility routines           */
 /* ----------------------------------------------------------- */
 
-char *hutil_version = "!HVER!HUtil:   3.4.1 [CUED 12/03/09]";
-char *hutil_vc_id = "$Id: HUtil.c,v 1.1.1.1 2006/10/11 09:54:59 jal58 Exp $";
+char *hutil_version = "!HVER!HUtil:   3.5.0 [CUED 12/10/15]";
+char *hutil_vc_id = "$Id: HUtil.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 #include "HShell.h"
 #include "HMem.h"
@@ -44,6 +47,7 @@ char *hutil_vc_id = "$Id: HUtil.c,v 1.1.1.1 2006/10/11 09:54:59 jal58 Exp $";
 #include "HVQ.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h"
 
@@ -250,6 +254,7 @@ void NewHMMScan(HMMSet *hset, HMMScanState *hss)
    hss->isCont = (hset->hsKind == PLAINHS) || (hset->hsKind == SHAREDHS);
    hss->h = -1;
    hss->mac=NULL;
+
    if (!GoNextHMM(hss))
       HError(7220,"NewHMMScan: cannot find any physical HMMs to scan");
 }
@@ -416,7 +421,7 @@ void ConvDiagC(HMMSet *hset, Boolean convData)
    SVector v;
    int k;
 
-   if (hset->hsKind == DISCRETEHS || hset->hsKind == TIEDHS) 
+   if (hset->hsKind == DISCRETEHS || hset->hsKind == TIEDHS || hset->hsKind == HYBRIDHS)    /* cz277 - ANN */ 
       return;
    NewHMMScan(hset, &hss);
    while (GoNextMix(&hss,FALSE)) {
@@ -447,7 +452,7 @@ void ForceDiagC(HMMSet *hset)
    SVector v;
    int k;
 
-   if (hset->hsKind == DISCRETEHS || hset->hsKind == TIEDHS) 
+   if (hset->hsKind == DISCRETEHS || hset->hsKind == TIEDHS) /*|| hset->hsKind == HYBRIDHS)*/    /* cz277 - ANN */ 
       return;
    NewHMMScan(hset, &hss);
    while (GoNextMix(&hss,FALSE)) {
@@ -475,7 +480,7 @@ void ConvLogWt(HMMSet *hset)
 {
    HMMScanState hss;
 
-   if (hset->hsKind == DISCRETEHS || hset->hsKind == TIEDHS || hset->logWt == TRUE) 
+   if (hset->hsKind == DISCRETEHS || hset->hsKind == TIEDHS || hset->logWt == TRUE || hset->hsKind == HYBRIDHS) /* cz277 - ANN */ 
       return;
    NewHMMScan(hset, &hss);
    while (GoNextMix(&hss,FALSE))
@@ -489,7 +494,7 @@ void ConvExpWt(HMMSet *hset)
 {
    HMMScanState hss;
 
-   if (hset->hsKind == DISCRETEHS || hset->hsKind == TIEDHS  || hset->logWt == FALSE) 
+   if (hset->hsKind == DISCRETEHS || hset->hsKind == TIEDHS  || hset->logWt == FALSE)/* || hset->hsKind == HYBRIDHS)*/   /* cz277 - ANN */ 
       return;
    NewHMMScan(hset, &hss);
    while (GoNextMix(&hss,FALSE))
@@ -616,7 +621,7 @@ void SetSet(IntSet s)
 
 /* -------------------- Item List Parser -------------------- */
 
-#define PAT_LEN 1024
+#define PAT_LEN 8192
 
 static Source *source;         /* Current source for item list */
 static int ch;                 /* Current character from source */
@@ -701,7 +706,7 @@ static char *GetAlpha(char *s)
 /* GetInt: read integer coerced given range */
 static int GetInt(int lo, int hi)
 {
-   char buf[20];
+   char buf[MAXSTRLEN];
    int i = 0, num;
    
    SkipSpaces();
@@ -732,7 +737,7 @@ static char *keymap[] = {
 /* GetKey: get a keyword */
 static Keyword GetKey(void)
 {
-   char buf[20];
+   char buf[MAXSTRLEN];
    int i = 0;
    Keyword k;
    
@@ -1143,6 +1148,17 @@ Ptr GetMacroHook(MLink ml)
    Ptr hook;
 
    switch(ml->type) {
+   case 'F':
+   case 'L':
+   case 'N':
+       hook = NULL;
+       break;
+   case 'M':
+       hook = ((NMatBundle *)(ml->structure))->hook;
+       break;
+   case 'V':
+       hook = ((NVecBundle *)(ml->structure))->hook;
+       break;
    case 'l': /* HLink */
    case 'h': /* HLink */
       hook=((HLink)(ml->structure))->hook; break;
@@ -1173,6 +1189,13 @@ Ptr GetMacroHook(MLink ml)
 void SetMacroHook(MLink ml,Ptr hook)
 {
    switch(ml->type) {
+   /* cap letters: ANN macro letters */
+   case 'F':	
+   case 'L':	
+   case 'N':
+       break;
+   case 'M': ((NMatBundle *) ml->structure)->hook = hook; break;
+   case 'V': ((NVecBundle *) ml->structure)->hook = hook; break;
    case 'l': /* HLink */
    case 'h': /* HLink */
       ((HLink)(ml->structure))->hook=hook; break;
@@ -1205,9 +1228,25 @@ void SetMacroHook(MLink ml,Ptr hook)
 /* EXPORT->GetMacroUse: Return value of use field for any macro */
 int GetMacroUse(MLink ml)
 {
-   int use;
+   int use=-1;
 
    switch(ml->type) {
+   /* cap letters: ANN macro letters */
+   case 'F': use = ((FeaMix *) (ml->structure))->nUse; break;
+   case 'L': use = ((LELink) (ml->structure))->nUse; break;
+   case 'N': use = ((ADLink) (ml->structure))->nUse; break;
+   case 'M': 
+       if (((NMatBundle *) ml->structure)->kind == SIBK)
+           use = ((NMatBundle *) ml->structure)->nUse;
+       else
+           HError(9999, "GetMacroUse: Only valid for SI matrix bundle");
+       break;
+   case 'V':
+       if (((NVecBundle *) ml->structure)->kind == SIBK)
+           use = ((NVecBundle *) ml->structure)->nUse;
+       else
+           HError(9999, "GetMacroUse: Only valid for SI vector bundle");
+       break;
    case 'l': /* HLink */
    case 'h': /* HLink */
       use=((HLink)(ml->structure))->nUse; break;
@@ -1235,6 +1274,7 @@ int GetMacroUse(MLink ml)
       use=-1;
       HError(7270,"GetMacroUse: Getting use of non-existant macro");
    }
+
    return(use);
 }
 
@@ -1242,6 +1282,12 @@ int GetMacroUse(MLink ml)
 void SetMacroUse(MLink ml,int use)
 {
    switch(ml->type) {
+   /* cap letters: ANN macro letters */
+   case 'F': ((FeaMix *) (ml->structure))->nUse = use; break;
+   case 'L': ((LELink) (ml->structure))->nUse = use; break;
+   case 'N': ((ADLink) (ml->structure))->nUse = use; break;
+   case 'M': ((NMatBundle *) ml->structure)->nUse = use; break;
+   case 'V': ((NVecBundle *) ml->structure)->nUse = use; break;
    case 'l': /* HLink */
    case 'h': /* HLink */
       ((HLink)(ml->structure))->nUse=use; break;

@@ -3,31 +3,32 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2001-2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*       File: HLat.h:  Lattice Manipulation                   */
+/*             File: HLat.h:  Lattice Manipulation             */
 /* ----------------------------------------------------------- */
 
-/* !HVER!HLat:   3.4.1 [CUED 12/03/09] */
-
+/* !HVER!HLat:   3.5.0 [CUED 12/10/15] */
 
 #ifndef _HLAT_H_
 #define _HLAT_H_
@@ -35,6 +36,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* cz277 - ANN */
+/*#include "HLM.h"*/
 
 /* ------------------------ Initialisation --------------------------- */
 
@@ -95,7 +99,6 @@ Lattice *LatExpand (MemHeap *heap, Lattice *lat, LModel *lm);
 void ApplyNGram2LabLat(Lattice *lat, LModel *lm);
 #endif
 
-
 Lattice *GetLattice (char *fn, char *path, char *ext,
                      /* arguments of ReadLattice() below */
                      MemHeap *heap, Vocab *voc, 
@@ -105,8 +108,14 @@ Lattice *MergeLatNodesArcs(Lattice *lat, MemHeap *heap, Boolean mergeFwd);
 
 void ApplyWPNet2LabLat(Lattice *lat, Lattice *wdNet);
 
+/*  sxz20 not sure this way*/
+void LatMakeLogical (Lattice *lat, MemHeap *heap);
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif  /* _HLAT_H_ */
+
+/* ------------------------- End of HLat.h ------------------------- */
+

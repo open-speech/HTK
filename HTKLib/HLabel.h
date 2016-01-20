@@ -3,24 +3,36 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLabel.h:   Speech Label File Input           */
+/*           File: HLabel.h   Speech Label File Input          */
 /* ----------------------------------------------------------- */
 
-/* !HVER!HLabel:   3.4.1 [CUED 12/03/09] */
-
+/* !HVER!HLabel:   3.5.0 [CUED 12/10/15] */
 
 /* 
    This module allows an internal data structure representing a
@@ -289,6 +301,14 @@ ReturnStatus LSave(char *fname, Transcription *t, FileFormat fmt);
 void TriStrip(char *s);
 /* 
    Remove contexts of form A- and +B from s 
+*/
+
+/* cz277 - ANN */
+char *ExtractState(char *src, char *dst, int *stateIdx);
+
+void FTriStrip(char *s);
+/* 
+   Remove contexts of form A- and +B from s and also items after : and ^
 */
 
 void LTriStrip(Boolean enab);

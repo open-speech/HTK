@@ -3,24 +3,40 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HMath.c   Math Support Module                 */
+/*             File: HMath.c   Math support module             */
 /* ----------------------------------------------------------- */
 
-char *hmath_version = "!HVER!HMath:   3.4.1 [CUED 12/03/09]";
-char *hmath_vc_id = "$Id: HMath.c,v 1.1.1.1 2006/10/11 09:54:58 jal58 Exp $";
+char *hmath_version = "!HVER!HMath:   3.5.0 [CUED 12/10/15]";
+char *hmath_vc_id = "$Id: HMath.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 /*
    This library provides math support in the following three areas
@@ -39,15 +55,43 @@ char *hmath_vc_id = "$Id: HMath.c,v 1.1.1.1 2006/10/11 09:54:58 jal58 Exp $";
 #include "HShell.h"        /* HTK Libraries */
 #include "HMem.h"
 #include "HMath.h"
+#include "config.h"
+
+#ifdef CUDA
+#include "HCUDA.h"
+#endif
+
+#ifdef MKL
+#include "mkl_lapacke.h"
+#endif
 
 /* ----------------------------- Trace Flags ------------------------- */
 
 static int trace = 0;
 
+#define T_DIM   0002        /* Matrix/Vector dimension checking */
+/* cz277 - 1004 */
+#define MAXSVDITER 30
+#define SIGN(a, b) (b > 0.0 ? fabs(a): -fabs(a))
+#define MAX(a, b) ((a)>(b)? (a): (b))
+#define MIN(a, b) ((a)<(b)? (a): (b))
+
 /* -------------------- Configuration Parameters --------------------- */
 
 static ConfParam *cParm[MAXGLOBS];       /* config parameters */
 static int numParm = 0;
+/* from mjfg - cz277 141022 */
+#define MAXMATRIXSIZE 400
+
+/* cz277 - ANN */
+#ifdef MKL
+static int nMKLThreads = 1;             /* the number of threads used by CPU LAPACK/BLAS kernels (MKL) */
+static char *nMKLThreadEnvVar = "";
+#endif
+static NMatrix *tmpNMat = NULL;         /* the pointer to the temp matrix */
+static NVector *tmpNVec = NULL;
+static int tmpRowNum = 1;               /* the row number of the temp matrix*/
+static int tmpColNum = 1;               /* the column number of the temp matrix */
 
 /* ------------------ Vector Oriented Routines ----------------------- */
 
@@ -615,7 +659,7 @@ void LinTranQuaProd(Matrix Prod, Matrix A, Matrix C)
    Matrix tempMatrix_A_mult_C;
    
    if (NumRows(C) != NumCols(C)){
-      HError(999,"HMath: LinTranQuaProd: Matrix C is not square!\n");
+      HError(5221,"HMath: LinTranQuaProd: Matrix C is not square!\n");
    }
    else {
       tempMatrix_A_mult_C = CreateMatrix(&gstack,NumRows(A),NumCols(C));
@@ -1155,6 +1199,7 @@ void SVD(DMatrix A, DMatrix U, DMatrix V, DVector d)
       HError(1, "SVD: The svd matrices and vector must be initialised b4 call");
  
    A_tmp = CreateDMatrix(&gstack, n, n);
+
    CopyDMatrix(A, A_tmp);
    InitIdentity(U);
    InitIdentity(V);
@@ -1421,12 +1466,16 @@ static void LinSolve(Matrix a, int *perm, float *b)
 float MatInvert(Matrix c, Matrix invc)
 {
    Matrix a;
-   float col[100];
+   float col[MAXMATRIXSIZE];
    float det;
    int sign;
-   int n,i,j,perm[100];
+   int n,i,j,perm[MAXMATRIXSIZE];
    
    n=NumRows(c);
+   /* from mjfg - cz277 - 141022 */   
+   if (n > MAXMATRIXSIZE)
+      HError (5221, "Matrix too large");
+
    a=CreateMatrix(&gstack,n,n);
    CopyMatrix(c,a);           /* Make a copy of c */
    LUDecompose(a,perm,&sign);      /* Do LU Decomposition */
@@ -1474,12 +1523,16 @@ static void DLinSolve(DMatrix a, int *perm, double *b)
 double DMatInvert(DMatrix c, DMatrix invc)
 {
    DMatrix a;
-   double col[100];
+   double col[MAXMATRIXSIZE];
    double det;
    int sign;
-   int n,i,j,perm[100];
+   int n,i,j,perm[MAXMATRIXSIZE];
    
    n=NumDRows(c);
+   /* from mjfg - cz277 141022 */
+   if (n > MAXMATRIXSIZE)
+      HError (5221, "Matrix too large");
+
    a=CreateDMatrix(&gstack,n,n);
    CopyDMatrix(c,a);           /* Make a copy of c */
    DLUDecompose(a,perm,&sign);      /* Do LU Decomposition */
@@ -1503,12 +1556,16 @@ double DMatInvert(DMatrix c, DMatrix invc)
 double DMatCofact(DMatrix c, int r, DVector cofact)
 {
    DMatrix a;
-   double col[100];
+   double col[MAXMATRIXSIZE];
    double det;
    int sign;
-   int n,i,perm[100];
+   int n,i,perm[MAXMATRIXSIZE];
    
    n=NumDRows(c);
+   /* from mjfg, cz277 - 141022 */
+   if (n > MAXMATRIXSIZE)
+      HError (5221, "Matrix too large");
+
    a=CreateDMatrix(&gstack,n,n);
    CopyDMatrix(c,a);                      /* Make a copy of c */
    if (! DLUDecompose(a,perm,&sign))      /* Do LU Decomposition */
@@ -1532,12 +1589,16 @@ double MatCofact(Matrix c, int r, Vector cofact)
 {
    DMatrix a;
    DMatrix b;
-   double col[100];
+   double col[MAXMATRIXSIZE];
    float det;
    int sign;
-   int n,i,perm[100];
+   int n,i,perm[MAXMATRIXSIZE];
  
    n=NumRows(c);
+   /* from mjfg, cz277 - 141022 */
+   if (n > MAXMATRIXSIZE)
+      HError (5221, "Matrix too large");
+
    a=CreateDMatrix(&gstack,n,n);
    b=CreateDMatrix(&gstack,n,n);
    Mat2DMat(c,b);
@@ -1642,7 +1703,7 @@ float RandomValue(void)
    return RANDF();
 }
 
-/* EXPORT->GaussDeviate: random number with a N(mu,sigma) distribution */
+/* EXPORT->GaussDeviate: random number with a N(mu,sigma^2) distribution */
 float GaussDeviate(float mu, float sigma)
 {
    double fac,r,v1,v2,x;
@@ -1668,12 +1729,29 @@ float GaussDeviate(float mu, float sigma)
    return x*sigma+mu;
 }
 
+/* from xl207, cz277 - gau */
+float GaussInv(float p)
+{  
+  HError(999, "Gaussianisation is disabled");
+  return 0.0;
+}
+
+/* from xl207, cz277 - gau */
+float CumGauss(float x, float mean, float var)
+{
+   HError(999, "Gaussianisation is disabled");
+   return 0.0;
+}
+
 /* --------------------- Initialisation ---------------------- */
 
 /* EXPORT->InitMath: initialise this module */
 void InitMath(void)
 {
    int i;
+#ifdef MKL
+   ConfParam *cpVal;
+#endif
 
    Register(hmath_version,hmath_vc_id);
    RandInit(-1);
@@ -1681,7 +1759,3026 @@ void InitMath(void)
    numParm = GetConfig("HMATH", TRUE, cParm, MAXGLOBS);
    if (numParm>0){
       if (GetConfInt(cParm,numParm,"TRACE",&i)) trace = i;
+/* cz277 - ANN */
+#ifdef MKL
+      if (GetConfAny(cParm, numParm, "NMKLTHREADS", &cpVal)) {
+          if (cpVal->kind == IntCKind) 
+              nMKLThreads = cpVal->val.i;
+          else if (cpVal->kind == StrCKind) 
+              nMKLThreadEnvVar = CopyString(&gcheap, cpVal->val.s); 
+          else 
+              HError(5222, "InitMath: Unknown NMKLTHREADS value kind");
+      }
+#endif
    }
+}
+
+/* cz277 - ANN */
+/* --------------------- ANN related math kernels --------------------- */
+
+/* cz277 - 151020 */
+#ifdef MKL
+void StartMKL() {
+    char *envVar = NULL;
+    int maxMKLThreads = 1;
+    MKLVersion version;
+
+    /* print the MKL version */
+    mkl_get_version(&version);
+    printf("MKL version %d.%d.%d (build %s)\n", version.MajorVersion, version.MinorVersion, version.UpdateVersion, version.Build);
+    printf("%s\n", version.Platform);
+    /*printf("Optimised for %s\n", version.Processor);*/
+
+    /* set and print the thread number */
+    maxMKLThreads = mkl_get_max_threads();
+    if (nMKLThreads > maxMKLThreads) {
+        HError(-5223, "StartMKL: Thread number %d set by NMKLTHREADS > maximum thread number %d, reset to %d", nMKLThreads, maxMKLThreads, maxMKLThreads);
+        nMKLThreads = maxMKLThreads;
+    }
+    if (strcmp(nMKLThreadEnvVar, "") != 0) {
+        envVar = getenv(nMKLThreadEnvVar);
+        if (envVar == NULL) {
+            HError(-5223, "StartMKL: Environment variable %s not defined, reset to use 1 thread\n", envVar);
+            nMKLThreads = 1;
+        }
+        else {
+            nMKLThreads = atoi(envVar);
+        }
+    } 
+    if (nMKLThreads > 0) {
+        mkl_set_dynamic(0);
+        mkl_set_num_threads(nMKLThreads);
+        printf("MKL thread number = %d\n", nMKLThreads);
+    }
+    else {
+        mkl_set_dynamic(maxMKLThreads);
+        printf("MKL dynamic threading control (upto %d threads)\n", maxMKLThreads);
+    }
+    printf("\n");
+}
+#endif
+
+
+void RegisterTmpNMat(int nrows, int ncols) {
+    if (nrows > tmpRowNum)
+        tmpRowNum = nrows;
+    if (ncols > tmpColNum)
+        tmpColNum = ncols;
+}
+
+void CreateTmpNMat(MemHeap *heap) {
+    if (tmpRowNum != 0 && tmpColNum != 0) {
+        tmpNMat = CreateNMatrix(heap, tmpRowNum, tmpColNum);
+        tmpNVec = (NVector *) New(heap, sizeof(NVector));
+        memset(tmpNVec, 0, sizeof(NVector));
+        tmpNVec->vecLen = tmpNMat->rowNum * tmpNMat->colNum;
+        tmpNVec->vecElems = tmpNMat->matElems;
+#ifdef CUDA
+        tmpNVec->devElems = tmpNMat->devElems;
+#endif
+    }
+}
+
+NMatrix *GetTmpNMat(void) {
+    return tmpNMat;
+}
+
+NVector *GetTmpNVec(void) {
+    return tmpNVec;
+}
+
+void FreeTmpNMat(MemHeap *heap) {
+    if (tmpNMat != NULL) {
+        FreeNMatrix(heap, tmpNMat);
+        tmpNMat = NULL;
+        tmpRowNum = 0;
+        tmpColNum = 0;
+    }
+}
+
+static inline void CopyNSegmentCPU(NFloat *srcPtr, int segLen, NFloat *dstPtr) {
+   memcpy(dstPtr, srcPtr, segLen * sizeof(NFloat));
+}
+
+#ifdef MKL
+static inline void CopyNSegmentMKL(NFloat *srcPtr, int segLen, NFloat *dstPtr) {
+    #ifdef DOUBLEANN
+    cblas_dcopy(segLen, srcPtr, 1, dstPtr, 1);
+    #else
+    cblas_scopy(segLen, srcPtr, 1, dstPtr, 1);
+    #endif
+}
+#endif
+
+void CopyNSegment(NMatrix *srcMat, int srcOff, int segLen, NMatrix *dstMat, int dstOff) {
+    if (trace & T_DIM) {
+        if (!(srcOff >= 0 && segLen >= 0 && (srcOff + segLen) < srcMat->rowNum * srcMat->colNum))
+            HError(5221, "CopyNSegment: Illegal source matrix offset or segment length");
+        if (!(dstOff >= 0 && (dstOff + segLen) < dstMat->rowNum * dstMat->colNum))
+            HError(5221, "CopyNSegment: Illegal destinate matrix offset");
+    }
+#ifdef CUDA
+    CopyNSegmentCUDA(srcMat->devElems + srcOff, segLen, dstMat->devElems + dstOff);
+#else
+    #ifdef MKL
+    CopyNSegmentMKL(srcMat->matElems + srcOff, segLen, dstMat->matElems + dstOff);
+    #else
+    CopyNSegmentCPU(srcMat->matElems + srcOff, segLen, dstMat->matElems + dstOff);
+    #endif
+#endif
+}
+
+void CopyNVectorSegment(NVector *srcVec, int srcOff, int segLen, NVector *dstVec, int dstOff) {
+    if (trace & T_DIM) {
+        if (!(srcOff >= 0 && segLen >= 0 && (srcOff + segLen) < srcVec->vecLen))
+            HError(5221, "CopyNVectorSegment: Illegal source vector offset or segment length");
+        if (!(dstOff >= 0 && (dstOff + segLen) < dstVec->vecLen))
+            HError(5221, "CopyNVectorSegment: Illegal destinate vector offset");
+    }
+#ifdef CUDA
+    CopyNSegmentCUDA(srcVec->devElems + srcOff, segLen, dstVec->devElems + dstOff);
+#else
+    #ifdef MKL
+    CopyNSegmentMKL(srcVec->vecElems + srcOff, segLen, dstVec->vecElems + dstOff);
+    #else
+    CopyNSegmentCPU(srcVec->vecElems + srcOff, segLen, dstVec->vecElems + dstOff);
+    #endif
+#endif
+}
+
+/*typedef struct _SRank {
+    int idx;
+    NFloat val;
+} SRank;
+
+static int cmpfuncSRank(const void *a, const void *b) {
+    return (((SRank *)b)->val - ((SRank *)a)->val);
+}
+
+static void SortOrthVecsCPU(NFloat *U, int nrows, int ncols, NFloat *d, NFloat *V) {
+    int i, j, k;
+    NFloat *temp;
+    SRank *slist;
+
+    temp = (NFloat *) New(&gstack, sizeof(NFloat) * MAX(nrows, ncols) * MAX(nrows, ncols));
+    slist = (SRank *) New(&gstack, ncols);
+    for (i = 0; i < ncols; ++i) {
+        slist[i].idx = i;
+        slist[i].val = d[i];
+    }
+    qsort(slist, ncols, sizeof(SRank), cmpfuncSRank);
+
+    CopyNSegmentCPU(U, nrows * ncols, temp);
+    for (i = 0; i < ncols; ++i) {
+        j = slist[i].idx;
+        if (i != j) {
+            for (k = 0; k < nrows; ++k) {
+                U[k * ncols + i] = temp[k * ncols + j];
+            }
+        }
+    } 
+    for (i = 0; i < ncols; ++i) {
+        d[i] = slist[i].val;
+    }
+    CopyNSegmentCPU(V, ncols * ncols, temp);
+    for (i = 0; i < ncols; ++i) {
+        j = slist[i].idx;
+        if (i != j) {
+            memcpy(&V[i * ncols], &temp[j * ncols], sizeof(NFloat) * ncols);
+        }
+    }
+
+    Dispose(&gstack, temp);
+}
+
+static double SVDanyPythag(NFloat a, NFloat b) {
+    double absa, absb, result;
+ 
+    absa = fabs(a);
+    absb = fabs(b);
+    if (absa > absb) {
+        result = absa * sqrt(pow(absb / absa, 2) + 1.0);
+    }
+    else if (absb > 0.0) {
+        result = absb * sqrt(pow(absa / absb, 2) + 1.0);
+    }
+    else {
+        result = 0.0;
+    }
+
+    return result;    
+}
+
+static void SVDanyCPU(NFloat *A, int nrows, int ncols, NFloat *U, NFloat *d, NFloat *Vt) {
+    int flag, i, its, j, jj, k, l, nm;
+    double anorm, c, f, g, h, s, scale, x, y, z, *rv1;
+
+    if (A != U) {
+        CopyNSegmentCPU(A, nrows * ncols, U);
+    }
+    rv1 = (double *) New(&gstack, sizeof(double) * ncols);
+
+    g = scale = anorm = 0.0;
+    for(i = 0; i < ncols; ++i) {
+        l = i + 1;
+        rv1[i] = scale * g;
+        g = s = scale = 0.0;
+        if (i < nrows) {
+            for(k = i; k < nrows; ++k) 
+                scale += fabs(U[k * ncols + i]);
+        if (scale) {
+	    for(k = i; k < nrows; ++k) {
+	        U[k * ncols + i] /= scale;		
+	        s += U[k * ncols + i] * U[k * ncols + i];
+	    }
+	    f = U[i * ncols + i];
+	    g = -SIGN(sqrt(s), f);
+	    h = f * g - s;
+	    U[i * ncols + i] = f - g;
+	    for (j = l; j < ncols; ++j) {
+	        for (s = 0.0, k = i; k < nrows; ++k) 
+                    s += U[k * ncols + i] * U[k * ncols + j];
+	        f = s / h;
+	        for (k = i; k < nrows; ++k) 
+                    U[k * ncols + j] += f * U[k * ncols + i];
+	    }
+	    for (k = i; k < nrows; ++k) 
+                U[k * ncols + i] *= scale;
+            }
+        }
+        d[i] = scale * g;
+        g = s = scale = 0.0;
+        if (i < nrows && i != ncols-1) {
+            for (k = l; k < ncols; ++k) 
+                scale += fabs(U[i * ncols + k]);
+            if (scale) {
+	         for(k = l; k < ncols; ++k) {
+	             U[i * ncols + k] /= scale;
+	             s += U[i * ncols + k] * U[i * ncols + k];
+	         }
+	         f = U[i * ncols + l];
+	         g = -SIGN(sqrt(s), f);
+	         h = f * g - s;
+	         U[i * ncols + l] = f - g;
+	         for (k = l; k < ncols; ++k) 
+                     rv1[k] = U[i * ncols + k] / h;
+	         for (j = l; j < nrows; ++j) {
+	             for (s = 0.0, k = l; k < ncols; ++k) 
+                         s += U[j * ncols + k] * U[i * ncols + k];
+	             for (k = l; k < ncols; ++k) 
+                         U[j * ncols + k] += s * rv1[k];
+	         }
+	         for (k = l; k < ncols; ++k) 
+                     U[i * ncols + k] *= scale;
+            }
+        }
+        anorm = MAX(anorm, (fabs(d[i]) + fabs(rv1[i])));
+    }
+
+    for (i = ncols - 1; i >= 0; --i) {
+        if(i < ncols - 1) {
+            if(g) {
+	        for (j = l; j < ncols; ++j)
+	            Vt[j * ncols + i] = (U[i * ncols + j] / U[i * ncols + l]) / g;
+	        for (j = l; j < ncols; ++j) {
+	            for (s = 0.0, k = l; k < ncols; ++k) 
+                        s += U[i * ncols + k] * Vt[k * ncols + j];
+	            for (k = l; k < ncols; ++k) 
+                        Vt[k * ncols + j] += s * Vt[k * ncols + i];
+	        }
+            }
+            for (j = l; j < ncols; ++j) 
+                Vt[i * ncols + j] = Vt[j * ncols + i] = 0.0;
+        }
+        Vt[i * ncols + i] = 1.0;
+        g = rv1[i];
+        l = i;
+    }
+    for (i = MIN(nrows, ncols) - 1; i >= 0; --i) {
+        l = i + 1;
+        g = d[i];
+        for (j = l; j < ncols; ++j) 
+            U[i * ncols + j] = 0.0;
+        if (g) {
+            g = 1.0 / g;
+            for (j = l; j < ncols; ++j) {
+	        for (s = 0.0, k = l; k < nrows; ++k) 
+                    s += U[k * ncols + i] * U[k * ncols + j];
+	        f = (s / U[i * ncols + i]) * g;
+	        for (k = i; k < nrows; ++k) 
+                    U[k * ncols + j] += f * U[k * ncols + i];
+            }
+            for (j = i; j < nrows; ++j) 
+                U[j * ncols + i] *= g;
+        }
+        else {
+            for (j = i; j < nrows; ++j) 
+                U[j * ncols + i] = 0.0;
+        }
+        U[i * ncols + i] += 1.0;
+    }
+
+    for (k = ncols - 1; k >= 0; --k) {
+        for (its = 0; its < MAXSVDITER; ++its) {
+            flag = 1;
+            for (l = k; l >= 0; --l) {
+	        nm = l - 1;
+	        if ((fabs(rv1[l]) + anorm) == anorm) {
+	            flag = 0;
+	            break;
+	        }
+	        if ((fabs(d[nm]) + anorm) == anorm) 
+                    break;
+            }
+            if (flag) {
+	        c = 0.0;
+	        s = 1.0;
+	        for (i = l;i <= k; ++i) {
+	            f = s * rv1[i];
+	            rv1[i] = c * rv1[i];
+	            if ((fabs(f) + anorm) == anorm) 
+                        break;
+	            g = d[i];
+	            h = SVDanyPythag(f, g);
+	            d[i] = h;
+	            h = 1.0 / h;
+	            c = g * h;
+	            s = -f * h;
+	            for (j = 0; j < nrows; ++j) {
+	                y = U[j * ncols + nm];
+	                z = U[j * ncols + i];
+	                U[j * ncols + nm] = y * c + z * s;
+	                U[j * ncols + i] = z * c - y * s;
+	            }
+	        }
+            }
+            z = d[k];
+            if (l == k) {
+	        if (z < 0.0) {
+	            d[k] = -z;
+	            for (j = 0; j < ncols; ++j) 
+                        Vt[j * ncols + k] = -Vt[j * ncols + k];
+	        }
+	        break;
+            }
+            if (its == MAXSVDITER) 
+                HError(999, "Fail to converge in %d iterations", MAXSVDITER);
+            x = d[l];
+            nm = k - 1;
+            y = d[nm];
+            g = rv1[nm];
+            h = rv1[k];
+            f = ((y - z) * (y + z) + (g - h) * (g + h)) / (2.0 * h * y);
+            g = SVDanyPythag(f, 1.0);
+            f = ((x - z) * (x + z) + h * ((y / (f + SIGN(g, f))) - h)) / x;
+            c = s = 1.0;
+            for (j = l; j <= nm; ++j) {
+	       i = j + 1;
+	       g = rv1[i];
+	       y = d[i];
+	       h = s * g;
+	       g = c * g;
+	       z = SVDanyPythag(f, h);
+	       rv1[j] = z;
+	       c = f / z;
+	       s = h / z;
+	       f = x * c + g * s;
+	       g = g * c - x * s;
+	       h = y * s;
+	       y *= c;
+	       for(jj = 0; jj < ncols; ++jj) {
+	           x = Vt[jj * ncols + j];
+	           z = Vt[jj * ncols + i];
+	           Vt[jj * ncols + j] = x * c + z * s;
+	           Vt[jj * ncols + i] = z * c - x * s;
+	       }
+	       z = SVDanyPythag(f, h);
+	       d[j] = z;
+	       if (z) {
+	           z = 1.0 / z;
+	           c = f * z;
+	           s = h * z;
+	       }
+	       f = c * g + s * y;
+	       x = c * y - s * g;
+	       for (jj = 0; jj < nrows; ++jj) {
+	           y = U[jj * ncols + j];
+	           z = U[jj * ncols + i];
+	           U[jj * ncols + j] = y * c + z * s;
+	           U[jj * ncols + i] = z * c - y * s;
+	       }
+           }
+           rv1[l] = 0.0;
+           rv1[k] = f;
+           d[k] = x;
+       }
+   }
+  
+   Dispose(&gstack, rv1);
+  
+}
+
+void NanySVD(NMatrix *A, NMatrix *U, NVector *d, NMatrix *Vt) {
+    
+#ifdef CUDA
+    SyncNMatrixDev2Host(A);
+#endif
+    if (trace & T_DIM) {
+        if (!(A->rowNum == U->rowNum))
+            HError(9999, "NMatirxSVD: Inconsistent row dimensions of A and U");
+        if (!(A->colNum == U->colNum == d->vecLen == Vt->rowNum == Vt->colNum))
+            HError(9999, "NMatirxSVD: Inconsistent column dimensions of A, U, d, V");
+        
+    }
+    SVDanyCPU(A->matElems, A->rowNum, A->colNum, U->matElems, d->vecElems, Vt->matElems);
+    SortOrthVecsCPU(U->matElems, U->rowNum, U->colNum, d->vecElems, V->matElems);
+
+}*/
+
+#ifdef MKL
+void NSVDanyMKL(NFloat *A, int nrows, int ncols, NFloat *U, NFloat *d, NFloat *Vt) {
+    int ret;
+
+#ifdef DOUBLEANN
+    ret = LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'A', nrows, ncols, A, ncols, d, U, nrows, Vt, ncols);
+#else
+    ret = LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'A', nrows, ncols, A, ncols, d, U, nrows, Vt, ncols);
+#endif
+    
+    /*superb = CreateVector(&gstack, MIN(nrows, ncols) - 1);
+#ifdef DOUBLEANN
+    ret = LAPACKE_dgesvd(LAPACK_ROW_MAJOR, 'A', 'A', nrows, ncols, A, ncols, d, U, nrows, Vt, ncols, superb);
+#else
+    ret = LAPACKE_sgesvd(LAPACK_ROW_MAJOR, 'A', 'A', nrows, ncols, A, ncols, d, U, nrows, Vt, ncols, superb);
+#endif
+    Dispose(&gstack, superb);*/
+
+    if (ret > 0) 
+        HError(5224, "NSVDanyMKL: LAPACK_?gesvd did not converge");
+}
+#endif
+
+void NanySVD(NMatrix *A, NMatrix *U, NVector *d, NMatrix *Vt) {
+
+#ifdef CUDA
+    HError(5201, "NanySVD: GPU based SVD decomposition not implemented yet");
+#else 
+    #ifdef MKL
+    NSVDanyMKL(A->matElems, A->rowNum, A->colNum, U->matElems, d->vecElems, Vt->matElems);
+    #else 
+    HError(5201, "NanySVD: CPU based SVD decomposition not implemented yet");
+    #endif
+#endif
+
+}
+
+static inline void AddNSegmentCPU(NFloat *srcPtr, int segLen, NFloat *dstPtr) {
+    int i;
+
+    for (i = 0; i < segLen; ++i) {
+        dstPtr[i] += srcPtr[i];
+    }
+}
+
+#ifdef MKL
+static inline void AddNSegmentMKL(NFloat *srcPtr, int segLen, NFloat *dstPtr) {
+    #ifdef DOUBLEANN
+    vdAdd(segLen, srcPtr, dstPtr, dstPtr);
+    #else
+    vsAdd(segLen, srcPtr, dstPtr, dstPtr);
+    #endif
+}
+#endif
+
+void AddNSegment(NMatrix *srcMat, int srcOff, int segLen, NMatrix *dstMat, int dstOff) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcOff >= 0 && segLen >= 0 && (srcOff + segLen) < srcMat->rowNum * srcMat->colNum))
+            HError(5221, "CopyNSegment: Illegal source matrix offset or segment length");
+        if (!(dstOff >= 0 && (dstOff + segLen) < dstMat->rowNum * dstMat->colNum))
+            HError(5221, "CopyNSegment: Illegal destinate matrix offset");
+    }
+#ifdef CUDA
+    AddNSegmentCUDA(srcMat->devElems + srcOff, segLen, dstMat->devElems + dstOff);
+#else
+    #ifdef MKL
+    AddNSegmentMKL(srcMat->matElems + srcOff, segLen, dstMat->matElems + dstOff);
+    #else
+    AddNSegmentCPU(srcMat->matElems + srcOff, segLen, dstMat->matElems + dstOff);
+    #endif
+#endif
+}
+
+void AddNMatrix(NMatrix *srcMat, int row, int col, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "AddNMatrix: Matrix row number inconsistent");
+        if (!(col > 0 && col <= srcMat->colNum && col <= dstMat->colNum))
+            HError(5221, "AddNMatrix: Matrix column number inconsistent");
+    }
+#ifdef CUDA
+    AddNSegmentCUDA(srcMat->devElems, row * col, dstMat->devElems);
+#else
+    #ifdef MKL
+    AddNSegmentMKL(srcMat->matElems, row * col, dstMat->matElems);
+    #else
+    AddNSegmentCPU(srcMat->matElems, row * col, dstMat->matElems);
+    #endif
+#endif
+}
+
+void AddNVector(NVector *srcVec, int len, NVector *dstVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(len > 0 && len <= srcVec->vecLen && len <= dstVec->vecLen))
+            HError(5221, "AddNVector: Vector length inconsistent");
+    }
+#ifdef CUDA
+    AddNSegmentCUDA(srcVec->devElems, len, dstVec->devElems);
+#else
+    #ifdef MKL
+    AddNSegmentMKL(srcVec->vecElems, len, dstVec->vecElems);
+    #else
+    AddNSegmentCPU(srcVec->vecElems, len, dstVec->vecElems);
+    #endif
+#endif
+}
+
+/* cz277 - l2 fix */
+static void AddScaledNSegmentCPU(NFloat *srcPtr, int segLen, NFloat scale, NFloat *dstPtr) {
+    int i;
+
+    for (i = 0; i < segLen; ++i) {
+        dstPtr[i] += scale * srcPtr[i];
+    }
+}
+
+/* cz277 - l2 fix */
+#ifdef MKL
+static void AddScaledNSegmentMKL(NFloat *srcPtr, int segLen, NFloat scale, NFloat *dstPtr) {
+
+#ifdef DOUBLEANN
+    cblas_daxpy(segLen, scale, srcPtr, 1, dstPtr, 1);
+#else
+    cblas_saxpy(segLen, scale, srcPtr, 1, dstPtr, 1);
+#endif
+}
+#endif
+
+/* cz277 - l2 fix */
+void AddScaledNMatrix(NMatrix *srcMat, int row, int col, NFloat scale, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "AddScaledNMatrix: Matrix row number inconsistent");
+        if (!(col > 0 && col <= srcMat->colNum && col <= dstMat->colNum))
+            HError(5221, "AddScaledNMatrix: Matrix column number inconsistent");
+    }
+#ifdef CUDA
+    AddScaledNSegmentCUDA(srcMat->devElems, row * col, scale, dstMat->devElems);
+#else
+    #ifdef MKL
+    AddScaledNSegmentMKL(srcMat->matElems, row * col, scale, dstMat->matElems);
+    #else
+    AddScaledNSegmentCPU(srcMat->matElems, row * col, scale, dstMat->matElems);
+    #endif
+#endif
+}
+
+/* cz277 - l2 fix */
+void AddScaledNVector(NVector *srcVec, int len, NFloat scale, NVector *dstVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(len > 0 && len <= srcVec->vecLen && len <= dstVec->vecLen))
+            HError(5221, "AddScaledNVector: Vector length inconsistent");
+    }
+#ifdef CUDA
+    AddScaledNSegmentCUDA(srcVec->devElems, len, scale, dstVec->devElems);
+#else
+    #ifdef MKL
+    AddScaledNSegmentMKL(srcVec->vecElems, len, scale, dstVec->vecElems);
+    #else
+    AddScaledNSegmentCPU(srcVec->vecElems, len, scale, dstVec->vecElems);
+    #endif
+#endif
+}
+
+#ifdef MKL
+static inline void ScaleNSegmentMKL(int segLen, NFloat scale, NFloat *valPtr) {
+    #ifdef DOUBLEANN
+    cblas_dscal(segLen, scale, valPtr, 1);
+    #else
+    cblas_sscal(segLen, scale, valPtr, 1);
+    #endif
+}
+#endif
+
+static inline void ScaleNSegmentCPU(int segLen, NFloat scale, NFloat *valPtr) {
+    int i;
+
+    for (i = 0; i < segLen; ++i)
+        valPtr[i] *= scale;
+}
+
+void ScaleNMatrix(NFloat scale, int row, int col, NMatrix *valMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(row * col <= valMat->rowNum * valMat->colNum))
+            HError(5221, "ScaleNMatrix: Matrix dimensions inconsistent");
+    }
+#ifdef CUDA
+    ScaleNSegmentCUDA(row * col, scale, valMat->devElems);
+#else
+    #ifdef MKL
+    ScaleNSegmentMKL(row * col, scale, valMat->matElems);
+    #else
+    ScaleNSegmentCPU(row * col, scale, valMat->matElems);
+    #endif
+#endif
+
+}
+
+void ScaleNVector(NFloat scale, int len, NVector *valVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(len <= valVec->vecLen))
+            HError(5221, "ScaleNVector: Vector lengths inconsistent");
+    }
+#ifdef CUDA
+    ScaleNSegmentCUDA(len, scale, valVec->devElems);
+#else
+    #ifdef MKL
+    ScaleNSegmentMKL(len, scale, valVec->vecElems);
+    #else
+    ScaleNSegmentCPU(len, scale, valVec->vecElems);
+    #endif
+#endif
+}
+
+#ifdef MKL
+static inline void ScaledSelfAddNSegmentMKL(NFloat *rhPtr, int segLen, NFloat scale, NFloat *lhPtr) {
+    #ifdef DOUBLEANN
+    cblas_dscal(segLen, scale, lhPtr, 1);
+    vdAdd(segLen, rhPtr, lhPtr, lhPtr);
+    #else
+    cblas_sscal(segLen, scale, lhPtr, 1);
+    vsAdd(segLen, rhPtr, lhPtr, lhPtr);
+    #endif
+}
+#endif
+
+static inline void ScaledSelfAddNSegmentCPU(NFloat *rhPtr, int segLen, NFloat scale, NFloat *lhPtr) {
+    int i;
+
+    for (i = 0; i < segLen; ++i) 
+        lhPtr[i] = scale * lhPtr[i] + rhPtr[i];
+}
+
+void ScaledSelfAddNVector(NVector *rhVec, int len, NFloat scale, NVector *lhVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(len <= rhVec->vecLen && len <= lhVec->vecLen))
+            HError(5221, "ScaledSelfAddNVector: Vector lengths inconsistent");
+    }
+#ifdef CUDA
+    ScaledSelfAddNSegmentCUDA(rhVec->devElems, len, scale, lhVec->devElems);
+#else
+    #ifdef MKL
+    ScaledSelfAddNSegmentMKL(rhVec->vecElems, len, scale, lhVec->vecElems);
+    #else
+    ScaledSelfAddNSegmentCPU(rhVec->vecElems, len, scale, lhVec->vecElems);
+    #endif
+#endif
+}
+
+void ScaledSelfAddNMatrix(NMatrix *rhMat, int row, int col, NFloat scale, NMatrix *lhMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(row > 0 && row <= rhMat->rowNum && row <= lhMat->colNum))
+            HError(5221, "ScaledSelfAddNMatrix: Matrix row number inconsistent");
+        if (!(col > 0 && col == rhMat->colNum && col == lhMat->colNum))
+            HError(5221, "ScaledSelfAddNMatrix: Matrix column number inconsistent");
+    }
+
+#ifdef CUDA
+    ScaledSelfAddNSegmentCUDA(rhMat->devElems, row * col, scale, lhMat->devElems);
+#else
+    #ifdef MKL
+    ScaledSelfAddNSegmentMKL(rhMat->matElems, row * col, scale, lhMat->matElems);
+    #else
+    ScaledSelfAddNSegmentCPU(rhMat->matElems, row * col, scale, lhMat->matElems);
+    #endif
+#endif
+}
+
+
+static inline void DupNSegmentCPU(NFloat *srcPtr, int segLen, NFloat *dstPtr, int times) {
+    int i, off;
+    
+    for (i = 0, off = 0; i < times; ++i, off += segLen) {
+        memcpy(dstPtr + off, srcPtr, segLen * sizeof(NFloat));
+    }
+}
+
+#ifdef MKL
+static inline void DupNSegmentMKL(NFloat *srcPtr, int segLen, NFloat *dstPtr, int times) {
+    int i, off;
+
+    for (i = 0, off = 0; i < times; ++i, off += segLen) {
+    #ifdef DOUBLEANN
+        cblas_dcopy(segLen, srcPtr, 1, dstPtr + off, 1);
+    #else
+        cblas_scopy(segLen, srcPtr, 1, dstPtr + off, 1);
+    #endif
+    }
+}
+#endif
+
+void DupNVector(NVector *srcVec, NMatrix *dstMat, int times) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(times > 0))
+            HError(5221, "DupNVector: Times should be positive integer");
+        if (srcVec->vecLen * times < dstMat->rowNum * dstMat->colNum)
+            HError(5221, "DupNVector: Too many duplicate times");
+    }
+#ifdef CUDA
+    DupNSegmentCUDA(srcVec->devElems, srcVec->vecLen, dstMat->devElems, times);
+#else
+    #ifdef MKL
+    DupNSegmentMKL(srcVec->vecElems, srcVec->vecLen, dstMat->matElems, times);
+    #else
+    DupNSegmentCPU(srcVec->vecElems, srcVec->vecLen, dstMat->matElems, times);
+    #endif
+#endif
+}
+
+static inline void SubNSegmentCPU(NFloat *lhPtr, NFloat *rhPtr, int segLen, NFloat *resPtr) {
+    int i;
+
+    for (i = 0; i < segLen; ++i) {
+        resPtr[i] = lhPtr[i] - rhPtr[i];
+    }
+}
+
+#ifdef MKL
+static inline void SubNSegmentMKL(NFloat *lhPtr, NFloat *rhPtr, int segLen, NFloat *resPtr) {
+    #ifdef DOUBLEANN
+    vdSub(segLen, lhPtr, rhPtr, resPtr);
+    #else
+    vsSub(segLen, lhPtr, rhPtr, resPtr);
+    #endif
+}
+#endif
+
+void SubNMatrix(NMatrix *lhMat, NMatrix *rhMat, int row, int col, NMatrix *resMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(row > 0 && row <= lhMat->rowNum && row <= rhMat->rowNum && row <= resMat->rowNum)) {
+            HError(5221, "SubNMatrix: Matrix row dimension out of range");
+        }
+        if (!(col == lhMat->colNum && col == rhMat->colNum && col == resMat->colNum)) {
+            HError(5221, "SubNMatrix: Inconsistent matrix col dimensions");
+        }
+    }
+#ifdef CUDA
+    SubNSegmentCUDA(lhMat->devElems, rhMat->devElems, row * col, resMat->devElems);
+#else
+    #ifdef MKL
+    SubNSegmentMKL(lhMat->matElems, rhMat->matElems, row * col, resMat->matElems);
+    #else
+    SubNSegmentCPU(lhMat->matElems, rhMat->matElems, row * col, resMat->matElems);
+    #endif
+#endif
+}
+
+static inline void MulNSegmentCPU(NFloat *lhPtr, NFloat *rhPtr, int segLen, NFloat *resPtr) {
+    int i;
+
+    for (i = 0; i < segLen; ++i) {
+        resPtr[i] = lhPtr[i] * rhPtr[i];
+    }
+}
+
+#ifdef MKL
+static inline void MulNSegmentMKL(NFloat *lhPtr, NFloat *rhPtr, int segLen, NFloat *resPtr) {
+    #ifdef DOUBLEANN
+    vdMul(segLen, lhPtr, rhPtr, resPtr);
+    #else
+    vsMul(segLen, lhPtr, rhPtr, resPtr);
+    #endif
+}
+#endif
+
+void MulNMatrix(NMatrix *lhMat, NMatrix *rhMat, int row, int col, NMatrix *resMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(row > 0 && row <= lhMat->rowNum && row <= rhMat->rowNum && row <= resMat->rowNum)) {
+            HError(5221, "MulNMatrix: Matrix row dimension out of range");
+        }
+        if (!(col == lhMat->colNum && col == rhMat->colNum && col == resMat->colNum)) {
+            HError(5221, "MulNMatrix: Inconsistent matrix col dimensions");
+        }
+    }
+#ifdef CUDA
+    MulNSegmentCUDA(lhMat->devElems, rhMat->devElems, row * col, resMat->devElems);
+#else
+    #ifdef MKL
+    MulNSegmentMKL(lhMat->matElems, rhMat->matElems, row * col, resMat->matElems);
+    #else
+    MulNSegmentCPU(lhMat->matElems, rhMat->matElems, row * col, resMat->matElems);
+    #endif
+#endif
+}
+
+void MulNVector(NVector *lhVec, NVector *rhVec, int len, NVector *resVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(len > 0 && len <= lhVec->vecLen && len <= rhVec->vecLen && len <= resVec->vecLen))
+            HError(5221, "MulNVector: Vector lengths inconsistent");
+    }
+#ifdef CUDA
+    MulNSegmentCUDA(lhVec->devElems, rhVec->devElems, len, resVec->devElems);
+#else
+    #ifdef MKL
+    MulNSegmentMKL(lhVec->vecElems, rhVec->vecElems, len, resVec->vecElems);
+    #else
+    MulNSegmentCPU(lhVec->vecElems, rhVec->vecElems, len, resVec->vecElems);
+    #endif
+#endif
+}
+
+/* cz277 - laf */
+static inline void ApplyAffineActCPU(NFloat *srcPtr, int row, int col, NFloat *scalePtr, NFloat *shiftPtr, NFloat *dstPtr) {
+    int i, j;
+
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+            dstPtr[i * col + j] = scalePtr[j] * srcPtr[i * col + j] + shiftPtr[j];
+        }
+    }
+}
+
+/* cz277 - laf */
+#ifdef MKL
+static inline void ApplyAffineActMKL(NFloat *srcPtr, int row, int col, NFloat *scalePtr, NFloat *shiftPtr, NFloat *dstPtr) {
+    int i;
+    NFloat *curSrc, *curDst;
+
+    for (i = 0, curSrc = srcPtr, curDst = dstPtr; i < row; ++i, curSrc += col, curDst += col) {
+#ifdef DOUBLEANN
+        vdMul(col, curSrc, scalePtr, curDst);
+        vdAdd(col, curSrc, shiftPtr, curDst);
+#else
+        vsMul(col, curSrc, scalePtr, curDst);
+        vsAdd(col, curSrc, shiftPtr, curDst);
+#endif
+    }
+}
+#endif
+
+/* cz277 - laf */
+void ApplyAffineAct(NMatrix *srcMat, int row, int col, NVector *scaleVec, NVector *shiftVec, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col && scaleVec->vecLen == col && shiftVec->vecLen == col))
+            HError(5221, "ApplyAffineAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyAffineAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyAffineActCUDA(srcMat->devElems, row, col, scaleVec->devElems, shiftVec->devElems, dstMat->devElems); 
+#else
+    #ifdef MKL
+    ApplyAffineActMKL(srcMat->matElems, row, col, scaleVec->vecElems, shiftVec->vecElems, dstMat->matElems);
+    #else
+    ApplyAffineActCPU(srcMat->matElems, row, col, scaleVec->vecElems, shiftVec->vecElems, dstMat->matElems);
+    #endif
+#endif
+
+}
+
+/* cz277 - pact */
+static inline void ApplyDAffineActCPU(NFloat *srcPtr, int row, int col, NFloat *scalePtr, NFloat *shiftPtr, NFloat *dstPtr) {
+    int i;
+
+    for (i = 0; i < row; ++i) {
+        memcpy(&dstPtr[i * col], scalePtr, col * sizeof(NFloat));
+    }
+}
+
+/* cz277 - pact */
+void ApplyDAffineAct(NMatrix *srcMat, int row, int col, NVector *scaleVec, NVector *shiftVec, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col && scaleVec->vecLen == col && shiftVec->vecLen == col))
+            HError(5221, "ApplyDAffineAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyDAffineAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyDAffineActCUDA(srcMat->devElems, row, col, scaleVec->devElems, shiftVec->devElems, dstMat->devElems);
+#else
+    ApplyDAffineActCPU(srcMat->matElems, row, col, scaleVec->vecElems, shiftVec->vecElems, dstMat->matElems);
+#endif
+
+}
+
+/* cz277 - pact */
+static inline void ApplyTrAffineActCPU(NFloat *errPtr, NFloat *actPtr, int row, int col, NFloat *scalePtr, NFloat *shiftPtr, Boolean accFlag, NFloat *dScalePtr, NFloat *dShiftPtr) {
+    int i, j;
+
+    if (accFlag == FALSE) {
+        memset(dScalePtr, 0, col * sizeof(NFloat));
+        memset(dShiftPtr, 0, col * sizeof(NFloat));
+    }
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+             dScalePtr[j] += errPtr[i * col + j] * actPtr[i * col + j];
+             dShiftPtr[j] += errPtr[i * col + j];
+        }
+    }
+}
+
+/* cz277 - pact */
+void ApplyTrAffineAct(NMatrix *errMat, NMatrix *actMat, int row, int col, NVector *scaleVec, NVector *shiftVec, Boolean accFlag, NVector *dScaleVec, NVector *dShiftVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(errMat->colNum == col && actMat->colNum == col && scaleVec->vecLen == col && shiftVec->vecLen == col && dScaleVec->vecLen == col && dShiftVec->vecLen == col))
+            HError(5221, "ApplyDTrAffineAct: Input column number incompatible");
+    }
+#ifdef CUDA
+    ApplyTrAffineActCUDA(errMat->devElems, actMat->devElems, row, col, scaleVec->devElems, shiftVec->devElems, accFlag, dScaleVec->devElems, dShiftVec->devElems);
+#else
+    ApplyTrAffineActCPU(errMat->matElems, actMat->matElems, row, col, scaleVec->vecElems, shiftVec->vecElems, accFlag, dScaleVec->vecElems, dShiftVec->vecElems);
+#endif
+}
+
+/* cz277 - laf */
+static inline void AccMeanNSegmentCPU(NFloat *valPtr, int row, int col, NFloat tSamp, NFloat *meanPtr) {
+    int i, j;
+
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+            meanPtr[j] += valPtr[i * col + j] / tSamp;
+        }
+    }
+}
+
+/* cz277 - laf */
+void AccMeanNVector(NMatrix *valMat, int row, int col, NFloat tSamp, NVector *meanVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(valMat->colNum == col && meanVec->vecLen == col))
+            HError(5221, "ApplyInitMeanAMVNAct: Input column number incompatible");
+        /*if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(9999, "ApplyDAMVNAct: Input row number out of range");*/
+    }
+#ifdef CUDA
+    AccMeanNSegmentCUDA(valMat->devElems, row, col, tSamp, meanVec->devElems);
+#else
+    AccMeanNSegmentCPU(valMat->matElems, row, col, tSamp, meanVec->vecElems);
+#endif
+}
+
+/* cz277 - laf */
+static inline void AccVarianceNSegmentCPU(NFloat *valPtr, int row, int col, NFloat tSamp, NFloat *meanPtr, NFloat *varPtr) {
+    int i, j;
+
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+            varPtr[j] += pow(valPtr[i * col + j] - meanPtr[j], 2.0) / tSamp;
+        }
+    }
+}
+
+/* cz277 - laf */
+void AccVarianceNVector(NMatrix *srcMat, int row, int col, NFloat tSamp, NVector *meanVec, NVector *varVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && meanVec->vecLen == col && varVec->vecLen == col))
+            HError(5221, "AccVarianceNVector: Input column number incompatible");
+        /*if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(9999, "ApplyDAMVNAct: Input row number out of range");*/
+    }
+#ifdef CUDA
+    AccVarianceNSegmentCUDA(srcMat->devElems, row, col, tSamp, meanVec->devElems, varVec->devElems);
+#else
+    AccVarianceNSegmentCPU(srcMat->matElems, row, col, tSamp, meanVec->vecElems, varVec->vecElems);
+#endif
+}
+
+void ApplyHermiteAct(NMatrix *srcMat, int row, int col, NVector *parmVec, NMatrix*dstMat) {
+    HError(5201, "Unimplemented method!");
+}
+
+static inline void ApplyReLUActCPU(NFloat *srcPtr, int len, NFloat scale, NFloat *dstPtr) {
+    int i;
+
+    /* len = row * col; */
+    for (i = 0; i < len; ++i) {
+        if (srcPtr != dstPtr && srcPtr[i] > 0)
+            dstPtr[i] = srcPtr[i];
+        if (srcPtr[i] < 0)
+            dstPtr[i] = srcPtr[i] * scale;
+    }
+}
+
+void ApplyReLUAct(NMatrix *srcMat, int row, int col, NFloat scale, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col))
+            HError(5221, "ApplyReLUAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyReLUAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyReLUActCUDA(srcMat->devElems, row * col, scale, dstMat->devElems);
+#else
+    ApplyReLUActCPU(srcMat->matElems, row * col, scale, dstMat->matElems);
+#endif
+}
+
+static inline void ApplyDReLUActCPU(NFloat *srcPtr, int len, NFloat scale, NFloat *dstPtr) {
+    int i;
+
+    for (i = 0; i < len; ++i) {
+        if (srcPtr[i] > 0)
+            dstPtr[i] = 1.0;
+        else
+            dstPtr[i] = scale;
+    }
+}
+
+void ApplyDReLUAct(NMatrix *srcMat, int row, int col, NFloat scale, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col))
+            HError(5221, "ApplyDReLUAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyDReLUAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyDReLUActCUDA(srcMat->devElems, row * col, scale, dstMat->devElems);
+#else
+    ApplyDReLUActCPU(srcMat->matElems, row * col, scale, dstMat->matElems);
+#endif
+}
+
+void ApplyLHUCSigmoidActCPU(NFloat *srcPtr, int row, int col, NFloat *rolePtr, NFloat *dstPtr) {
+    int i, j, pos;
+    NFloat floatVal, lhucVal;
+
+    for (i = 0; i < col; ++i) {
+        floatVal = -1.0 * rolePtr[i];
+        CHKNFLTEXPE(floatVal)
+        lhucVal = 2.0 / (1.0 + exp(floatVal));
+        for (j = 0; j < row; ++j) {
+            pos = j * col + i;
+            floatVal = -1.0 * srcPtr[pos];
+            CHKNFLTEXPE(floatVal)
+            dstPtr[pos] = lhucVal * 1.0 / (1.0 + exp(floatVal));
+        }
+    }
+}
+
+void ApplyLHUCSigmoidAct(NMatrix *srcMat, int row, int col, NVector *roleVec, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && roleVec->vecLen == col && dstMat->colNum == col))
+            HError(5221, "ApplyLHUCSigmoidAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyLHUCSigmoidAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyLHUCSigmoidActCUDA(srcMat->devElems, row, col, roleVec->devElems, dstMat->devElems);
+#else
+    ApplyLHUCSigmoidActCPU(srcMat->matElems, row, col, roleVec->vecElems, dstMat->matElems);
+#endif
+}
+
+void ApplyDLHUCSigmoidActCPU(NFloat *srcPtr, int row, int col, NFloat *rolePtr, NFloat *dstPtr) {
+    int i, j, pos;
+    NFloat floatVal, lhucVal;
+
+    for (i = 0; i < col; ++i) {
+        floatVal = -1.0 * rolePtr[i];
+        CHKNFLTEXPE(floatVal)
+        lhucVal = 2.0 / (1.0 + exp(floatVal));    
+        for (j = 0; j < row; ++j) {
+            pos = j * col + i;
+            floatVal = srcPtr[pos] / lhucVal;
+            dstPtr[pos] = srcPtr[pos] * (1 - floatVal);
+        }
+    }
+}
+
+void ApplyDLHUCSigmoidAct(NMatrix *srcMat, int row, int col, NVector *roleVec, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && roleVec->vecLen == col && dstMat->colNum == col))
+            HError(5221, "ApplyDLHUCSigmoidAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyDLHUCSigmoidAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyDLHUCSigmoidActCUDA(srcMat->devElems, row, col, roleVec->devElems, dstMat->devElems);
+#else
+    ApplyDLHUCSigmoidActCPU(srcMat->matElems, row, col, roleVec->vecElems, dstMat->matElems);
+#endif
+}
+
+void ApplyTrLHUCSigmoidActCPU(NFloat *errPtr, NFloat *actPtr, int row, int col, NFloat *rolePtr, Boolean accFlag, NFloat *dRolePtr) {
+    int i, j, pos;
+    NFloat floatVal;
+    
+    if (accFlag == FALSE)
+        memset(dRolePtr, 0, col * sizeof(NFloat));
+    for (i = 0; i < col; ++i) {
+        floatVal = -1.0 * rolePtr[i];
+        CHKNFLTEXPE(floatVal)
+        /*lhucVal = 2.0 / (1.0 + exp(floatVal)); * 0.5 */
+        floatVal = 0.5 * 2.0 / (1.0 + exp(floatVal));
+        for (j = 0; j < row; ++j) {
+            pos = j * col + i;
+            dRolePtr[i] += errPtr[pos] * actPtr[pos] * (1.0 - floatVal);
+        }
+    }
+}
+
+void ApplyTrLHUCSigmoidAct(NMatrix *errMat, NMatrix *actMat, int row, int col, NVector *roleVec, Boolean accFlag, NVector *dRoleVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(errMat->colNum == col && actMat->colNum == col && roleVec->vecLen == col && dRoleVec->vecLen == col))
+            HError(5221, "ApplyTrLHUCSigmoidAct: Input column number incompatible");
+        if (!(row > 0 && row <= errMat->rowNum && row <= actMat->rowNum))
+            HError(5221, "ApplyTrLHUCSigmoidAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyTrLHUCSigmoidActCUDA(errMat->devElems, actMat->devElems, row, col, roleVec->devElems, accFlag, dRoleVec->devElems);
+#else
+    ApplyTrLHUCSigmoidActCPU(errMat->matElems, actMat->matElems, row, col, roleVec->vecElems, accFlag, dRoleVec->vecElems);
+#endif
+}
+
+static inline void ApplyDLinearActCPU(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+
+    for (i = 0; i < len; ++i) {
+        dstPtr[i] = 1.0;
+    }
+}
+
+void ApplyDLinearAct(NMatrix *srcMat, int row, int col, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col))
+            HError(5221, "ApplyDLinearLAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyDLinearAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyDLinearActCUDA(srcMat->devElems, row * col, dstMat->devElems);
+#else
+    ApplyDLinearActCPU(srcMat->matElems, row * col, dstMat->matElems);
+#endif
+}
+
+/* cz277 - pact */
+static inline void ApplyPSigmoidActCPU(NFloat *srcPtr, int row, int col, NFloat *etaPtr, NFloat *dstPtr) {
+    int i, j, pos;
+    NFloat floatVal;
+
+    /* len = row * col; */
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+            pos = i * col + j;
+            floatVal = (-1.0) * srcPtr[pos];
+            CHKNFLTEXPE(floatVal)
+            dstPtr[pos] = etaPtr[j] / (1.0 + exp(floatVal));
+        }
+    }
+}
+
+/* cz277 - pact */
+void ApplyPSigmoidAct(NMatrix *srcMat, int row, int col, NVector *etaVec, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && etaVec->vecLen == col && dstMat->colNum == col))
+            HError(5221, "ApplyPSigmoidAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyPSigmoidAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyPSigmoidActCUDA(srcMat->devElems, row, col, etaVec->devElems, dstMat->devElems);
+#else
+    ApplyPSigmoidActCPU(srcMat->matElems, row, col, etaVec->vecElems, dstMat->matElems);
+#endif
+}
+
+/* cz277 - pact */
+static inline void ApplyDPSigmoidActCPU(NFloat *srcPtr, int row, int col, NFloat *etaPtr, NFloat *dstPtr) {
+    int i, j, pos;
+
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+            pos = i * col + j;
+            if (etaPtr[j] != 0.0)
+                dstPtr[pos] = srcPtr[pos] * (1.0 - srcPtr[pos] / etaPtr[j]);
+            else
+                dstPtr[pos] = 0.0;
+        }
+    }
+}
+
+/* cz277 - pact */
+void ApplyDPSigmoidAct(NMatrix *srcMat, int row, int col, NVector *etaVec, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && etaVec->vecLen == col && dstMat->colNum == col))
+            HError(5221, "ApplyDPSigmoidAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyDPSigmoidAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyDPSigmoidActCUDA(srcMat->devElems, row, col, etaVec->devElems, dstMat->devElems);
+#else
+    ApplyDPSigmoidActCPU(srcMat->matElems, row, col, etaVec->vecElems, dstMat->matElems);
+#endif
+}
+
+/* cz277 - pact */
+static inline void ApplyTrPSigmoidActCPU(NFloat *errPtr, NFloat *srcPtr, NFloat *etaPtr, int row, int col, Boolean accFlag, NFloat *dEtaPtr) {
+    int i, j, pos;
+
+    if (accFlag == FALSE) 
+        memset(dEtaPtr, 0, col * sizeof(NFloat));
+    for (i = 0, pos = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j, ++pos) {
+            if (etaPtr[j] != 0.0)
+                dEtaPtr[j] += errPtr[pos] * srcPtr[pos] / etaPtr[j];
+        }
+    }
+}
+
+/* cz277 - pact */
+void ApplyTrPSigmoidAct(NMatrix *errMat, NMatrix *srcMat, NVector *etaVec, int row, int col, Boolean accFlag, NVector *dEtaVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(errMat->colNum == col && srcMat->colNum == col && etaVec->vecLen == col && dEtaVec->vecLen == col))
+            HError(5221, "ApplyTrPSigmoidAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= errMat->rowNum))
+            HError(5221, "ApplyTrPSigmoidAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyTrPSigmoidActCUDA(errMat->devElems, srcMat->devElems, etaVec->devElems, row, col, accFlag, dEtaVec->devElems);
+#else
+    ApplyTrPSigmoidActCPU(errMat->matElems, srcMat->matElems, etaVec->vecElems, row, col, accFlag, dEtaVec->vecElems);
+#endif
+}
+
+
+/* cz277 - pact */
+static inline void ApplyParmSigmoidActCPU(NFloat *srcPtr, int row, int col, NFloat *etaPtr, NFloat *gammaPtr, NFloat *thetaPtr, NFloat *dstPtr) {
+    int i, j, pos;
+    NFloat floatVal;
+
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+            pos = i * col + j;
+            floatVal = (-1.0) * gammaPtr[j] * srcPtr[pos] + thetaPtr[j];
+            CHKNFLTEXPE(floatVal)
+            dstPtr[pos] = etaPtr[j] / (1.0 + exp(floatVal));
+        }
+    }
+}
+
+/* cz277 - pact */
+void ApplyParmSigmoidAct(NMatrix *srcMat, int row, int col, NVector *etaVec, NVector *gammaVec, NVector *thetaVec, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && etaVec->vecLen == col && gammaVec->vecLen == col && thetaVec->vecLen == col && dstMat->colNum == col))
+            HError(5221, "ApplyParmSigmoidAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyParmCSigmoidAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyParmSigmoidActCUDA(srcMat->devElems, row, col, etaVec->devElems, gammaVec->devElems, thetaVec->devElems, dstMat->devElems);
+#else
+    ApplyParmSigmoidActCPU(srcMat->matElems, row, col, etaVec->vecElems, gammaVec->vecElems, thetaVec->vecElems, dstMat->matElems);
+#endif
+}
+
+/* cz277 - pact */
+static inline void ApplyDParmSigmoidActCPU(NFloat *srcPtr, int row, int col, NFloat *etaPtr, NFloat *gammaPtr, NFloat *thetaPtr, NFloat *dstPtr) {
+    int i, j, pos;
+
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+            pos = i * col + j;
+            if (etaPtr[j] != 0.0)
+                dstPtr[pos] = gammaPtr[j] * srcPtr[pos] * (1.0 - srcPtr[pos] / etaPtr[j]);
+            else
+                dstPtr[pos] = 0.0;
+        }
+    }
+}
+
+/* cz277 - pact */
+void ApplyDParmSigmoidAct(NMatrix *srcMat, int row, int col, NVector *etaVec, NVector *gammaVec, NVector *thetaVec, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && etaVec->vecLen == col && gammaVec->vecLen == col && thetaVec->vecLen == col && dstMat->colNum == col))
+            HError(5221, "ApplyDParmSigmoidAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyDParmSigmoidAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyDParmSigmoidActCUDA(srcMat->devElems, row, col, etaVec->devElems, gammaVec->devElems, thetaVec->devElems, dstMat->devElems);
+#else
+    ApplyDParmSigmoidActCPU(srcMat->matElems, row, col, etaVec->vecElems, gammaVec->vecElems, thetaVec->vecElems, dstMat->matElems);
+#endif
+}
+
+/* cz277 - pact */
+static inline void ApplyTrParmSigmoidActCPU(NFloat *errPtr, NFloat *inpPtr, int row, int col, NFloat *etaPtr, NFloat *gammaPtr, NFloat *thetaPtr, Boolean accFlag, NFloat *dEtaPtr, NFloat *dGammaPtr, NFloat *dThetaPtr) {
+    int i, j, pos;
+    NFloat floatVal, expVal, fracVal;
+
+    if (accFlag == FALSE) {
+        memset(dEtaPtr, 0, col * sizeof(NFloat));
+        memset(dGammaPtr, 0, col * sizeof(NFloat));
+        memset(dThetaPtr, 0, col * sizeof(NFloat));
+    }
+    for (i = 0, pos = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j, ++pos) {
+            floatVal = (-1.0) * gammaPtr[j] * inpPtr[pos] + thetaPtr[j];
+            CHKNFLTEXPE(floatVal)
+            expVal = exp(floatVal);
+            fracVal = 1.0 / (1.0 + expVal);
+            dEtaPtr[j] += errPtr[pos] * fracVal;
+            if (etaPtr[j] != 0.0) {
+                dGammaPtr[j] += errPtr[pos] * inpPtr[pos] * etaPtr[j] * fracVal * (1.0 - fracVal);
+                dThetaPtr[j] -= errPtr[pos] * etaPtr[j] * fracVal * (1.0 - fracVal);
+            }
+        }
+    }
+}
+
+/* cz277 - pact */
+void ApplyTrParmSigmoidAct(NMatrix *errMat, NMatrix *inpMat, int row, int col, NVector *etaVec, NVector *gammaVec, NVector *thetaVec, Boolean accFlag, NVector *dEtaVec, NVector *dGammaVec, NVector *dThetaVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(errMat->colNum == col && inpMat->colNum == col && etaVec->vecLen == col && gammaVec->vecLen == col && thetaVec->vecLen == col && dEtaVec->vecLen == col && dGammaVec->vecLen == col && dThetaVec->vecLen == col))
+            HError(5221, "ApplyTrParmSigmoidAct: Input column number incompatible");
+        if (!(row > 0 && row <= inpMat->rowNum && row <= errMat->rowNum))
+            HError(5221, "ApplyTrParmSigmoidAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyTrParmSigmoidActCUDA(errMat->devElems, inpMat->devElems, row, col, etaVec->devElems, gammaVec->devElems, thetaVec->devElems, accFlag, dEtaVec->devElems, dGammaVec->devElems, dThetaVec->devElems);
+#else
+    ApplyTrParmSigmoidActCPU(errMat->matElems, inpMat->matElems, row, col, etaVec->vecElems, gammaVec->vecElems, thetaVec->vecElems, accFlag, dEtaVec->vecElems, dGammaVec->vecElems, dThetaVec->vecElems);
+#endif
+}
+
+/* cz277 - laf */
+/*static inline void ApplyPABCSoftReLUActCPU(NFloat *srcPtr, int row, int col, NFloat *alphaPtr, NFloat *betaPtr, NFloat *gammaPtr, NFloat *dstPtr) {
+    int i, j, pos;
+    NFloat floatVal;
+
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+            pos = i * col + j;
+            floatVal = betaPtr[j] * srcPtr[pos] + gammaPtr[j];
+            CHKNFLTEXPE(floatVal)
+            dstPtr[pos] = alphaPtr[j] * log(1.0 + exp(floatVal));
+        }
+    }
+}*/
+
+/* cz277 - laf */
+/*void ApplyPABCSoftReLUAct(NMatrix *srcMat, int row, int col, NVector *alphaVec, NVector *betaVec, NVector *gammaVec, NMatrix *dstMat) {
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && alphaVec->vecLen == col && betaVec->vecLen == col && gammaVec->vecLen == col && dstMat->colNum == col))
+            HError(9999, "ApplyPABCSoftReLUAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(9999, "ApplyPABCSoftReLUAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyPABCSoftReLUActCUDA(srcMat->devElems, row, col, alphaVec->devElems, betaVec->devElems, gammaVec->devElems, dstMat->devElems);
+#else
+    ApplyPABCSoftReLUActCPU(srcMat->matElems, row, col, alphaVec->vecElems, betaVec->vecElems, gammaVec->vecElems, dstMat->matElems);
+#endif
+}*/
+
+/* cz277 - laf */
+/*static inline void ApplyDPABCSoftReLUActCPU(NFloat *srcPtr, int row, int col, NFloat *alphaPtr, NFloat *betaPtr, NFloat *dstPtr) {
+    int i, j, pos;
+    NFloat floatVal;
+
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+            pos = i * col + j;
+            if (alphaPtr[j] == 0.0)
+                dstPtr[pos] = 0.0;
+            else {
+                floatVal = -1.0 / alphaPtr[j] * srcPtr[pos];
+                CHKNFLTEXPE(floatVal)
+                dstPtr[pos] = alphaPtr[j] * betaPtr[j] * (1 - exp(floatVal));
+            }
+
+        }
+    }
+}*/
+
+/* cz277 - laf */
+/*void ApplyDPABCSoftReLUAct(NMatrix *srcMat, int row, int col, NVector *alphaVec, NVector *betaVec, NMatrix *dstMat) {
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && alphaVec->vecLen == col && betaVec->vecLen == col && dstMat->colNum == col))
+            HError(9999, "ApplyDPABSigmoidAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(9999, "ApplyDPABSigmoidAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyDPABCSoftReLUActCUDA(srcMat->devElems, row, col, alphaVec->devElems, betaVec->devElems, dstMat->devElems);
+#else
+    ApplyDPABCSoftReLUActCPU(srcMat->matElems, row, col, alphaVec->vecElems, betaVec->vecElems, dstMat->matElems);
+#endif
+}*/
+
+
+/* cz277 - laf */
+static inline void ApplyParmReLUActCPU(NFloat *inpPtr, int row, int col, NFloat *posPtr, NFloat *negPtr, NFloat *dstPtr) {
+    int i, j, pos;
+
+    /* len = row * col; */
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+            pos = i * col + j;
+            if (inpPtr[pos] > 0)
+                dstPtr[pos] = posPtr[j] * inpPtr[pos];
+            else
+                dstPtr[pos] = negPtr[j] * inpPtr[pos];
+        }
+    }
+}
+
+/* cz277 - laf */
+void ApplyParmReLUAct(NMatrix *srcMat, int row, int col, NVector *posVec, NVector *negVec, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && posVec->vecLen == col && negVec->vecLen && dstMat->colNum == col))
+            HError(5221, "ApplyParmReLUAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyParmReLUAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyParmReLUActCUDA(srcMat->devElems, row, col, posVec->devElems, negVec->devElems, dstMat->devElems);
+#else
+    ApplyParmReLUActCPU(srcMat->matElems, row, col, posVec->vecElems, negVec->vecElems, dstMat->matElems);
+#endif
+}
+
+/* cz277 - laf */
+static inline void ApplyDParmReLUActCPU(NFloat *inpPtr, int row, int col, NFloat *posPtr, NFloat *negPtr, NFloat *dstPtr) {
+    int i, j, pos;
+
+    /* len = row * col; */
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+            pos = i * col + j;
+            if (inpPtr[pos] > 0)
+                dstPtr[pos] = posPtr[j];
+            else
+                dstPtr[pos] = negPtr[j];
+        }
+    }
+}
+
+/* cz277 - laf */
+void ApplyDParmReLUAct(NMatrix *inpMat, int row, int col, NVector *posVec, NVector *negVec, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(inpMat->colNum == col && posVec->vecLen == col && negVec->vecLen && dstMat->colNum == col))
+            HError(5221, "ApplyDParmReLUAct: Input column number incompatible");
+        if (!(row > 0 && row <= inpMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyDParmReLUAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyDParmReLUActCUDA(inpMat->devElems, row, col, posVec->devElems, negVec->devElems, dstMat->devElems);
+#else
+    ApplyDParmReLUActCPU(inpMat->matElems, row, col, posVec->vecElems, negVec->vecElems, dstMat->matElems);
+#endif
+}
+
+static inline void ApplyTrParmReLUActCPU(NFloat *errPtr, NFloat *inpPtr, int row, int col, Boolean accFlag, NFloat *dPosPtr, NFloat *dNegPtr) {
+    int i, j, pos;
+
+    if (accFlag == FALSE) {
+        memset(dPosPtr, 0, col * sizeof(NFloat));
+        memset(dNegPtr, 0, col * sizeof(NFloat));
+    }
+    for (i = 0, pos = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j, ++pos) {
+            if (inpPtr[pos] > 0.0)
+                dPosPtr[j] += errPtr[pos] * inpPtr[pos];
+            else
+                dNegPtr[j] += errPtr[pos] * inpPtr[pos];
+        }
+    }
+}
+
+/* cz277 - pact */
+void ApplyTrParmReLUAct(NMatrix *errMat, NMatrix *inpMat, int row, int col, Boolean accFlag, NVector *dPosVec, NVector *dNegVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(errMat->colNum == col && inpMat->colNum == col && dPosVec->vecLen == col && dNegVec->vecLen == col))
+            HError(5221, "ApplyTrParmReLUAct: Input column number incompatible");
+        if (!(row > 0 && row <= inpMat->rowNum && row <= errMat->rowNum))
+            HError(5221, "ApplyTrParmReLUAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyTrParmReLUActCUDA(errMat->devElems, inpMat->devElems, row, col, accFlag, dPosVec->devElems, dNegVec->devElems);
+#else
+    ApplyTrParmReLUActCPU(errMat->matElems, inpMat->matElems, row, col, accFlag, dPosVec->vecElems, dNegVec->vecElems);
+#endif
+}
+
+/* cz277 - pact */
+static inline void ApplyPReLUActCPU(NFloat *srcPtr, int row, int col, NFloat *scalePtr, NFloat *dstPtr) {
+    int i, j, pos;
+
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+            pos = i * col + j;
+            if (srcPtr[pos] > 0)
+                dstPtr[pos] = scalePtr[j] * srcPtr[pos];
+            else
+                dstPtr[pos] = 0.0;
+        }
+    }
+}
+
+/* cz277 - pact */
+void ApplyPReLUAct(NMatrix *srcMat, int row, int col, NVector *scaleVec, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && scaleVec->vecLen == col && dstMat->colNum == col))
+            HError(5221, "ApplyPReLUAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyPReLUAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyPReLUActCUDA(srcMat->devElems, row, col, scaleVec->devElems, dstMat->devElems);
+#else
+    ApplyPReLUActCPU(srcMat->matElems, row, col, scaleVec->vecElems, dstMat->matElems);
+#endif
+}
+
+/* cz277 - pact */
+static inline void ApplyDPReLUActCPU(NFloat *srcPtr, int row, int col, NFloat *scalePtr, NFloat *dstPtr) {
+    int i, j, pos;
+
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+            pos = i * col + j;
+            if (scalePtr[j] != 0.0 && srcPtr[pos] / scalePtr[j] > 0.0)
+                dstPtr[pos] = scalePtr[j];
+            else
+                dstPtr[pos] = 0.0;
+        }
+    }
+}
+
+/* cz277 - pact */
+void ApplyDPReLUAct(NMatrix *srcMat, int row, int col, NVector *scaleVec, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && scaleVec->vecLen == col && dstMat->colNum == col))
+            HError(5221, "ApplyDPReLUAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyPDReLUAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyDPReLUActCUDA(srcMat->devElems, row, col, scaleVec->devElems, dstMat->devElems);
+#else
+    ApplyDPReLUActCPU(srcMat->matElems, row, col, scaleVec->vecElems, dstMat->matElems);
+#endif
+}
+
+/* cz277 - pact */
+static inline void ApplyTrPReLUActCPU(NFloat *errPtr, NFloat *srcPtr, int row, int col, NFloat *scalePtr, Boolean accFlag, NFloat *dScalePtr) {
+    int i, j, pos;
+    NFloat act;
+
+    if (accFlag == FALSE)
+        memset(dScalePtr, 0, col * sizeof(NFloat));
+    for (i = 0, pos = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j, ++pos) {
+            if (scalePtr[j] != 0.0) {
+                act = srcPtr[pos] / scalePtr[j];
+                if (act > 0.0) 
+                    dScalePtr[j] += errPtr[pos] * act;
+            }
+        }
+    }
+}
+
+/* cz277 - pact */
+void ApplyTrPReLUAct(NMatrix *errMat, NMatrix *srcMat, int row, int col, NVector *scaleVec, Boolean accFlag, NVector *dScaleVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(errMat->colNum == col && srcMat->colNum == col && scaleVec->vecLen == col && dScaleVec->vecLen == col))
+            HError(5221, "ApplyDPReLUAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= errMat->rowNum))
+            HError(5221, "ApplyDPReLUAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyTrPReLUActCUDA(errMat->devElems, srcMat->devElems, row, col, scaleVec->devElems, accFlag, dScaleVec->devElems);
+#else
+    ApplyTrPReLUActCPU(errMat->matElems, srcMat->matElems, row, col, scaleVec->vecElems, accFlag, dScaleVec->vecElems);
+#endif
+}
+
+static inline void ApplyDSoftReLActCPU(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+    NFloat expVal;
+
+    for (i = 0; i < len; ++i) {
+        expVal = srcPtr[i];
+        CHKNFLTEXPE(expVal)
+        expVal = exp(expVal);
+        dstPtr[i] = 1.0 - 1.0 / expVal;
+    }
+}
+
+#ifdef MKL
+static inline void ApplyDSoftReLActMKL(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+
+    for (i = 0; i < len; ++i) {
+        if (srcPtr != dstPtr) {
+            dstPtr[i] = srcPtr[i];
+        }
+        CHKNFLTEXPE(dstPtr[i])
+    }
+    #ifdef DOUBLEANN
+    vdExp(len, dstPtr, dstPtr);
+    vdLinearFrac(len, dstPtr, dstPtr, 1.0, -1.0, 1.0, 0.0, dstPtr);
+    #else
+    vsExp(len, dstPtr, dstPtr);
+    vsLinearFrac(len, dstPtr, dstPtr, 1.0, -1.0, 1.0, 0.0, dstPtr);
+    #endif
+}
+#endif
+
+void ApplyDSoftReLAct(NMatrix *srcMat, int row, int col, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col))
+            HError(5221, "ApplyDSoftReLAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyDSoftReLAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyDSoftReLActCUDA(srcMat->devElems, row * col, dstMat->devElems);
+#else
+    #ifdef MKL
+    ApplyDSoftReLActMKL(srcMat->matElems, row * col, dstMat->matElems);
+    #else
+    ApplyDSoftReLActCPU(srcMat->matElems, row * col, dstMat->matElems);
+    #endif
+#endif
+}
+
+static inline void ApplySoftReLActCPU(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+    NFloat expVal;
+
+    for (i = 0; i < len; ++i) {
+        expVal = srcPtr[i];
+	CHKNFLTEXPE(expVal)
+        expVal = exp(expVal);
+        dstPtr[i] = log(1.0 + expVal);
+    }
+}
+
+#ifdef MKL
+static inline void ApplySoftReLActMKL(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+
+    for (i = 0; i < len; ++i) {
+        if (srcPtr != dstPtr) {
+            dstPtr[i] = srcPtr[i];
+        }
+        CHKNFLTEXPE(dstPtr[i])
+    }
+
+    #ifdef DOUBLEANN
+    vdExp(len, dstPtr, dstPtr);
+    vdLog1p(len, dstPtr, dstPtr);
+    #else
+    vsExp(len, dstPtr, dstPtr);
+    vsLog1p(len, dstPtr, dstPtr);
+    #endif
+}
+#endif
+
+void ApplySoftReLAct(NMatrix *srcMat, int row, int col, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col))
+            HError(5221, "ApplySoftReLAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplySoftReLAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplySoftReLActCUDA(srcMat->devElems, row * col, dstMat->devElems);
+#else
+    #ifdef MKL
+    ApplySoftReLActMKL(srcMat->matElems, row * col, dstMat->matElems);
+    #else
+    ApplySoftReLActCPU(srcMat->matElems, row * col, dstMat->matElems);
+    #endif
+#endif
+}
+
+static inline void ApplySigmoidActCPU(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+    float floatVal;
+
+    /* len = row * col */
+    for (i = 0; i < len; ++i) {
+        floatVal = -1.0 * srcPtr[i];
+        CHKNFLTEXPE(floatVal)
+        dstPtr[i] = 1.0 / (1.0 + exp(floatVal));
+        /*dstPtr[i] = 1.0 / (1.0 + exp(-1.0 * srcPtr[i]));*/
+    }
+}
+
+#ifdef MKL
+/*static inline void ApplySigmoidActMKL(NFloat *srcPtr, int row, int col, NFloat *dstPtr) {
+    int len;
+
+    len = row * col;
+    #ifdef DOUBLEANN
+    vdExp(len, srcPtr, dstPtr);
+    vdLinearFrac(len, dstPtr, dstPtr, 1.0, 0.0, 1.0, 1.0, dstPtr);
+    #else
+    vsExp(len, srcPtr, dstPtr);
+    vsLinearFrac(len, dstPtr, dstPtr, 1.0, 0.0, 1.0, 1.0, dstPtr);
+    #endif
+}*/
+static inline void ApplySigmoidActMKL(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+
+    /*len = row * col;*/
+    for (i = 0; i < len; ++i) {
+        dstPtr[i] = -1.0 * srcPtr[i];
+        CHKNFLTEXPE(dstPtr[i])
+    }
+    #ifdef DOUBLEANN
+    vdExp(len, dstPtr, dstPtr);
+    vdLinearFrac(len, dstPtr, dstPtr, 0.0, 1.0, 1.0, 1.0, dstPtr);
+    #else
+    vsExp(len, dstPtr, dstPtr);
+    vsLinearFrac(len, dstPtr, dstPtr, 0.0, 1.0, 1.0, 1.0, dstPtr);
+    #endif
+}
+#endif
+
+void ApplySigmoidAct(NMatrix *srcMat, int row, int col, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col))
+            HError(5221, "ApplySigmoidAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplySigmoidAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplySigmoidActCUDA(srcMat->devElems, row * col, dstMat->devElems);
+#else
+    #ifdef MKL
+    ApplySigmoidActMKL(srcMat->matElems, row * col, dstMat->matElems);
+    #else
+    ApplySigmoidActCPU(srcMat->matElems, row * col, dstMat->matElems);
+    #endif
+#endif
+}
+
+static inline void ApplyDSigmoidActCPU(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+
+    /*len = row * col;*/
+    for (i = 0; i < len; ++i)
+        dstPtr[i] = (1 - srcPtr[i]) * srcPtr[i];
+}
+
+#ifdef MKL
+static inline void ApplyDSigmoidActMKL(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    /*int len;
+
+    len = row * col;*/
+    #ifdef DOUBLEANN
+    vdSqr(len, srcPtr, tmpNMat->matElems);
+    vdSub(len, srcPtr, tmpNMat->matElems, dstPtr);
+    #else
+    vsSqr(len, srcPtr, tmpNMat->matElems);
+    vsSub(len, srcPtr, tmpNMat->matElems, dstPtr);
+    #endif
+}
+#endif
+
+void ApplyDSigmoidAct(NMatrix *srcMat, int row, int col, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col))
+            HError(5221, "ApplyDSigmoidAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyDSigmoidAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyDSigmoidActCUDA(srcMat->devElems, row * col, dstMat->devElems);
+#else
+    #ifdef MKL
+    ApplyDSigmoidActMKL(srcMat->matElems, row * col, dstMat->matElems);
+    #else
+    ApplyDSigmoidActCPU(srcMat->matElems, row * col, dstMat->matElems);
+    #endif
+#endif
+}
+
+static inline void ApplyTanHActCPU(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+    float floatVal;
+
+    /* len = row * col */
+    for (i = 0; i < len; ++i) {
+        floatVal = srcPtr[i];
+        CHKNFLTEXPE(floatVal)
+        floatVal = exp(floatVal);
+        dstPtr[i] = (floatVal - 1.0 / floatVal) / (floatVal + 1.0 / floatVal);
+    }
+}
+    
+#ifdef MKL
+static inline void ApplyTanHActMKL(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+    
+    /*len = row * col;*/
+    for (i = 0; i < len; ++i) {
+        if (dstPtr != srcPtr) {
+            dstPtr[i] = srcPtr[i];
+        }
+        CHKNFLTEXPE(dstPtr[i])
+    }
+    #ifdef DOUBLEANN
+    vdTanh(len, dstPtr, dstPtr);
+    #else
+    vsTanh(len, dstPtr, dstPtr);
+    #endif
+}
+#endif
+
+void ApplyTanHAct(NMatrix *srcMat, int row, int col, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col))
+            HError(5221, "ApplyTanHAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyTanHAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyTanHActCUDA(srcMat->devElems, row * col, dstMat->devElems);
+#else
+    #ifdef MKL
+    ApplyTanHActMKL(srcMat->matElems, row * col, dstMat->matElems);
+    #else
+    ApplyTanHActCPU(srcMat->matElems, row * col, dstMat->matElems);
+    #endif
+#endif
+}
+
+static inline void ApplyDTanHActCPU(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+
+    /*len = row * col;*/
+    for (i = 0; i < len; ++i)
+        dstPtr[i] = 1 - pow(srcPtr[i], 2);
+}
+
+#ifdef MKL
+static inline void ApplyDTanHActMKL(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    /*int len;
+
+    len = row * col;*/
+    #ifdef DOUBLEANN
+    vdPowx(len, srcPtr, 2, dstPtr);
+    vdLinearFrac(len, dstPtr, dstPtr, -1.0, 1.0, 0.0, 1.0, dstPtr);
+    #else
+    vsPowx(len, srcPtr, 2, dstPtr);
+    vsLinearFrac(len, dstPtr, dstPtr, -1.0, 1.0, 0.0, 1.0, dstPtr);
+    #endif
+}
+#endif
+
+void ApplyDTanHAct(NMatrix *srcMat, int row, int col, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col))
+            HError(5221, "ApplyDTanHAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyDTanHAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyDTanHActCUDA(srcMat->devElems, row * col, dstMat->devElems);
+#else
+    #ifdef MKL
+    ApplyDTanHActMKL(srcMat->matElems, row * col, dstMat->matElems);
+    #else
+    ApplyDTanHActCPU(srcMat->matElems, row * col, dstMat->matElems);
+    #endif
+#endif
+}
+
+static inline void ApplySoftmaxActCPU(NFloat *srcPtr, int row, int col, NFloat *dstPtr) {
+    int i, j, off;
+    NFloat sumval, maxval;
+
+    for (i = 0, off = 0; i < row; ++i, off += col) {
+    #ifdef DOUBLEANN
+        maxval = MINFLTEXPE;
+    #else
+        maxval = MINDBLEXPE;
+    #endif
+        sumval = 0.0;
+        
+        for (j = 0; j < col; ++j) {
+            dstPtr[off + j] = srcPtr[off + j];
+            CHKNFLTEXPE(dstPtr[off + j])
+            if (dstPtr[off + j] > maxval)
+                maxval = dstPtr[off + j];
+        }
+        for (j = 0; j < col; ++j) {
+            dstPtr[off + j] = exp(dstPtr[off + j] - maxval);
+            sumval += dstPtr[off + j];
+        }
+        for (j = 0; j < col; ++j) {
+            dstPtr[off + j] /= sumval;
+        }
+    }
+}
+
+#ifdef MKL
+static inline void ApplySoftmaxActMKL(NFloat *srcPtr, int row, int col, NFloat *dstPtr) {
+    int i, j, off;
+    NFloat sumval, maxval;
+
+    for (i = 0, off = 0; i < row; ++i, off += col) {
+#ifdef DOUBLEANN
+        maxval = MINFLTEXPE;
+#else
+        maxval = MINDBLEXPE;
+#endif
+        for (j = 0; j < col; ++j) {
+            dstPtr[off + j] = srcPtr[off + j];
+            CHKNFLTEXPE(dstPtr[off + j])
+            if (dstPtr[off + j] > maxval)
+                maxval = dstPtr[off + j];
+        }
+        for (j = 0; j < col; ++j) {
+            dstPtr[off + j] -= maxval;
+        }
+    #ifdef DOUBLEANN
+        vdExp(col, &dstPtr[off], &dstPtr[off]);
+        sumval = cblas_dasum(col, &dstPtr[off], 1);
+        cblas_dscal(col, 1.0 / sumval, &dstPtr[off], 1);
+    #else
+        vsExp(col, &dstPtr[off], &dstPtr[off]);
+        sumval = cblas_sasum(col, &dstPtr[off], 1);
+        cblas_sscal(col, 1.0 / sumval, &dstPtr[off], 1);
+    #endif
+    }
+}
+#endif
+
+void ApplySoftmaxAct(NMatrix *srcMat, int row, int col, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col))
+            HError(5221, "ApplySoftmaxAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplySoftmaxAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyRedSoftmaxActCUDA(srcMat->devElems, row, col, dstMat->devElems);
+#else
+    #ifdef MKL
+    ApplySoftmaxActMKL(srcMat->matElems, row, col, dstMat->matElems);
+    #else
+    ApplySoftmaxActCPU(srcMat->matElems, row, col, dstMat->matElems);
+    #endif
+#endif
+}
+
+static inline void ApplySoftSignActCPU(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+
+    /*len = row * col;*/
+    for (i = 0; i < len; ++i)
+        dstPtr[i] = srcPtr[i] / (1 + abs(srcPtr[i]));
+}
+
+void ApplySoftSignAct(NMatrix *srcMat, int row, int col, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col))
+            HError(5221, "ApplySoftSignAct: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplySoftSignAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplySoftSignActCUDA(srcMat->devElems, row * col, dstMat->devElems);
+#else
+    ApplySoftSignActCPU(srcMat->matElems, row * col, dstMat->matElems);
+#endif
+}
+
+/* or 1.7159 * tanh(0.666666 * x) */
+/*static inline void ApplyTanHActCPU(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+    NFloat expVal;
+
+    for (i = 0; i < len; ++i) {
+        expVal = srcPtr[i];
+        CHKNFLTEXPE(expVal)
+        expVal = exp(expVal);
+        dstPtr[i] = (expVal - 1 / expVal) / (expVal + 1 / expVal);
+    }
+}
+
+#ifdef MKL
+static inline void ApplyTanHActMKL(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+
+    for (i = 0; i < len; ++i) {
+        if (dstPtr != srcPtr) {
+            dstPtr[i] = srcPtr[i];
+        }
+        CHKNFLTEXPE(dstPtr[i])
+    }
+    #ifdef DOUBLEANN
+    vdTanh(len, dstPtr, dstPtr);
+    #else
+    vsTanh(len, dstPtr, dstPtr);
+    #endif
+}
+#endif
+
+void ApplyTanHAct(NMatrix *srcMat, int row, int col, NMatrix *dstMat) {
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col))
+            HError(9999, "ApplyTanHAct: Input column number incompatible");    
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(9999, "ApplyTanHAct: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyTanHActCUDA(srcMat->devElems, row * col, dstMat->devElems);
+#else
+    #ifdef MKL
+    ApplyTanHActMKL(srcMat->matElems, row * col, dstMat->matElems);
+    #else
+    ApplyTanHActCPU(srcMat->matElems, row * col, dstMat->matElems);
+    #endif
+#endif
+}
+*/
+
+static inline void ApplyLogTransCPU(NFloat *srcPtr, int len, NFloat *dstPtr) {
+    int i;
+
+    /*len = row * col;*/
+    for (i = 0; i < len; ++i) {
+        if (srcPtr[i] <= 0) {   /* srcPtr[i] < 0? */
+            dstPtr[i] = LZERO;
+        }
+        else {
+            dstPtr[i] = log(srcPtr[i]);
+            if (dstPtr[i] < LSMALL) {
+                dstPtr[i] = LSMALL;
+            }
+        }
+    }
+}
+
+/*#ifdef MKL
+static inline void ApplyLogTransMKL(NFloat *srcPtr, int row, int col, NFloat *dstPtr) {
+    int i, len;
+    
+    len = row * col;
+    for (i = 0; i < len; ++i) {
+        if (srcPtr[i] <= 0) {
+            srcPtr[i] = 1E-20;
+        }
+    }
+    #ifdef DOUBLEANN
+    vdLn(len, srcPtr, dstPtr);
+    #else
+    vsLn(len, srcPtr, dstPtr);
+    #endif
+}
+#endif*/
+
+void ApplyLogTrans(NMatrix *srcMat, int row, int col, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col && dstMat->colNum == col))
+            HError(5221, "ApplyLogTrans: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ApplyLogTrans: Input row number out of range");
+    }
+#ifdef CUDA
+    ApplyLogTransCUDA(srcMat->devElems, row * col, dstMat->devElems);
+#else
+    ApplyLogTransCPU(srcMat->matElems, row * col, dstMat->matElems);
+#endif
+}
+
+static inline void SumNMatrixByColCPU(NFloat *srcPtr, int row, int col, Boolean accFlag, NFloat *dstPtr) {
+    NFloat *res_end_b8p = dstPtr + (col & ~7);
+    NFloat *res_end_p = dstPtr + col;
+    NFloat *res_p = dstPtr;
+    NFloat *in_p = srcPtr;
+    int i;
+
+    if (accFlag == FALSE) 
+        memset(res_p, 0, col * sizeof(NFloat));
+
+    while (res_p != res_end_b8p) {
+        res_p[0] += in_p[0];
+        res_p[1] += in_p[1];
+        res_p[2] += in_p[2];
+        res_p[3] += in_p[3];
+        res_p[4] += in_p[4];
+        res_p[5] += in_p[5];
+        res_p[6] += in_p[6];
+        res_p[7] += in_p[7];
+        res_p += 8;
+        in_p += 8;
+    }
+    while (res_p != res_end_p) 
+        (*res_p++) += (*in_p++);
+
+    for (i = 1; i != row; ++i) {
+        res_p = dstPtr;
+        while (res_p != res_end_b8p) {
+            res_p[0] += in_p[0];
+            res_p[1] += in_p[1];
+            res_p[2] += in_p[2];
+            res_p[3] += in_p[3];
+            res_p[4] += in_p[4];
+            res_p[5] += in_p[5];
+            res_p[6] += in_p[6];
+            res_p[7] += in_p[7];
+            res_p += 8;
+            in_p += 8;
+        }
+        while (res_p != res_end_p) 
+            (*res_p++) += (*in_p++);
+    }
+}
+
+void SumNMatrixByCol(NMatrix *srcMat, int row, int col, Boolean accFlag, NVector *dstVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->rowNum >= row))
+            HError(5221, "SumMatrixByCol: Row number inconsistent");
+        if (!(srcMat->colNum == col && dstVec->vecLen == col))
+            HError(5221, "SumMatrixByCol: Column number inconsistent");
+    }
+#ifdef CUDA
+    RedSumNMatrixByColCUDA(srcMat->devElems, row, col, accFlag, dstVec->devElems);
+#else
+    SumNMatrixByColCPU(srcMat->matElems, row, col, accFlag, dstVec->vecElems);
+#endif
+
+}
+
+static inline void SquaredNSegmentCPU(NFloat *srcPtr, int segLen, NFloat *dstPtr) {
+    int i;
+
+    for (i = 0; i < segLen; ++i) {
+        dstPtr[i] = pow(srcPtr[i], 2);
+    }
+}
+
+#ifdef MKL
+static inline void SquaredNSegmentMKL(NFloat *srcPtr, int segLen, NFloat *dstPtr) {
+    #ifdef DOUBLEANN
+    vdPowx(segLen, srcPtr, 2, dstPtr);
+    #else
+    vsPowx(segLen, srcPtr, 2, dstPtr);
+    #endif
+}
+#endif
+
+void SquaredNMatrix(NMatrix *srcMat, int row, int col, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->rowNum >= row && dstMat->rowNum >= row))
+            HError(5221, "SquaredNMatrix: Incompatible matrix row number");
+        if (!(srcMat->colNum >= col && dstMat->colNum >= col))
+            HError(5221, "SquaredNMatrix: Incompatible matrix column number");
+    }
+
+#ifdef CUDA
+    SquaredNSegmentCUDA(srcMat->devElems, row * col, dstMat->devElems);
+#else
+    #ifdef MKL
+    SquaredNSegmentMKL(srcMat->matElems, row * col, dstMat->matElems);
+    #else
+    SquaredNSegmentCPU(srcMat->matElems, row * col, dstMat->matElems);
+    #endif
+#endif 
+}
+
+void SquaredNVector(NVector *srcVec, int len, NVector *dstVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcVec->vecLen >= len && dstVec->vecLen >= len))
+            HError(5221, "SquaredNMatrix: Incompatible vector lengths");
+    }
+
+#ifdef CUDA
+    SquaredNSegmentCUDA(srcVec->devElems, len, dstVec->devElems);
+#else
+    #ifdef MKL
+    SquaredNSegmentMKL(srcVec->vecElems, len, dstVec->vecElems);
+    #else
+    SquaredNSegmentCPU(srcVec->vecElems, len, dstVec->vecElems);
+    #endif
+#endif 
+}
+
+static inline void CompAdaGradNSegmentCPU(NFloat eta, int K, int segLen, NFloat *ssgSeg, NFloat *nlrSeg) {
+    int i;
+
+    for (i = 0; i < segLen; ++i) {
+        nlrSeg[i] = eta / sqrt(K + ssgSeg[i]);
+    }
+}
+
+void CompAdaGradNVector(NFloat eta, int K, NVector *ssgVec, NVector *nlrVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(ssgVec->vecLen == nlrVec->vecLen))
+            HError(5221, "CompAdaGradNVector: Vector length inconsistent");
+    }
+#ifdef CUDA
+    CompAdaGradNSegmentCUDA(eta, K, nlrVec->vecLen, ssgVec->devElems, nlrVec->devElems);
+#else
+    CompAdaGradNSegmentCPU(eta, K, nlrVec->vecLen, ssgVec->vecElems, nlrVec->vecElems);
+#endif
+}
+
+void CompAdaGradNMatrix(NFloat eta, int K, NMatrix *ssgMat, NMatrix *nlrMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(ssgMat->rowNum == nlrMat->rowNum)) 
+            HError(5221, "CompAdaGradNMatrix: Matrix row inconsistent");
+        if (!(ssgMat->colNum == nlrMat->colNum))
+            HError(5221, "CompAdaGradNMatrix: Matrix column inconsistent");
+    }
+#ifdef CUDA
+    CompAdaGradNSegmentCUDA(eta, K, nlrMat->rowNum * nlrMat->colNum, ssgMat->devElems, nlrMat->devElems);
+#else
+    CompAdaGradNSegmentCPU(eta, K, nlrMat->rowNum * nlrMat->colNum, ssgMat->matElems, nlrMat->matElems);
+#endif
+}
+
+static inline void FindMaxElementCPU(NFloat *srcPtr, int row, int col, IntVec resVec) {
+    int maxIdx, i, j;
+    NFloat maxVal;
+
+    for (i = 0; i < row; ++i) {
+        maxIdx = 0;
+        maxVal = srcPtr[i * col + 0];
+        for (j = 1; j < col; ++j) {
+            if (maxVal < srcPtr[i * col + j]) {
+                maxIdx = j;
+                maxVal = srcPtr[i * col + j];
+            }
+        }
+        resVec[i + 1] = maxIdx;
+    }
+}
+
+
+/*#ifdef MKL
+static inline void FindMaxElementMKL(NFloat *srcPtr, int row, int col, IntVec resVec) {
+    int i, maxIdx;
+
+    for (i = 0; i < row; ++i) {
+#ifdef DOUBLEANN
+        maxIdx = cblas_idamax(col, &srcPtr[i * col], 1);
+#else
+        maxIdx = cblas_isamax(col, &srcPtr[i * col], 1);
+#endif
+        resVec[i + 1] = maxIdx;
+    }
+}
+#endif*/
+
+/* TODO: GPU support */
+void FindMaxElement(NMatrix *srcMat, int row, int col, IntVec resVec) {
+#ifdef CUDA
+    int i;
+#endif
+
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == col))
+            HError(5221, "FindMaxElement: Input column number incompatible");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= IntVecSize(resVec)))
+            HError(5221, "FindMaxElement: Input row number out of range");
+    }
+
+#ifdef CUDA
+    FindMaxElementCUDA(srcMat->devElems, row, col, tmpNMat->devElems);
+    SyncNMatrixDev2Host(tmpNMat);
+    for (i = 0; i < row; ++i) 
+        resVec[i + 1] = (int) tmpNMat->matElems[i];
+#else
+    FindMaxElementCPU(srcMat->matElems, row, col, resVec);
+#endif
+    
+}
+
+static inline void HNBlasNNgemmCPU(int m, int n, int k, NFloat alpha, NFloat *A, NFloat *B, NFloat beta, NFloat *C) {
+    int i, j, l;
+
+    /*for (i = 0; i < m; ++i) {
+        for (l = 0; l < k; ++l) {
+            C[i * k + l] *= beta;
+            for (j = 0; j < n; ++j) {
+                C[i * k + l] += alpha * A[i * n + j] * B[j * k + l];
+            }
+        }
+    }*/
+    for (i = 0; i < n; ++i) {
+        for (j = 0; j < m; ++j) {
+            C[i * m + j] *= beta;
+            for (l = 0; l < k; ++l) {
+                C[i * m + j] += alpha * A[l * m + j] * B[i * k + l];
+            }
+        }
+    }
+}
+
+#ifdef MKL
+static inline void HNBlasNNgemmMKL(int m, int n, int k, NFloat alpha, NFloat *A, NFloat *B, NFloat beta, NFloat *C) {
+    #ifdef DOUBLEANN
+    cblas_dgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, m, n, k, alpha, A, m, B, k, beta, C, m);
+    #else
+    cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, m, n, k, alpha, A, m, B, k, beta, C, m);
+    #endif
+}
+#endif
+
+/* do C[m * k] = a * A[m * n] * B[n * k] + b * C[m * k] */
+void HNBlasNNgemm(int m, int n, int k, NFloat alpha, NMatrix *A, NMatrix *B, NFloat beta, NMatrix *C) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(m > 0 && m <= A->rowNum && m <= C->rowNum))
+            HError(5221, "HNBlasNNgemm: First input dimension out of range");
+        if (!(n > 0 && n <= A->colNum && n <= B->rowNum))
+            HError(5221, "HNBlasNNgemm: Second input dimension out of range");
+        if (!(k > 0 && k <= B->colNum && k <= C->colNum))
+            HError(5221, "HNBlasNNgemm: Third input dimension out of range");
+    }
+#ifdef CUDA
+    HNBlasNNgemmCUDA(m, n, k, alpha, A->devElems, B->devElems, beta, C->devElems);
+#else
+    #ifdef MKL
+    HNBlasNNgemmMKL(m, n, k, alpha, A->matElems, B->matElems, beta, C->matElems);
+    #else
+    HNBlasNNgemmCPU(m, n, k, alpha, A->matElems, B->matElems, beta, C->matElems);
+    #endif
+#endif
+}
+
+static inline void HNBlasNTgemmCPU(int m, int n, int k, NFloat alpha, NFloat *A, NFloat *B, NFloat beta, NFloat *C) {
+    int i, j, l;
+    /*for (i = 0; i < m; ++i) {
+        for (l = 0; l < k; ++l) {
+            C[i * k + l] *= beta;
+            for (j = 0; j < n; ++j) {
+                C[i * k + l] += alpha * A[i * n + j] * B[l * n + j];
+            }
+        }
+    }*/
+    for (i = 0; i < n; ++i) {
+        for (j = 0; j < m; ++j) {
+            C[i * m + j] *= beta;
+            for (l = 0; l < k; ++l) {
+                C[i * m + j] += alpha * A[l * m + j] * B[l * n + i];
+            }
+        }
+    }
+}
+
+#ifdef MKL
+static inline void HNBlasNTgemmMKL(int m, int n, int k, NFloat alpha, NFloat *A, NFloat *B, NFloat beta, NFloat *C) {
+    #ifdef DOUBLEANN
+    cblas_dgemm(CblasColMajor, CblasNoTrans, CblasTrans, m, n, k, alpha, A, m, B, n, beta, C, m);
+    #else
+    cblas_sgemm(CblasColMajor, CblasNoTrans, CblasTrans, m, n, k, alpha, A, m, B, n, beta, C, m);
+    #endif
+}
+#endif
+
+/* do C[m * k] = a * A[m * n] * B[k * n]^T + b * C[m * k] */
+void HNBlasNTgemm(int m, int n, int k, NFloat alpha, NMatrix *A, NMatrix *B, NFloat beta, NMatrix *C) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(m > 0 && m <= A->rowNum && m <= C->rowNum))
+            HError(5221, "HNBlasNTgemm: First input dimension out of range");
+        if (!(n > 0 && n <= A->colNum && n <= B->colNum))
+            HError(5221, "HNBlasNTgemm: Second input dimension out of range");
+        if (!(k > 0 && k <= B->rowNum && k <= C->colNum))
+            HError(5221, "HNBlasNTgemm: Third input dimension out of range");
+    }
+#ifdef CUDA
+    HNBlasNTgemmCUDA(m, n, k, alpha, A->devElems, B->devElems, beta, C->devElems);
+#else
+    #ifdef MKL
+    HNBlasNTgemmMKL(m, n, k, alpha, A->matElems, B->matElems, beta, C->matElems);
+    #else
+    HNBlasNTgemmCPU(m, n, k, alpha, A->matElems, B->matElems, beta, C->matElems);
+    #endif
+#endif
+
+}
+
+static inline void HNBlasTNgemmCPU(int m, int n, int k, NFloat alpha, NFloat *A, NFloat *B, NFloat beta, NFloat *C) {
+    int i, j, l;
+
+    for (i = 0; i < n; ++i) {
+        for (j = 0; j < m; ++j) {
+            C[i * m + j] *= beta;
+            for (l = 0; l < k; ++l) {
+                C[i * m + j] += alpha * A[j * k + l] * B[i * k + l];
+            }
+        }
+    }
+}
+
+#ifdef MKL
+static inline void HNBlasTNgemmMKL(int m, int n, int k, NFloat alpha, NFloat *A, NFloat *B, NFloat beta, NFloat *C) {
+    #ifdef DOUBLEANN
+    cblas_dgemm(CblasColMajor, CblasTrans, CblasNoTrans, m, n, k, alpha, A, k, B, k, beta, C, m);
+    #else
+    cblas_sgemm(CblasColMajor, CblasTrans, CblasNoTrans, m, n, k, alpha, A, k, B, k, beta, C, m);
+    #endif
+}
+#endif
+
+/* do C[m * k] = a * A[n * m]^T * B[n * k] + b * C[m * k] */
+void HNBlasTNgemm(int m, int n, int k, NFloat alpha, NMatrix *A, NMatrix *B, NFloat beta, NMatrix *C) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(m > 0 && m <= A->colNum && m <= C->rowNum))
+            HError(5221, "HNBlasTNgemm: First input dimension out of range");
+        if (!(n > 0 && n <= A->rowNum && n <= B->rowNum))
+            HError(5221, "HNBlasTNgemm: Second input dimension out of range");
+        if (!(k > 0 && k <= B->colNum && k <= C->colNum))
+            HError(5221, "HNBlasTNgemm: Third input dimension out of range");
+    }
+#ifdef CUDA
+    HNBlasTNgemmCUDA(m, n, k, alpha, A->devElems, B->devElems, beta, C->devElems);
+#else
+    #ifdef MKL
+    HNBlasTNgemmMKL(m, n, k, alpha, A->matElems, B->matElems, beta, C->matElems);
+    #else
+    HNBlasTNgemmCPU(m, n, k, alpha, A->matElems, B->matElems, beta, C->matElems);
+    #endif
+#endif
+
+}
+
+void SetNSegmentCPU(NFloat val, NFloat *segPtr, int segLen) {
+    int i;
+ 
+    for (i = 0; i < segLen; ++i)
+        segPtr[i] = val;
+}
+
+void SetNVector(NFloat val, NVector *vec) {
+#ifdef CUDA
+    SetNSegmentCUDA(val, vec->devElems, vec->vecLen);
+#else
+    SetNSegmentCPU(val, vec->vecElems, vec->vecLen);
+#endif
+}
+
+void SetNMatrix(NFloat val, NMatrix *mat, int nrows) {
+    int len;
+
+    len = nrows * mat->colNum;
+#ifdef CUDA
+    SetNSegmentCUDA(val, mat->devElems, len);
+#else
+    SetNSegmentCPU(val, mat->matElems, len);
+#endif
+}
+
+void SetNMatrixSegment(NFloat val, NMatrix *mat, int off, int len) {
+
+#ifdef CUDA
+    SetNSegmentCUDA(val, mat->devElems + off, len);
+#else
+    SetNSegmentCPU(val, mat->matElems + off, len);
+#endif
+}
+
+void SetNVectorSegment(NFloat val, NVector *vec, int off, int len) {
+#ifdef CUDA
+    SetNSegmentCUDA(val, vec->devElems + off, len);
+#else
+    SetNSegmentCPU(val, vec->vecElems + off, len);
+#endif
+}
+
+static void ClearNSegmentCPU(NFloat *segPtr, int segLen) {
+    memset(segPtr, 0, segLen * sizeof(NFloat));
+}
+
+void ClearNVector(NVector *vec) {
+
+#ifdef CUDA
+    ClearNSegmentCUDA(vec->devElems, vec->vecLen);
+#else
+    ClearNSegmentCPU(vec->vecElems, vec->vecLen);
+#endif
+}
+
+void ClearNMatrix(NMatrix *mat, int nrows) {
+    int len;
+
+    len = nrows * mat->colNum;
+#ifdef CUDA
+    ClearNSegmentCUDA(mat->devElems, len);
+#else
+    ClearNSegmentCPU(mat->matElems, len);
+#endif
+}
+
+void ClearNMatrixSegment(NMatrix *mat, int off, int len) {
+
+#ifdef CUDA
+    ClearNSegmentCUDA(mat->devElems + off, len);
+#else
+    ClearNSegmentCPU(mat->matElems + off, len);
+#endif
+}
+
+void ClearNVectorSegment(NVector *vec, int off, int len) {
+
+#ifdef CUDA
+    ClearNSegmentCUDA(vec->devElems + off, len);
+#else
+    ClearNSegmentCPU(vec->vecElems + off, len);
+#endif
+}
+
+/*void ClearNVector(NVector *vec) {
+
+    ClearNSegmentCPU(vec->vecElems, vec->vecLen);
+#ifdef CUDA
+    SyncHost2Dev(vec->vecElems, vec->devElems, vec->vecLen * sizeof(NFloat));
+#endif
+}
+
+void ClearNMatrix(NMatrix *mat, int nrows) {
+    int len;
+
+    len = nrows * mat->colNum;
+    ClearNSegmentCPU(mat->matElems, len);
+#ifdef CUDA
+    SyncHost2Dev(mat->matElems, mat->devElems, len * sizeof(NFloat));
+#endif
+}
+
+void ClearNMatrixSegment(NMatrix *mat, int off, int len) {
+
+    ClearNSegmentCPU(mat->matElems + off, len);
+#ifdef CUDA
+    SyncHost2Dev(mat->matElems + off, mat->devElems + off, len * sizeof(NFloat));
+#endif
+}
+
+void ClearNVectorSegment(NVector *vec, int off, int len) {
+
+    ClearNSegmentCPU(vec->vecElems + off, len);
+#ifdef CUDA
+    SyncHost2Dev(vec->vecElems + off, vec->devElems + off, len * sizeof(NFloat));
+#endif
+}*/
+
+/*void SetNVector(NFloat val, NVector *vec) {
+
+#ifdef CUDA
+    SyncNVectorDev2Host(vec);
+#endif
+    SetNSegmentCPU(val, vec->vecElems, vec->vecLen);
+#ifdef CUDA
+    SyncNVectorHost2Dev(vec);
+#endif
+}
+
+void SetNMatrix(NFloat val, NMatrix *mat, int nrows) {
+
+#ifdef CUDA
+    SyncNMatrixDev2Host(mat);
+#endif
+    SetNSegmentCPU(val, mat->matElems, nrows * mat->colNum);
+#ifdef CUDA
+    SyncNMatrixHost2Dev(mat);
+#endif
+}
+
+void SetNMatrixSegment(NFloat val, NMatrix *mat, int off, int len) {
+
+#ifdef CUDA
+    SyncNMatrixDev2Host(mat);
+#endif
+    SetNSegmentCPU(val, mat->matElems + off, len);
+#ifdef CUDA
+    SyncNMatrixHost2Dev(mat);
+#endif
+}
+
+void SetNVectorSegment(NFloat val, NVector *vec, int off, int len) {
+
+#ifdef CUDA
+    SyncNVectorDev2Host(vec);
+#endif
+    SetNSegmentCPU(val, vec->vecElems + off, len);
+#ifdef CUDA
+    SyncNVectorHost2Dev(vec);
+#endif
+}*/
+
+/* cz277 - laf */
+void RandNSegmentGaussian(NFloat mu, NFloat sigma, int segLen, NFloat *segPtr) {
+    int i;
+
+    if (sigma <= 0.0)
+        HError(5225, "RandNSegmentGauss: Standard deviation need to be positive");
+    for (i = 0; i < segLen; ++i) {
+        segPtr[i] = GaussDeviate(mu, sigma);
+    }
+}
+
+void RandNSegmentUniform(NFloat lower, NFloat upper, int segLen, NFloat *segPtr) {
+    int i;
+    NFloat range;
+
+    range = upper - lower;
+    if (range < 0)
+        HError(5225, "RandNSegment: Random range should be positive");
+    for (i = 0; i < segLen; ++i) {
+        segPtr[i] = RandomValue();
+        if (range > 0) {	/* range == 0 means no operation here */
+            segPtr[i] *= range;
+            segPtr[i] += lower;
+        }
+    }
+}
+
+/* cz277 - 0 mask */
+void RandMaskNSegment(NFloat prob, NFloat mask, int segLen, NFloat *segPtr) {
+    int i;
+
+    if (prob < 0 || prob > 1)
+        HError(5225, "RandMaskNSegment: Mask probability shoudl be in [0, 1]");
+    for (i = 0; i < segLen; ++i) {
+        if (RandomValue() < prob)
+            segPtr[i] = mask;
+    }
+}
+
+static inline void CalXENTCriterionMKL(NFloat *refSeg, NFloat *hypSeg, int segLen) {
+    HError(5201, "CalXENTCriterionMKL: Unimplemented method");
+}
+
+static inline void CalXENTCriterionCPU(NFloat *refSeg, NFloat *hypSeg, int segLen) {
+    int i;
+    NFloat tn, yn, sum;
+
+    sum = 0.0;
+    for (i = 0; i < segLen; ++i) {
+        tn = refSeg[i];
+        yn = hypSeg[i];
+        if (tn == 0.0)
+            sum += 0.0;
+        else if (yn == 0.0)
+            sum += tn * LZERO;
+        else
+            sum += (-1.0) * tn * log(yn / tn);
+    }
+    tmpNMat->matElems[0] = sum;
+}
+
+NFloat CalXENTCriterion(NMatrix *refMat, NMatrix *hypMat, int rowNum) {
+    int segLen;
+
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(refMat->colNum == hypMat->colNum)) 
+            HError(5221, "CalXENTCriterion: Column number should be consistent");
+        if (!(refMat->rowNum >= rowNum && hypMat->rowNum >= rowNum))
+            HError(5221, "CalXENTCriterion: Row number out of range");
+    }
+    segLen = rowNum * refMat->colNum;
+#ifdef CUDA
+    CalXENTCriterionCUDA(refMat->devElems, hypMat->devElems, segLen, tmpNMat->devElems);
+    SyncNMatrixDev2Host(tmpNMat);
+#else
+    /*#ifdef MKL
+    CalXENTCriterionMKL(refMat->matElems, hypMat->matElems, segLen);
+    #else
+    CalXENTCriterionCPU(refMat->matElems, hypMat->matElems, segLen);
+    #endif*/
+    CalXENTCriterionCPU(refMat->matElems, hypMat->matElems, segLen);
+#endif
+    return tmpNMat->matElems[0];
+}
+
+static inline void CalMMSECriterionMKL(NFloat *refSeg, NFloat *hypSeg, int segLen) {
+    HError(5201, "CalXENTCriterionMKL: Unimplemented method");
+}
+
+static inline void CalMMSECriterionCPU(NFloat *refSeg, NFloat *hypSeg, int segLen) {
+    int i;
+
+    tmpNMat->matElems[0] = 0.0;
+    for (i = 0; i < segLen; ++i) 
+        tmpNMat->matElems[0] += pow(hypSeg[i] - refSeg[i], 2.0);
+}
+
+NFloat CalMMSECriterion(NMatrix *refMat, NMatrix *hypMat, int rowNum) {
+    int segLen;
+
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(refMat->colNum == hypMat->colNum)) 
+            HError(5221, "CalMMSECriterion: Column number should be consistent");
+        if (!(refMat->rowNum >= rowNum && hypMat->rowNum >= rowNum))
+            HError(5221, "CalMMSECriterion: Row number out of range");
+    }
+    segLen = rowNum * refMat->colNum;
+#ifdef CUDA
+    CalMMSECriterionCUDA(refMat->devElems, hypMat->devElems, segLen, tmpNMat->devElems);
+    SyncNMatrixDev2Host(tmpNMat);
+#else
+    /*#ifdef MKL
+    CalMMSECriterionMKL(refMat->matElems, hypMat->matElems, segLen);
+    #else
+    CalMMSECriterionCPU(refMat->matElems, hypMat->matElems, segLen);
+    #endif*/
+    CalMMSECriterionCPU(refMat->matElems, hypMat->matElems, segLen);
+#endif
+    return tmpNMat->matElems[0] / refMat->colNum;
+}
+
+static inline void AddNSegmentTargetPenCPU(NFloat *srcSeg, NFloat *penSeg, int row, int col, NFloat *dstSeg) {
+    int i, j;
+
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j) {
+            dstSeg[i * col + j] = srcSeg[i * col + j] + penSeg[j];
+        }
+    }
+}
+
+#ifdef MKL
+static inline void AddNSegmentTargetPenMKL(NFloat *srcSeg, NFloat *penSeg, int row, int col, NFloat *dstSeg) {
+    int i;
+
+    for (i = 0; i < row; ++i) {
+#ifdef DOUBLEANN
+        vdAdd(col, srcSeg + i * col, penSeg, dstSeg + i * col);
+#else
+        vsAdd(col, srcSeg + i * col, penSeg, dstSeg + i * col);
+#endif
+    }
+}
+#endif
+
+void AddNVectorTargetPen(NMatrix *srcMat, NVector *penVec, int nrows, NMatrix *dstMat) {
+    
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->colNum == penVec->vecLen && dstMat->colNum == penVec->vecLen)) 
+            HError(5221, "AddNVectorTargetPen: Column number should equal to the vector length");
+        if (!(nrows <= srcMat->rowNum && nrows <= dstMat->rowNum))
+            HError(5221, "AddNVectorTargetPen: Row number out of range");
+    }    
+#ifdef CUDA
+    AddNSegmentTargetPenCUDA(srcMat->devElems, penVec->devElems, nrows, penVec->vecLen, dstMat->devElems);
+#else
+    #ifdef MKL
+    AddNSegmentTargetPenMKL(srcMat->matElems, penVec->vecElems, nrows, penVec->vecLen, dstMat->matElems);
+    #else
+    AddNSegmentTargetPenCPU(srcMat->matElems, penVec->vecElems, nrows, penVec->vecLen, dstMat->matElems);
+    #endif
+#endif
+}
+
+static inline void ShiftNSegmentValsCPU(NFloat *srcSeg, int segLen, NFloat shiftVal, NFloat *dstSeg) {
+    int i;
+
+    for (i = 0; i < segLen; ++i) {
+        dstSeg[i] = srcSeg[i] + shiftVal;
+    }
+}
+
+/* cz277 - semi */
+/*  */
+void ShiftNMatrixVals(NMatrix *srcMat, int row, int col, NFloat shiftVal, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->rowNum >= row && dstMat->rowNum >= row))
+            HError(5221, "ShiftNMatrixVals: Incompatible matrix row number");
+        if (!(srcMat->colNum >= col && dstMat->colNum >= col))
+            HError(5221, "ShiftNMatrixVals: Incompatible matrix column number");
+    }
+#ifdef CUDA
+    ShiftNSegmentValsCUDA(srcMat->devElems, row * col, shiftVal, dstMat->devElems);
+#else
+    ShiftNSegmentValsCPU(srcMat->matElems, row * col, shiftVal, dstMat->matElems);
+#endif
+}
+
+/* cz277 - semi */
+/*  */
+void ShiftNVectorVals(NVector *srcVec, int len, NFloat shiftVal, NVector *dstVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcVec->vecLen >= len && dstVec->vecLen >= len))
+            HError(5221, "ShiftNVectorVals: Incompatible vector lengths");
+    }
+#ifdef CUDA
+    ShiftNSegmentValsCUDA(srcVec->devElems, len, shiftVal, dstVec->devElems);
+#else
+    ShiftNSegmentValsCPU(srcVec->vecElems, len, shiftVal, dstVec->vecElems);
+#endif
+}
+
+static void CopyPartialNSegmentCPU(int minRow, int minCol, NFloat *srcPtr, int srcCol, NFloat *dstPtr, int dstCol) {
+    int i;
+    
+    for (i = 0; i < minRow; ++i) {
+        memcpy(dstPtr + i * dstCol, srcPtr + i * srcCol, sizeof(NFloat) * minCol);
+    }
+}
+
+void CopyPartialNSegment(int minRow, int minCol, NFloat *srcPtr, int srcCol, NFloat *dstPtr, int dstCol) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(minCol > srcCol || minCol > dstCol))
+            HError(5221, "CopyPartialNSegment: minCol should be smaller than srcCol and dstCol");
+    }    
+
+#ifdef CUDA
+    CopyPartialNSegmentCUDA(minRow, minCol, srcPtr, srcCol, dstPtr, dstCol);
+#else
+    CopyPartialNSegmentCPU(minRow, minCol, srcPtr, srcCol, dstPtr, dstCol);
+#endif
+}
+
+/* cz277 - gradlim */
+static void ClipNSegmentValsCPU(NFloat* srcSeg, int len, NFloat upperLim, NFloat lowerLim, NFloat *dstSeg) {
+    int i;
+
+    for (i = 0; i < len; ++i) {
+        if (srcSeg[i] > upperLim)
+            dstSeg[i] = upperLim;
+        else if (srcSeg[i] < lowerLim)
+            dstSeg[i] = lowerLim;
+        else if (srcSeg != dstSeg)
+            dstSeg[i] = srcSeg[i];
+    }
+}
+
+/* cz277 - gradlim */
+void ClipNMatrixVals(NMatrix* srcMat, int row, int col, NFloat upperLim, NFloat lowerLim, NMatrix *dstMat) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(col > 0 && col <= srcMat->colNum && col <= dstMat->colNum))
+            HError(5221, "ClipNMatrixVals: Input matrix column number out of range");
+        if (!(row > 0 && row <= srcMat->rowNum && row <= dstMat->rowNum))
+            HError(5221, "ClipNMatrixVals: Input matrix row number out of range");
+        if (!(upperLim >= lowerLim))
+            HError(5225, "ClipNMatrixVals: Invalid input value limits");
+    }
+#ifdef CUDA
+    ClipNSegmentValsCUDA(srcMat->devElems, row * col, upperLim, lowerLim, dstMat->devElems);
+#else 
+    ClipNSegmentValsCPU(srcMat->matElems, row * col, upperLim, lowerLim, dstMat->matElems);
+#endif
+
+}
+
+/* cz277 - gradlim */
+void ClipNVectorVals(NVector* srcVec, int len, NFloat upperLim, NFloat lowerLim, NVector *dstVec) {
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(len > 0 && len <= srcVec->vecLen && len <= dstVec->vecLen))
+            HError(5221, "ClipNVectorVals: Input vector length out of range");
+        if (!(upperLim >= lowerLim))
+            HError(5225, "ClipNVectorVals: Invalid input value limits");
+    }
+#ifdef CUDA
+    ClipNSegmentValsCUDA(srcVec->devElems, len, upperLim, lowerLim, dstVec->devElems);
+#else
+    ClipNSegmentValsCPU(srcVec->vecElems, len, upperLim, lowerLim, dstVec->vecElems);
+#endif
+
+}
+
+/* cz277 - max norm */
+static void CalNMatrixL2NormByRowCPU(NFloat *matPtr, int row, int col, NFloat *normPtr) {
+    int i, j;
+
+    for (i = 0; i < row; ++i) {
+        normPtr[i] = 0.0;
+        for (j = 0; j < col; ++j) 
+            normPtr[i] += pow(matPtr[i * col + j], 2.0);
+        normPtr[i] = sqrt(normPtr[i]);
+    }
+}
+
+/* cz277 - max norm */
+void CalNMatrixL2NormByRow(NMatrix *srcMat, NVector *normVec) {
+
+    /* safety check */
+    if (trace & T_DIM) {
+        if (!(srcMat->rowNum <= normVec->vecLen))
+            HError(5221, "CalNMatrixL2NormByRow: Norm vector dimension too small");
+    }
+#ifdef CUDA
+    CalNMatrixL2NormByRowCUDA(srcMat->devElems, srcMat->rowNum, srcMat->colNum, normVec->devElems);
+#else
+    CalNMatrixL2NormByRowCPU(srcMat->matElems, srcMat->rowNum, srcMat->colNum, normVec->vecElems);
+#endif
+}
+
+void CalNVectorL2Norm(NVector *srcVec, NFloat *normVal) {
+ 
+#ifdef CUDA
+    NVector *tmpNVec = GetTmpNVec();
+    CalNMatrixL2NormByRowCUDA(srcVec->devElems, 1, srcVec->vecLen, tmpNVec->devElems);
+    SyncNVectorDev2Host(tmpNVec);
+    normVal[0] = tmpNVec->vecElems[0];
+#else
+    CalNMatrixL2NormByRowCPU(srcVec->vecElems, 1, srcVec->vecLen, normVal);
+#endif
+}
+
+static void DivideNMatrixByRowCPU(NFloat *srcPtr, int row, int col, NFloat *normPtr, NFloat *dstPtr) {
+    int i, j;
+
+    for (i = 0; i < row; ++i)
+        for (j = 0; j < col; ++j)
+            dstPtr[i * col + j] = srcPtr[i * col + j] / normPtr[i];
+}
+
+void DivideNMatrixByRow(NMatrix *srcMat, NVector *normVec, NMatrix *dstMat) {
+    if (trace & T_DIM) {
+        if (!(srcMat->rowNum <= normVec->vecLen))
+            HError(5221, "DivideNMatrixByRow: Norm vector dimension too small");
+        if (!(srcMat->rowNum == dstMat->rowNum && srcMat->colNum >= dstMat->colNum))
+            HError(5221, "DivideNMatrixByRow: Inconsistent matrix dimensions");
+    }
+#ifdef CUDA
+    DivideNMatrixByRowCUDA(srcMat->devElems, srcMat->rowNum, srcMat->colNum, normVec->devElems, dstMat->devElems);
+#else
+    DivideNMatrixByRowCPU(srcMat->matElems, srcMat->rowNum, srcMat->colNum, normVec->vecElems, dstMat->matElems);
+#endif
+ 
+}
+
+/* cz277 - xform */
+int ClipInt(int min, int max, int val) {
+    if (val < min)
+        return min;
+    else if (val > max)
+        return max;
+    else
+        return val;
 }
 
 /* ------------------------- End of HMath.c ------------------------- */

@@ -3,23 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*      File: HAudio.c: Audio Input/Output Interface           */
+/*         File: HAudio.c  Audio input/output interface        */
 /* ----------------------------------------------------------- */
 
-char *haudio_version = "!HVER!HAudio:   3.4.1 [CUED 12/03/09]";
+char *haudio_version = "!HVER!HAudio:   3.5.0 [CUED 12/10/15]";
 char *haudio_vc_id = "$Id: HAudio.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Exp $";
 
 #include "HShell.h"        /* HTK Libraries */
@@ -2171,7 +2187,7 @@ void StartAudioInput(AudioIn a, int sig)
    if (sig<0) { /* Means use keys to start/stop */
 #ifndef WIN32
       printf("Press return to start sampling\n");
-      read(0, &c, 1);
+      if(read(0, &c, 1)<0) HError(6006,"StartAudioInput: error reading from audio device");
 #endif
       StartAudioSignal();
    }

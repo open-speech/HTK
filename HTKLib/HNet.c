@@ -3,37 +3,40 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*          2001-2004 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HNet.c  Network and Lattice Functions         */
+/*         File: HNet.c  Network and lattice functions         */
 /* ----------------------------------------------------------- */
 
-char *hnet_version = "!HVER!HNet:   3.4.1 [CUED 12/03/09]";
-char *hnet_vc_id = "$Id: HNet.c,v 1.1.1.1 2006/10/11 09:54:58 jal58 Exp $";
+char *hnet_version = "!HVER!HNet:   3.5.0 [CUED 12/10/15]";
+char *hnet_vc_id = "$Id: HNet.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 #include "HShell.h"
 #include "HMem.h"
@@ -42,6 +45,7 @@ char *hnet_vc_id = "$Id: HNet.c,v 1.1.1.1 2006/10/11 09:54:58 jal58 Exp $";
 #include "HAudio.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h"
 #include "HDict.h"
@@ -57,6 +61,9 @@ char *hnet_vc_id = "$Id: HNet.c,v 1.1.1.1 2006/10/11 09:54:58 jal58 Exp $";
 static int trace=0;
 static ConfParam *cParm[MAXGLOBS];      /* config parameters */
 static int nParm = 0;
+
+/* cz277 - ANN */
+static MemHeap netstak;
 
 /* --------------------------- Global Flags -------------------------- */
 
@@ -108,6 +115,10 @@ char *subLatEnd="!)_SUBLAT",subLatEndBuf[MAXSTRLEN];
    Set these strings as the start and end sublattice markers 
 */
 
+/* sxz20: for logical label*/
+/* if TRUE, logical hmm name will be used in phone-marked lattices*/
+static Boolean markLogHmm = FALSE;
+
 /* --------------------------- Initialisation ---------------------- */
 
 /* EXPORT->InitNet: register module & set configuration parameters */
@@ -134,7 +145,12 @@ void InitNet(void)
       if (GetConfBool(cParm,nParm,"REMDUPPRON",&b)) remDupPron = b;
       if (GetConfBool(cParm,nParm,"MARKSUBLAT",&b)) sublatmarkers = b;
       if (GetConfInt(cParm,nParm,"TRACE",&i)) trace = i;
+      
+      /* sxz20: config this in lib/settings/scoremark.cfg, HNET:MARKLOGHMM=T */
+      if (GetConfBool(cParm,nParm,"MARKLOGHMM",&b)) markLogHmm = b;
    }
+   /* cz277 - ANN */
+   CreateHeap(&netstak, "HNet Stack", MSTAK, 1, 0.0, 100000, ULONG_MAX);
 }
 
 /* ------------------------ Lattice Creation ------------------------- */
@@ -297,11 +313,62 @@ Lattice *NewILattice(MemHeap *heap,int nn,int na,Lattice *info)
    return(lat);
 }
 
+/* cz277 - ANN */
 /* EXPORT->FreeLattice: free memory used by a lattice structure */
-void FreeLattice(Lattice *lat)
+/*void FreeLattice(Lattice *lat)
 {
    Dispose(lat->heap,lat);
+}*/
+void FreeLattice(Lattice *lat) {
+    int i;
+    LArc *la;
+    LNode *ln;
+
+    /* dispose the lattice arcs */
+    for (i = 0, la = lat->larcs; i < lat->na; ++i, la = NextLArc(lat, la)) {
+        if (la->nAlign != 0) {
+            Dispose(lat->heap, la->lAlign); 
+        }
+    }
+    Dispose(lat->heap, lat->larcs);
+    /* dispose the lattice nodes */
+    for (i = 0, ln = lat->lnodes; i < lat->nn; ++i, ++ln) {
+        if (ln->tag != NULL) {
+            Dispose(lat->heap, ln->tag);
+        }
+        if (ln->sublat != NULL) {
+            FreeLattice(ln->sublat->lat);
+            /* TODO: to process sublat->chain ?? */
+            /* TODO: to process sublat->next ?? */
+        }
+    }
+    /* dispose subList & refList */
+    if (lat->subList != NULL) {
+        /* TODO: to process lat->subList ?? */
+    }
+    if (lat->refList != NULL) {
+        /* TODO: to process lat->refList ?? */
+    }
+
+    /* dispose the char *s */
+    if (lat->net != NULL)
+        Dispose(lat->heap, lat->net);
+    if (lat->hmms != NULL)
+        Dispose(lat->heap, lat->hmms);
+    if (lat->vocab != NULL)
+        Dispose(lat->heap, lat->vocab);
+    if (lat->utterance != NULL)
+        Dispose(lat->heap, lat->utterance);
+
+    /* TODO: to process lat->chain ?? */
+    if (lat->chain != NULL) {
+        FreeLattice(lat->chain);
+    }
+
+    /* dispose the lattice itself */
+    Dispose(lat->heap, lat);
 }
+
 
 /* ------------------------ Lattice Output ------------------------- */
 
@@ -311,7 +378,7 @@ void FreeLattice(Lattice *lat)
 /* add (if not found) or check (if found) the new subLat definition. */
 static Lattice *GetSubLat(LabId subLatId,Lattice *subLat)
 {
-   int h;
+   unsigned long int h;
    Lattice *cur,*nxt;
    static Lattice **subLatHashTab = NULL;
 
@@ -330,7 +397,7 @@ static Lattice *GetSubLat(LabId subLatId,Lattice *subLat)
       subLatHashTab=NULL;
       return(NULL);
    }
-   h=(((unsigned) subLatId)%SUBLATHASHSIZE);
+   h=(((unsigned long int) subLatId)%SUBLATHASHSIZE);
    for (cur=subLatHashTab[h];cur!=NULL;cur=cur->chain)
       if (cur->subLatId==subLatId) break;
    if (subLat!=NULL) {
@@ -475,8 +542,9 @@ static int QSCmpArcs(const void *v1,const void *v2)
    else return(j);
 }
 
+/* cz277 - scale conf score */
 /* OutputIntField: output integer as text or binary */
-static void OutputIntField(char field,int val,Boolean bin,
+ void OutputIntField(char field,int val,Boolean bin,
                            char *form,FILE *file)
 {
    fprintf(file,"%c%c",field,bin?'~':'=');
@@ -487,8 +555,9 @@ static void OutputIntField(char field,int val,Boolean bin,
    fprintf(file," ");
 }
 
+/* cz277 - scale conf score */
 /* OutputFloatField: output float as text or binary */
-static void OutputFloatField(char field,float val,Boolean bin,
+void OutputFloatField(char field,float val,Boolean bin,
                              char *form,FILE *file)
 {
    fprintf(file,"%c%c",field,bin?'~':'=');
@@ -534,8 +603,8 @@ ReturnStatus WriteOneLattice(Lattice *lat,FILE *file,LatFormat format)
    LArc *la;
 
    /* Rather than return an error assume labels on nodes !! */
-   order=(int *) New(&gstack, sizeof(int)*(lat->nn<lat->na ? lat->na+1 : lat->nn+1));
-   rorder=(int *) New(&gstack, sizeof(int)*lat->nn);
+   order=(int *) New(&netstak, sizeof(int)*(lat->nn<lat->na ? lat->na+1 : lat->nn+1));
+   rorder=(int *) New(&netstak, sizeof(int)*lat->nn);
    
    if (lat->subLatId) fprintf(file,"SUBLAT=%s\n",lat->subLatId->name);
    
@@ -622,7 +691,7 @@ ReturnStatus WriteOneLattice(Lattice *lat,FILE *file,LatFormat format)
    
    if (lat->subLatId) fprintf(file,".\n\n");
 
-   Dispose(&gstack,order);
+   Dispose(&netstak,order);
    slat=NULL;
    return(SUCCESS);
 }
@@ -875,353 +944,357 @@ static int ReadAlign(Lattice *lat,LArc *la,char *buf)
 }
 
 /* ReadOneLattice: Read (one level) of lattice from file */
-Lattice *ReadOneLattice(Source *src, MemHeap *heap, Vocab *voc, 
-                               Boolean shortArc, Boolean add2Dict)
+Lattice *ReadOneLattice(Source *src, MemHeap *heap, Vocab *voc, Boolean shortArc, Boolean add2Dict)
 {
-   int i,s,e,n,v=0,nn,na;
-   Lattice *lat;
-   LNode *ln;
-   LArc *la;
-   Word wordId;
-   double time,aclike,lmlike;
-   double prlike;
-   char nbuf[132],vbuf[132],*ptr,ntype,del;
+    int i, s, e, n, v = 0, nn, na;
+    Lattice *lat;
+    LNode *ln;
+    LArc *la;
+    Word wordId;
+    double time, aclike, lmlike;
+    double prlike;
+    char nbuf[132], vbuf[132], *ptr, ntype, del;
 #define DBUFLEN 4096
-   char dbuf[DBUFLEN];
-   double lmscl=1.0, lmpen=0.0, acscl=1.0, prscl=1.0;
-   float logbase = 1.0, tscale = 1.0;
+    char dbuf[DBUFLEN];
+    double lmscl = 1.0, lmpen = 0.0, acscl = 1.0, prscl = 1.0;
+    float logbase = 1.0, tscale = 1.0;
 
-   char *uttstr,*lmnstr,*vocstr,*hmmstr,*sublatstr,*tag;
-   SubLatDef *subLatId = NULL;
+    char *uttstr, *lmnstr, *vocstr, *hmmstr, *sublatstr, *tag;
+    SubLatDef *subLatId = NULL;
 
-   lat = (Lattice *) New(heap,sizeof(Lattice));
-   lat->heap=heap; lat->subLatId=NULL; lat->chain=NULL;
-   lat->voc=voc; lat->refList=NULL; lat->subList=NULL;
+    lat = (Lattice *) New(heap,sizeof(Lattice));
+    lat->heap = heap; lat->subLatId = NULL; lat->chain = NULL;
+    lat->voc = voc; lat->refList = NULL; lat->subList = NULL;
 
-   /* Initialise default header values */
-   nn=0;na=0; uttstr=lmnstr=vocstr=hmmstr=sublatstr=NULL;
-   /* Process lattice header */
-   while((ptr=GetNextFieldName(nbuf,&del,src))) {
-      if (nbuf[0]=='\n') {
-         if (na != 0 && nn != 0) break;
-      }
-      else if (strlen(ptr)==1) {
-         ntype=*ptr;
-         switch(ntype) {
-         case 'N':
-            nn=GetIntField('N',del,vbuf,src);
-            break;
-         case 'L':
-            na=GetIntField('L',del,vbuf,src);
-            break;
-         default:
-            GetFieldValue(0,src,0);
-            break;
-         }
-      }
-      else {
-         if (!strcmp(ptr,"UTTERANCE"))
-            GetFieldValue(vbuf,src,0),uttstr=CopyString(heap,vbuf);
-         else if (!strcmp(ptr,"SUBLAT"))
-            GetFieldValue(vbuf,src,0),sublatstr=CopyString(heap,vbuf);
-         else if (!strcmp(ptr,"vocab"))
-            GetFieldValue(vbuf,src,0),vocstr=CopyString(heap,vbuf);
-         else if (!strcmp(ptr,"hmms"))
-            GetFieldValue(vbuf,src,0),hmmstr=CopyString(heap,vbuf);
-         else if (!strcmp(ptr,"lmname"))
-            GetFieldValue(vbuf,src,0),lmnstr=CopyString(heap,vbuf);
-         else if (!strcmp(ptr,"wdpenalty"))
-            lmpen=GetFltField('p',del,vbuf,src);
-         else if (!strcmp(ptr,"lmscale"))
-            lmscl=GetFltField('s',del,vbuf,src);
-         else if (!strcmp(ptr,"prscale"))
-            prscl=GetFltField('s',del,vbuf,src);
-         else if (!strcmp(ptr,"acscale"))
-            acscl=GetFltField('a',del,vbuf,src);
-         else if (!strcmp(ptr,"base"))
-            logbase=GetFltField('b',del,vbuf,src);
-         else if (!strcmp(ptr,"tscale"))
-            tscale=GetFltField('t',del,vbuf,src);
-         else
-            GetFieldValue(NULL,src,0);
-      }
-   }
+    /* Initialise default header values */
+    nn = 0;na = 0; uttstr = lmnstr = vocstr = hmmstr = sublatstr = NULL;
+    /* Process lattice header */
+    while ((ptr = GetNextFieldName(nbuf, &del, src))) {
+        if (nbuf[0] == '\n') {
+            if (na != 0 && nn != 0) 
+                break;
+        }
+        else if (strlen(ptr) == 1) {
+            ntype = *ptr;
+            switch(ntype) {
+                case 'N':
+                    nn = GetIntField('N', del, vbuf, src);
+                    break;
+                case 'L':
+                    na = GetIntField('L', del, vbuf, src);
+                    break;
+                default:
+                    GetFieldValue(0, src, 0);
+                    break;
+            }
+        }
+        else {
+            if (!strcmp(ptr, "UTTERANCE"))
+                GetFieldValue(vbuf, src, 0), uttstr = CopyString(heap, vbuf);
+            else if (!strcmp(ptr, "SUBLAT"))
+                GetFieldValue(vbuf, src, 0), sublatstr = CopyString(heap, vbuf);
+            else if (!strcmp(ptr, "vocab"))
+                GetFieldValue(vbuf, src, 0), vocstr = CopyString(heap, vbuf);
+            else if (!strcmp(ptr, "hmms"))
+                GetFieldValue(vbuf, src, 0), hmmstr = CopyString(heap, vbuf);
+            else if (!strcmp(ptr, "lmname"))
+                GetFieldValue(vbuf, src, 0), lmnstr = CopyString(heap, vbuf);
+            else if (!strcmp(ptr, "wdpenalty"))
+                lmpen = GetFltField('p', del, vbuf, src);
+            else if (!strcmp(ptr, "lmscale"))
+                lmscl = GetFltField('s', del, vbuf, src);
+            else if (!strcmp(ptr, "prscale"))
+                prscl = GetFltField('s', del, vbuf, src);
+            else if (!strcmp(ptr, "acscale"))
+                acscl = GetFltField('a', del, vbuf, src);
+            else if (!strcmp(ptr, "base"))
+                logbase = GetFltField('b', del, vbuf, src);
+            else if (!strcmp(ptr, "tscale"))
+                tscale = GetFltField('t', del, vbuf, src);
+            else
+                GetFieldValue(NULL, src, 0);
+        }
+    }
 
-   if(ptr == NULL){
-      /* generic memory clearing routine */
-      Dispose(heap, lat);
-      HRError(8250,"ReadLattice: Premature end of lattice file before header");
-      return(NULL);
-   }
+    if (ptr == NULL) {
+        /* generic memory clearing routine */
+        Dispose(heap, lat);
+        HRError(8250, "ReadLattice: Premature end of lattice file before header");
+        return (NULL);
+    }
 
-   /* Initialise lattice based on header information */
-   lat->nn=nn;
-   lat->na=na;
-   lat->utterance=uttstr;lat->vocab=vocstr;lat->hmms=hmmstr;
-   lat->net=lmnstr;lat->lmscale=lmscl;lat->wdpenalty=lmpen;
-   lat->acscale = acscl;
-   lat->logbase = logbase;
-   lat->tscale = tscale;
-   lat->framedur=0;
-   lat->prscale=prscl;
+    /* Initialise lattice based on header information */
+    lat->nn = nn;
+    lat->na = na;
+    lat->utterance = uttstr; lat->vocab = vocstr; lat->hmms = hmmstr;
+    lat->net = lmnstr; lat->lmscale = lmscl; lat->wdpenalty = lmpen;
+    lat->acscale = acscl;
+    lat->logbase = logbase;
+    lat->tscale = tscale;
+    lat->framedur = 0;
+    lat->prscale = prscl;
 
-   if (logbase < 0.0)
-      HError (8251, "ReadLattice: Illegal log base in lattice");
+    if (logbase < 0.0)
+        HError (8251, "ReadLattice: Illegal log base in lattice");
 
-   /* Set format to indicate type and default word label position */
-   lat->format=(shortArc?HLAT_SHARC|HLAT_ALABS:HLAT_ALABS);
+    /* Set format to indicate type and default word label position */
+    lat->format = (shortArc ? HLAT_SHARC | HLAT_ALABS : HLAT_ALABS);
 
-   /* Presence of SUBLAT=id string indicates more to come */
-   lat->subList=NULL; lat->chain=NULL;
-   if (sublatstr!=NULL) lat->subLatId = GetLabId(sublatstr,TRUE);
-   else lat->subLatId = NULL;
+    /* Presence of SUBLAT=id string indicates more to come */
+    lat->subList = NULL; lat->chain = NULL;
+    if (sublatstr != NULL) 
+        lat->subLatId = GetLabId(sublatstr, TRUE);
+    else 
+        lat->subLatId = NULL;
 
-   /* Allocate and initiailise nodes/arcs */
-   lat->lnodes=(LNode *) New(heap, sizeof(LNode)*nn);
-   if (shortArc) 
-      lat->larcs=(LArc *) New(heap, sizeof(LArc_S)*na);
-   else 
-      lat->larcs=(LArc *) New(heap, sizeof(LArc)*na);
+    /* Allocate and initiailise nodes/arcs */
+    lat->lnodes = (LNode *) New(heap, sizeof(LNode) * nn);
+    if (shortArc) 
+        lat->larcs = (LArc *) New(heap, sizeof(LArc_S) * na);
+    else 
+        lat->larcs = (LArc *) New(heap, sizeof(LArc) * na);
 
-   for(i=0, ln=lat->lnodes; i<nn; i++, ln++) {
-      ln->hook=NULL;
-      ln->pred=NULL;
-      ln->foll=NULL;
-      ln->score=0.0;
-   }
-   for(i=0, la=lat->larcs; i<na; i++, la=NextLArc(lat,la)) {
-      la->lmlike=0.0;
-      la->start=la->end=NNODE;
-      la->farc=la->parc=NARC;
-   }
-   if (!shortArc)
-      for(i=0, la=lat->larcs; i<na; i++, la=NextLArc(lat,la)) {
-         la->aclike=la->prlike=la->score=0.0;
-         la->nAlign=0;
-         la->lAlign=NULL;
-      }
+    for (i = 0, ln = lat->lnodes; i < nn; i++, ln++) {
+        ln->hook = NULL;
+        ln->pred = NULL;
+        ln->foll = NULL;
+        ln->score = 0.0;
+    }
+    for (i = 0, la = lat->larcs; i < na; i++, la = NextLArc(lat,la)) {
+        la->lmlike = 0.0;
+        la->start = la->end = NNODE;
+        la->farc = la->parc = NARC;
+    }
+    if (!shortArc) {
+        for(i = 0, la = lat->larcs; i < na; i++, la = NextLArc(lat, la)) {
+            la->aclike = la->prlike = la->score = 0.0;
+            la->nAlign = 0;
+            la->lAlign = NULL;
+        }
+    }
    
-   do {
-      if ((ptr=GetNextFieldName(nbuf,&del,src)) == NULL)
-         break;
-      /* Recognised line types have only one character names */
-      if (strlen(ptr)==1) 
-         ntype=*ptr;
-      else 
-         ntype=0;
-      if (ntype == '.') {
-         ptr = NULL;
-         break;
-      }
-      switch(ntype) {
-      case '\n': break;
-      case 'I':
-         n=GetIntField('I',del,vbuf,src);
-         if (n < 0 || n >= lat->nn){
-            Dispose(heap, lat);
-            HRError(8251,"ReadLattice: Lattice does not contain node %d",n);
-            return(NULL);
-         }
-         ln=lat->lnodes+n;
-         if (ln->hook!=NULL){
-            Dispose(heap, lat);
-            HRError(8251,"ReadLattice: Duplicate info info for node %d",n);
-            return(NULL);
-         }
-         time=0.0;wordId=voc->nullWord;tag=NULL;v=-1;
-         while((ptr=GetNextFieldName(nbuf,&del,src)) != NULL) {
-            if (nbuf[0]=='\n') break;
-            else {
-               if (strlen(ptr)>=1) 
-                  ntype=*ptr;
-               else 
-                  ntype=0;
-               switch(ntype) {
-               case 't':
-                  time=GetFltField('t',del,vbuf,src);
-                  time *= tscale;
-                  lat->format |= HLAT_TIMES;
-                  break;
-               case 'W':
-                  GetFieldValue(vbuf,src,0);
-                  wordId=GetWord(voc,GetLabId(vbuf,add2Dict),add2Dict);
-                  if (wordId==NULL){
-                     Dispose(heap, lat);
-                     HRError(8251,"ReadLattice: Word %s not in dict",vbuf);
-                     return(NULL);
-                  }
-                  break;
-               case 's':
-                  GetFieldValue(vbuf,src,0);
-                  tag=CopyString(heap,vbuf);
-                  lat->format |= HLAT_TAGS;
-                  break;
-               case 'L':
-                  GetFieldValue(vbuf,src,0);
-                  wordId=voc->subLatWord;
-                  if((subLatId=AdjSubList(lat,GetLabId(vbuf,TRUE),NULL,+1))==NULL) {
-                     HRError(8251,"ReadLattice: AdjSubLat failed");
-                     return(NULL);
-                  }
-
-                  break;
-               case 'v':
-                  lat->format |= HLAT_PRON;
-                  v=GetIntField('v',del,vbuf,src);
-                  break;
-               default:
-                  GetFieldValue(0,src,0);
-                  break;
-               }
+    do {
+        if ((ptr = GetNextFieldName(nbuf, &del, src)) == NULL)
+            break;
+        /* Recognised line types have only one character names */
+        if (strlen(ptr) == 1) 
+            ntype=*ptr;
+        else 
+            ntype = 0;
+        if (ntype == '.') {
+            ptr = NULL;
+            break;
+        }
+        switch (ntype) {
+            case '\n': 
+                break;
+            case 'I':
+                n = GetIntField('I', del, vbuf, src);
+                if (n < 0 || n >= lat->nn) {
+                    Dispose(heap, lat);
+                    HRError(8251, "ReadLattice: Lattice does not contain node %d", n);
+                    return (NULL);
+                }
+                ln = lat->lnodes + n;
+                if (ln->hook != NULL) {
+                    Dispose(heap, lat);
+                    HRError(8251, "ReadLattice: Duplicate info info for node %d", n);
+                    return (NULL);
+                }
+                time = 0.0; wordId = voc->nullWord; tag = NULL; v = -1;
+                while ((ptr = GetNextFieldName(nbuf, &del, src)) != NULL) {
+                    if (nbuf[0] == '\n') 
+                        break;
+                    else {
+                        if (strlen(ptr) >= 1) 
+                            ntype = *ptr;
+                        else 
+                            ntype = 0;
+                        switch (ntype) {
+                            case 't':
+                                time = GetFltField('t', del, vbuf, src);
+                                time *= tscale;
+                                lat->format |= HLAT_TIMES;
+                                break;
+                            case 'W':
+                                GetFieldValue(vbuf, src, 0);
+                                wordId = GetWord(voc, GetLabId(vbuf, add2Dict), add2Dict);
+                                if (wordId == NULL) {
+                                    Dispose(heap, lat);
+                                    HRError(8251, "ReadLattice: Word %s not in dict", vbuf);
+                                    return (NULL);
+                                }
+                                break;
+                            case 's':
+                                GetFieldValue(vbuf, src, 0);
+                                tag = CopyString(heap, vbuf);
+                                lat->format |= HLAT_TAGS;
+                                break;
+                            case 'L':
+                                GetFieldValue(vbuf, src, 0);
+                                wordId = voc->subLatWord;
+                                if ((subLatId = AdjSubList(lat, GetLabId(vbuf, TRUE), NULL, +1)) == NULL) {
+                                    HRError(8251, "ReadLattice: AdjSubLat failed");
+                                    return (NULL);
+                                }
+                                break;
+                            case 'v':
+                                lat->format |= HLAT_PRON;
+                                v = GetIntField('v', del, vbuf, src);
+                                break;
+                            default:
+                                GetFieldValue(0, src, 0);
+                                break;
+                        }
+                    }
+                }
+                if (wordId != voc->nullWord)
+                    lat->format &= ~HLAT_ALABS;
+                ln->time = time;
+                ln->word = wordId;
+                ln->tag = tag;
+                ln->v = v;
+                if (wordId == voc->subLatWord)
+                    ln->sublat = subLatId;
+                else
+                    ln->sublat = NULL;
+                ln->hook = ln;
+                nn--;
+                break;
+            case 'J':
+                n = GetIntField('I', del, vbuf, src);
+                if (n < 0 || n >= lat->na) {
+                    Dispose(heap, lat);
+                    HRError(8251, "ReadLattice: Lattice does not contain arc %d", n);
+                    return (NULL);
+                }
+                la = NumbLArc(lat, n);
+                if (la->start != NULL) {
+                    Dispose(heap, lat);
+                    HRError(8251, "ReadLattice: Duplicate info for arc %d", n);
+                    return (NULL);
+                }
+                s = e = v = -1; wordId = NULL; aclike = lmlike = 0.0;
+                prlike = 0.0;
+                while ((ptr = GetNextFieldName(nbuf, &del, src))) {
+                    if (nbuf[0] == '\n') 
+                        break;
+                    else {
+                        if (strlen(ptr)>=1) 
+                            ntype = *ptr;
+                        else 
+                            ntype = 0;
+                    switch (ntype)
+                    {
+                        case 'S':
+                            s = GetIntField('S', del, vbuf, src);
+                            if (s < 0 || s >= lat->nn) {
+                                Dispose(heap, lat);
+                                HRError(8251, "ReadLattice: Lattice does not contain start node %d", s);
+                                return (NULL);
+                            }
+                            break;
+                        case 'E':
+                            e = GetIntField('E', del, vbuf, src);
+                            if (e < 0 || e >= lat->nn) {
+                                Dispose(heap, lat);
+                                HRError(8251, "ReadLattice: Lattice does not contain end node %d", e);
+                                return (NULL);
+                            }
+                            break;
+                        case 'W':
+                            GetFieldValue(vbuf, src, 0);
+                            wordId = GetWord(voc, GetLabId(vbuf, add2Dict), add2Dict);
+                            if (wordId == NULL || wordId == voc->subLatWord) {
+                                Dispose(heap, lat);
+                                HRError(8251, "ReadLattice: Word %s not in dict", vbuf);
+                                return (NULL);
+                            }
+                            break;
+                        case 'v':
+                            lat->format |= HLAT_PRON;
+                            v = GetIntField('v', del, vbuf, src);
+                            break;
+                        case 'a':
+                            lat->format |= HLAT_ACLIKE;
+                            aclike = GetFltField('a', del, vbuf, src);
+                            aclike = ConvLogLikeFromBase(logbase, aclike);
+                            break;
+                        case 'l':
+                            lat->format |= HLAT_LMLIKE;
+                            lmlike = GetFltField('l', del, vbuf, src);
+                            lmlike = ConvLogLikeFromBase(logbase, lmlike);
+                            break;
+                        case 'r':
+                            lat->format |= HLAT_PRLIKE;
+                            prlike = GetFltField('r', del, vbuf, src);
+                            prlike = ConvLogLikeFromBase(logbase, prlike);
+                            break;
+                        case 'd':
+                            lat->format |= HLAT_ALIGN;
+                            GetFieldValue(dbuf, src, DBUFLEN);
+                            if (!shortArc)
+                                la->nAlign = ReadAlign(lat, la, dbuf);
+                            break;
+                        default:
+                            GetFieldValue(0, src, 0);
+                            break;
+                    }
+                }
             }
-         }
-         if (wordId != voc->nullWord)
-            lat->format &= ~HLAT_ALABS;
-         ln->time=time;
-         ln->word=wordId;
-         ln->tag=tag;
-         ln->v=v;
-         if (wordId == voc->subLatWord)
-            ln->sublat = subLatId;
-         else
-            ln->sublat = NULL;
-         ln->hook=ln;
-         nn--;
-         break;
-      case 'J':
-         n=GetIntField('I',del,vbuf,src);
-         if (n<0 || n>=lat->na){
-            Dispose(heap, lat);
-            HRError(8251,"ReadLattice: Lattice does not contain arc %d",n);
-            return(NULL);
-         }
-         la=NumbLArc(lat,n);
-         if (la->start!=NULL){
-            Dispose(heap, lat);
-            HRError(8251,"ReadLattice: Duplicate info for arc %d",n);
-            return(NULL);
-         }
-         s=e=v=-1; wordId=NULL; aclike=lmlike=0.0;
-         prlike=0.0;
-         while ((ptr=GetNextFieldName(nbuf,&del,src))) {
-            if (nbuf[0]=='\n') break;
-            else {
-               if (strlen(ptr)>=1) ntype=*ptr;
-               else ntype=0;
-               switch(ntype)
-                  {
-                  case 'S':
-                     s=GetIntField('S',del,vbuf,src);
-                     if (s<0 || s>=lat->nn){
-                        Dispose(heap, lat);
-                        HRError(8251,"ReadLattice: Lattice does not contain start node %d",s);
-                        return(NULL);
-                     }
-                     break;
-                  case 'E':
-                     e=GetIntField('E',del,vbuf,src);
-                     if (e<0 || e>=lat->nn){
-                        Dispose(heap, lat);
-                        HRError(8251,"ReadLattice: Lattice does not contain end node %d",e);
-                        return(NULL);
-                     }
-                     break;
-                  case 'W':
-                     GetFieldValue(vbuf,src,0);
-                     wordId=GetWord(voc,GetLabId(vbuf,add2Dict),add2Dict);
-                     if (wordId==NULL || wordId==voc->subLatWord){
-                        Dispose(heap, lat);
-                        HRError(8251,"ReadLattice: Word %s not in dict",
-                                vbuf);
-                        return(NULL);
-                     }
-                     break;
-                  case 'v':
-                     lat->format |= HLAT_PRON;
-                     v=GetIntField('v',del,vbuf,src);
-                     break;
-                  case 'a':
-                     lat->format |= HLAT_ACLIKE;
-                     aclike=GetFltField('a',del,vbuf,src);
-                     aclike = ConvLogLikeFromBase(logbase, aclike);
-                     break;
-                  case 'l':
-                     lat->format |= HLAT_LMLIKE;
-                     lmlike=GetFltField('l',del,vbuf,src);
-                     lmlike = ConvLogLikeFromBase(logbase, lmlike);
-                     break;
-                  case 'r':
-                     lat->format |= HLAT_PRLIKE;
-                     prlike=GetFltField('r',del,vbuf,src);
-                     prlike = ConvLogLikeFromBase(logbase, prlike);
-                     break;
-                  case 'd':
-                     lat->format |= HLAT_ALIGN;
-                     GetFieldValue(dbuf,src,DBUFLEN);
-                     if (!shortArc)
-                        la->nAlign=ReadAlign(lat,la,dbuf);
-                     break;
-                  default:
-                     GetFieldValue(0,src,0);
-                     break;
-                  }
+            if (s < 0 || e < 0 || (wordId == NULL && (lat->format & HLAT_ALABS))) {
+                Dispose(heap, lat);
+                HRError(8250, "ReadLattice: Need to know S,E [and W] for arc %d", n);
+                return (NULL);
             }
-         }
-         if (s<0 || e<0 ||(wordId==NULL && (lat->format&HLAT_ALABS))){
-            Dispose(heap, lat);
-            HRError(8250,"ReadLattice: Need to know S,E [and W] for arc %d",n);
-            return(NULL);
-         }
-         la->start=lat->lnodes+s;
-         la->end=lat->lnodes+e;
-         la->lmlike=lmlike;
+            la->start = lat->lnodes + s;
+            la->end = lat->lnodes + e;
+            la->lmlike = lmlike;
            
-         if ((lat->format&HLAT_ALABS) && la->end->word == voc->nullWord){
-            la->end->word=wordId;
-	    la->end->v = v;
-	 }
-         if (wordId != NULL && la->end->word != wordId){
-            Dispose(heap, lat);
-            HRError(8251,"ReadLattice: Lattice arc (%d) W field (%s) different from node (%s)",  n,wordId->wordName->name,la->end->word->wordName->name);
-            return(NULL);
-         }
+            if ((lat->format & HLAT_ALABS) && la->end->word == voc->nullWord) {
+                la->end->word = wordId;
+	        la->end->v = v;
+	    }
+            if (wordId != NULL && la->end->word != wordId) {
+                Dispose(heap, lat);
+                HRError(8251, "ReadLattice: Lattice arc (%d) W field (%s) different from node (%s)",  n,wordId->wordName->name, la->end->word->wordName->name);
+                return(NULL);
+            }
 
-         la->farc=la->start->foll;
-         la->parc=la->end->pred;
-         la->start->foll=la;
-         la->end->pred=la;
-         if (!shortArc) {
-            la->aclike=aclike;
-            la->prlike=prlike;
-         }
-         na--;
-         break;
-      default:
-         GetFieldValue(0,src,0);
-         while ((ptr=GetNextFieldName(nbuf,&del,src))) {
-            if (nbuf[0]=='\n') break;
-            else GetFieldValue(0,src,0);
-         }
-         break;
-      }
-   }
-   while(ptr != NULL);
-   if (na!=0 || (nn!=0 && nn!=lat->nn)){
-      Dispose(heap, lat);
-      HRError(8250,"ReadLattice: %d Arcs unseen and %d Nodes unseen",na,nn);
-      return(NULL);
-   }
-
-   if(CheckStEndNodes(lat)<SUCCESS){
-      Dispose(heap, lat);
-      HRError(8250,"ReadLattice: Start/End nodes incorrect",na,nn);
-      return(NULL);
-   }
-
-   for(i=0,ln=lat->lnodes;i<lat->nn;i++,ln++)
-      ln->hook=NULL;
-   if (shortArc) lat->format&=~(HLAT_ACLIKE|HLAT_PRLIKE|HLAT_ALIGN);
-   return(lat);
+            la->farc = la->start->foll;
+            la->parc = la->end->pred;
+            la->start->foll = la;
+            la->end->pred = la;
+            if (!shortArc) {
+                la->aclike = aclike;
+                la->prlike = prlike;
+            }
+            na--;
+            break;
+        default:
+            GetFieldValue(0,src,0);
+            while ((ptr=GetNextFieldName(nbuf,&del,src))) {
+                if (nbuf[0]=='\n') break;
+                else GetFieldValue(0,src,0);
+            }
+            break;
+        }
+    } while (ptr != NULL);
+    if (na != 0 || (nn != 0 && nn != lat->nn)) { 
+        Dispose(heap, lat);
+        HRError(8250, "ReadLattice: %d Arcs unseen and %d Nodes unseen", na, nn);
+        return (NULL);
+    }
+    if (CheckStEndNodes(lat) < SUCCESS) {
+        Dispose(heap, lat);
+        HRError(8250, "ReadLattice: Start/End nodes incorrect", na, nn);
+        return (NULL);
+    }
+    for(i = 0, ln = lat->lnodes; i < lat->nn; i++, ln++)
+        ln->hook = NULL;
+    if (shortArc) 
+        lat->format &= ~(HLAT_ACLIKE | HLAT_PRLIKE | HLAT_ALIGN);
+    return (lat);
 }
 
 
@@ -1493,7 +1566,7 @@ Lattice *ExpandMultiLevelLattice(MemHeap *heap, Lattice *lat, Vocab *voc)
 
    nNodes = nArcs = 0;
    ExpandedLatticeSize(lat,&nNodes,&nArcs);        
-   newlat = NewLattice(&gstack,nNodes,nArcs);
+   newlat = NewLattice(&netstak,nNodes,nArcs);
    newlat->voc = lat->voc;
    newArcs = newNodes = 0;
    CopyLattice(lat,newlat,&newNodes,&newArcs,FALSE);  /* copy the top level  */
@@ -1502,7 +1575,7 @@ Lattice *ExpandMultiLevelLattice(MemHeap *heap, Lattice *lat, Vocab *voc)
    final = NewILattice(heap,nNodes,nArcs,lat);              
    newArcs = newNodes = 0;
    CopyLattice(newlat,final,&newNodes,&newArcs,TRUE); /* remove NULL id nodes */
-   Dispose(&gstack,newlat);
+   Dispose(&netstak,newlat);
 
    final->subList=NULL;  /* Actually unnecessary */
 
@@ -1613,7 +1686,7 @@ NodeId FindLatEnd(Lattice *lat)
 
 static void PrintNode(NetNode *node,HMMSet *hset)
 {
-   printf("Node[%05d] ",(((unsigned) node)/sizeof(NetNode))%100000);
+   printf("Node[%05lu] ",(((unsigned long int) node)/sizeof(NetNode))%100000);
    if (node->type & n_hmm)
       printf("{%s}\n",HMMPhysName(hset,node->info.hmm));
    else if (node->type == n_word && node->info.pron==NULL) {
@@ -1641,8 +1714,8 @@ static void PrintLinks(NetLink *links,int nlinks)
    int i;
 
    for (i=0; i<nlinks; i++) {
-      printf("    %-2d: -> [%05d] == %7.3f\n",i,
-             (((unsigned) links[i].node)/sizeof(NetNode)%100000),
+      printf("    %-2d: -> [%05lu] == %7.3f\n",i,
+             (((unsigned long int) links[i].node)/sizeof(NetNode)%100000),
              links[i].like);
       fflush(stdout);
    }
@@ -1927,7 +2000,7 @@ static int DefineContexts(HMMSetCxtInfo *hci)
                hci->sRight=TRUE;
             }
          }
-   temp=(int *) New(&gstack,sizeof(int)*hci->nci);temp--;
+   temp=(int *) New(&netstak,sizeof(int)*hci->nci);temp--;
    for (c=1;c<=hci->nci;c++) temp[c]=0;
 
    /* Otherwise scan for all contexts that appear */
@@ -1945,7 +2018,7 @@ static int DefineContexts(HMMSetCxtInfo *hci)
 
    for (c=1;c<=hci->nci;c++)
       if (temp[c]!=0) hci->cis[c]=NULL;
-   Dispose(&gstack,temp+1);
+   Dispose(&netstak,temp+1);
    
    for (c=1,h=1;c<=hci->nci;c++,h++) {
       for (;h<=hci->nci;h++) if (hci->cis[h]!=NULL) break;
@@ -1999,7 +2072,7 @@ static NetNode *FindWordNode(MemHeap *heap,Pron pron,
    NetNode *node;
 
    hash=0;
-   un.ptrs[0]=pron;un.ptrs[1]=pInst;un.ptrs[2]=(Ptr)type;
+   un.ptrs[0]=pron;un.ptrs[1]=pInst;un.ptrs[2]=(Ptr)(unsigned long int)type;
    for (i=0;i<12;i++)
       hash=((hash<<8)+un.chars[i])%WNHASHSIZE;
 
@@ -2027,9 +2100,8 @@ static NetNode *FindWordNode(MemHeap *heap,Pron pron,
 }
 
 
-
 /* Create NetNode (and optionally NetLinks as well) */
-static NetNode *NewNode(MemHeap *heap,HLink hmm,int nlinks)
+static NetNode *NewNode(MemHeap *heap, HLink hmm, LabId lhmm, int nlinks)	/* sxz20: added LabId lhmm */
 {
    NetNode *node;
 
@@ -2045,6 +2117,10 @@ static NetNode *NewNode(MemHeap *heap,HLink hmm,int nlinks)
       node->links=NULL;
    else
       node->links=(NetLink*) New(heap,sizeof(NetLink)*node->nlinks);
+   
+   /* sxz20 : attach the logical hmm name to the node */
+   node->labid = lhmm;
+
    return(node);
 }
 
@@ -2095,6 +2171,58 @@ static HLink FindModel(HMMSetCxtInfo *hci,int lc,LabId name,int rc)
       return(NULL);
    else 
       return((HLink) ml->structure);
+}
+
+/* sxz20:  find label matching context */
+static LabId FindLabel(HMMSetCxtInfo *hci,int lc,LabId name,int rc)
+{
+   LabId labid;
+   MLink ml;
+   char buf[MAXSTRLEN];
+
+   /* Word internal hack */
+   /* Cross word will need proper specification of context */
+   /* as well as knowledge of which models are cd/ci.      */
+
+   /* First try constructing the cd name */
+   if (!allowCxtExp || (lc<=0 && rc<=0) || IsHCIContextInd(hci,name)) {
+      strcpy(buf,name->name);
+      labid=name;
+   }
+   else if ((lc==0 || forceRightBiphones || !hci->sLeft) &&
+            rc>0 && !forceLeftBiphones) {
+      sprintf(buf,"%s+%s",name->name,ContextName(hci,rc)->name);
+      labid=GetLabId(buf,FALSE);
+   }
+   else if ((rc==0 || forceLeftBiphones || !hci->sRight) &&
+            lc>0 && !forceRightBiphones) {
+      sprintf(buf,"%s-%s",ContextName(hci,lc)->name,name->name);
+      labid=GetLabId(buf,FALSE);
+   }
+   else if (!forceLeftBiphones && !forceRightBiphones) {
+      sprintf(buf,"%s-%s+%s",ContextName(hci,lc)->name,
+              name->name,ContextName(hci,rc)->name);
+      labid=GetLabId(buf,FALSE);
+   }
+   else{
+      strcpy(buf, name->name);
+      labid=name;
+   }
+   ml=FindMacroName(hci->hset,'l',labid);
+
+   if(ml!=NULL){
+      return labid;             /*   sxz20  : return logical */
+   } else if (ml==NULL && (((lc==0 && rc==0) || !forceCxtExp) ||
+                    (lc==0 || !forceLeftBiphones) ||
+                    (rc==0 || !forceRightBiphones))) {
+      ml=FindMacroName(hci->hset,'l',name);     /* sxz20 : name may physical or CI */
+   }
+
+   if (ml==NULL) {
+      return(NULL);           /*sxz20: error will be shown in GetHCILabel() */
+   } else {
+      return name;                /* sxz20:  CI? how about physical model? */
+   }
 }
 
 /* Determine if phone in position pos is independent of right context */
@@ -2174,6 +2302,19 @@ HLink GetHCIModel(HMMSetCxtInfo *hci,int lc,LabId name,int rc)
              (lc>0?ContextName(hci,lc)->name:"???"),name->name,
              (rc>0?ContextName(hci,rc)->name:"???"));
    return(hmm);
+}
+
+/* sxz20 : find label matching context */
+LabId GetHCILabel(HMMSetCxtInfo *hci,int lc,LabId name,int rc)
+{
+   LabId labid;
+
+   labid=FindLabel(hci,lc,name,rc);
+   if (labid==NULL)
+      HError(8231,"GetHCILabel: Cannot find hmm [%s-]%s[+%s]",
+             (lc>0?ContextName(hci,lc)->name:"???"),name->name,
+             (rc>0?ContextName(hci,rc)->name:"???"));
+   return(labid);
 }
 
 /* AddInitialFinal: Add links to/from initial/final net nodes */
@@ -2362,7 +2503,7 @@ static int InitPronHolders(Network *net,Lattice *lat,HMMSetCxtInfo *hci,
          HError(8220,"InitPronHolders: Word %s not defined in dictionary",
                 thisWord->wordName->name);
 
-      pii=(PInstInfo *) New(&gstack,(thisWord->nprons+1)*(nAdd+1)*sizeof(PInstInfo));
+      pii=(PInstInfo *) New(&netstak,(thisWord->nprons+1)*(nAdd+1)*sizeof(PInstInfo));
       pii--;
       /* Scan current pronunciations and make modified ones */
       for (j=1,thisPron=thisWord->pron,npii=0; thisPron!=NULL;
@@ -2449,7 +2590,7 @@ static int InitPronHolders(Network *net,Lattice *lat,HMMSetCxtInfo *hci,
             wordNode->nlinks = 0;
          }
       }
-      Dispose(&gstack,++pii);
+      Dispose(&netstak,++pii);
    }
    if (t!=0) 
       HError(-8221,"InitPronHolders: Total of %d duplicate pronunciations removed",t);
@@ -2688,15 +2829,26 @@ void CreateWIModels(PronHolder *pInst,int p,int q,
    NetNode *node;
    HLink hmm;
    int j;
+   /* sxz20 */
+   LabId lhmm = NULL;
    
    for(j=q-1;j>p;j--) {
       hmm=GetHCIModel(hci,FindLContext(hci,pInst,j,0),
                       pInst->phones[j],
                       FindRContext(hci,pInst,j,0));
+
+      /* sxz20 : find logical HMM LabId*/
+      if(markLogHmm)
+          lhmm = GetHCILabel(hci, FindLContext(hci,pInst,j,0), 
+                             pInst->phones[j],
+                             FindRContext(hci,pInst,j,0));
+
       if (hmm->transP[1][hmm->numStates]<LSMALL) pInst->tee=FALSE;
       
       nwi++;
-      node=NewNode(net->heap,hmm,(pInst->chain==NULL?0:1));
+      /* sxz20 */
+      node = NewNode(net->heap, hmm, lhmm, (pInst->chain == NULL? 0: 1));
+      /*node=NewNode(net->heap,hmm,(pInst->chain==NULL?0:1));*/
       if (pInst->chain!=NULL) {
          nil++;
          node->links[0].node=pInst->chain;
@@ -2712,16 +2864,24 @@ void CreateIEModels(Word thisWord,PronHolder *pInst,int p,int q,
 {
    NetNode *node,*wordNode;
    HLink hmm;
+   /* sxz20 */
+   LabId lhmm = NULL;
 
    if (q==p) {
       /* One phone word */
       hmm=GetHCIModel(hci,0,pInst->phones[0],0);
+   
+      /* sxz20 */
+      if(markLogHmm) lhmm=GetHCILabel(hci,0,pInst->phones[0],0);
+
       if (hmm->transP[1][hmm->numStates]<LSMALL) pInst->tee=FALSE;
 
       wordNode = FindWordNode(NULL,pInst->pron,pInst,n_word);
       
       nin++; nil++;
-      node=NewNode(net->heap,hmm,1);
+      /* sxz20 */
+      node=NewNode(net->heap, hmm, lhmm, 1);
+      /*node=NewNode(net->heap,hmm,1);*/
       node->links[0].node=wordNode;
       node->links[0].like=pInst->fct;
       
@@ -2730,14 +2890,18 @@ void CreateIEModels(Word thisWord,PronHolder *pInst,int p,int q,
    }
    else {
       /* End */
-      hmm=GetHCIModel(hci,FindLContext(hci,pInst,q,0),
-                      pInst->phones[q],0);
+      hmm=GetHCIModel(hci,FindLContext(hci,pInst,q,0), pInst->phones[q],0);
+      /* sxz20 */
+      if(markLogHmm) lhmm = GetHCILabel(hci, FindLContext(hci, pInst, q, 0), pInst->phones[q], 0);
+
       if (hmm->transP[1][hmm->numStates]<LSMALL) pInst->tee=FALSE;
 
       wordNode = FindWordNode(NULL,pInst->pron,pInst,n_word);
       
       nfi++; nil++;
-      node=NewNode(net->heap,hmm,1);
+      /* sxz20 */
+      node = NewNode(net->heap, hmm, lhmm, 1);
+      /*node=NewNode(net->heap,hmm,1);*/
       node->links[0].node=wordNode;
       node->links[0].like=pInst->fct;
       
@@ -2745,12 +2909,16 @@ void CreateIEModels(Word thisWord,PronHolder *pInst,int p,int q,
       pInst->nend=1;
       
       /* Start */
-      hmm=GetHCIModel(hci,0,pInst->phones[p],
-                      FindRContext(hci,pInst,p,0));
+      hmm=GetHCIModel(hci,0,pInst->phones[p], FindRContext(hci,pInst,p,0));
+      /* sxz20 */
+      if(markLogHmm) lhmm = GetHCILabel(hci, 0, pInst->phones[p], FindRContext(hci, pInst, p, 0));
+
       if (hmm->transP[1][hmm->numStates]<LSMALL) pInst->tee=FALSE;
       
       nin++; nil++;
-      node=NewNode(net->heap,hmm,1);
+      /* sxz20 */
+      node = NewNode(net->heap, hmm, lhmm, 1);
+      /*node=NewNode(net->heap,hmm,1);*/
       node->links[0].node=(pInst->chain?pInst->chain:pInst->ends);
       node->links[0].like=pInst->fct;
       pInst->starts=node;
@@ -2779,6 +2947,8 @@ static void CreateX1Model(PronHolder *pInst,int p, int q,
    Ptr tptr;
    Boolean tee,initTee,anyTee;
    int j,k,n;
+   /* sxz20 */
+   LabId lhmm = NULL;
 
    /* Single phone word means that we need to */
    /*  build a complete cross-bar of contexts */
@@ -2788,18 +2958,30 @@ static void CreateX1Model(PronHolder *pInst,int p, int q,
    /* Special case because one phone words so expensive */
    if (IsHCIContextInd(hci,pInst->phones[p])) {
       hmm=GetHCIModel(hci,0,pInst->phones[p],0);
+      /* sxz20 */
+      if (markLogHmm)
+          lhmm = GetHCILabel(hci, 0, pInst->phones[p], 0); 
+
       if (hmm->transP[1][hmm->numStates]<LSMALL) pInst->tee=FALSE;
       nin++; nil++;
-      node=NewNode(net->heap,hmm,0);
+      /* sxz20 */
+      node = NewNode(net->heap, hmm, lhmm, 0);
+      /*node=NewNode(net->heap,hmm,0);*/
       
       pInst->starts=node;
       
       /* As well as copies of final context free ones */
       for (n=q+1;n<pInst->nphones;n++) {
          hmm=GetHCIModel(hci,-1,pInst->phones[n],-1);
+         /* sxz20 */
+         if (markLogHmm) 
+             lhmm = GetHCILabel(hci, -1, pInst->phones[n], -1);
+ 
          if (hmm->transP[1][hmm->numStates]<LSMALL) pInst->tee=FALSE;
          ncf++;
-         dest=NewNode(net->heap,hmm,0);
+         /* sxz20 */
+         dest = NewNode(net->heap, hmm, lhmm, 0); 
+         /*dest=NewNode(net->heap,hmm,0);*/
          dest->chain=pInst->chain;pInst->chain=dest;
          
          nil++;
@@ -2841,8 +3023,14 @@ static void CreateX1Model(PronHolder *pInst,int p, int q,
          pInst->chain=dest;
          ncf++;
          hmm=GetHCIModel(hci,-1,pInst->phones[n],-1);
+         /* sxz20 */
+         if (markLogHmm)
+             lhmm = GetHCILabel(hci, -1, pInst->phones[n], -1);
+
          if (hmm->transP[1][hmm->numStates]<LSMALL) pInst->tee=FALSE;
-         node=NewNode(net->heap,hmm,1);
+         /* sxz20 */
+         node = NewNode(net->heap, hmm, lhmm, 1);
+         /*node=NewNode(net->heap,hmm,1);*/
          nil++;
          node->links[0].node=dest;
          node->links[0].like=pInst->fct;
@@ -2876,8 +3064,14 @@ static void CreateX1Model(PronHolder *pInst,int p, int q,
       else {
          ncf++;
          hmm=GetHCIModel(hci,-1,pInst->phones[0],-1);
+         /* sxz20 */
+         if(markLogHmm) 
+             lhmm = GetHCILabel(hci, -1, pInst->phones[0], -1);
+
          if (hmm->transP[1][hmm->numStates]<LSMALL) pInst->tee=FALSE;
-         node=NewNode(net->heap,hmm,0);
+         /* sxz20 */
+         node = NewNode(net->heap, hmm, lhmm, 0);
+         /*node=NewNode(net->heap,hmm,0);*/
          
          /* Chain these after NULL node */
          node->chain=pInst->starts;
@@ -2888,8 +3082,14 @@ static void CreateX1Model(PronHolder *pInst,int p, int q,
          for (n=1;n<p;n++) {
             ncf++;
             hmm=GetHCIModel(hci,-1,pInst->phones[n],-1);
+            /* sxz20 */
+            if (markLogHmm)
+                lhmm = GetHCILabel(hci, -1, pInst->phones[n], -1);   
+
             if (hmm->transP[1][hmm->numStates]<LSMALL) pInst->tee=FALSE;
-            dest=NewNode(net->heap,hmm,0);
+            /* sxz20 */
+            dest = NewNode(net->heap, hmm, lhmm, 0); 
+            /*dest=NewNode(net->heap,hmm,0);*/
             node->nlinks=1;
             nil++;
             node->links=(NetLink*) New(net->heap,
@@ -2917,6 +3117,10 @@ static void CreateX1Model(PronHolder *pInst,int p, int q,
          if (pInst->rc[k]==NULL) continue;
          
          hmm=GetHCIModel(hci,0,pInst->phones[q],k);
+         /* sxz20 */
+         if (markLogHmm)
+             lhmm=GetHCILabel(hci,0,pInst->phones[q],k);
+
          for(node=pInst->ends;node!=NULL;node=node->chain)
             if (node->info.hmm==hmm) break;
          
@@ -2925,7 +3129,9 @@ static void CreateX1Model(PronHolder *pInst,int p, int q,
             else tee=TRUE; /* Still could be save by final CF models */
             /* Create new model */
             nin++;
-            node=NewNode(net->heap,hmm,0);
+            /* sxz20 */
+            node = NewNode(net->heap, hmm, lhmm, 0);
+            /*node=NewNode(net->heap,hmm,0);*/
             node->chain=pInst->ends;pInst->ends=node;
             pInst->nend++;
             linkNode->nlinks++;
@@ -2933,9 +3139,15 @@ static void CreateX1Model(PronHolder *pInst,int p, int q,
             /* As well as copies of final context free ones */
             for (n=q+1;n<pInst->nphones;n++) {
                hmm=GetHCIModel(hci,-1,pInst->phones[n],-1);
+               /* sxz20 */
+               if (markLogHmm)
+                   lhmm=GetHCILabel(hci,-1,pInst->phones[n],-1);
+
                if (hmm->transP[1][hmm->numStates]<LSMALL) tee=FALSE; /* Saved */
                ncf++;
-               dest=NewNode(net->heap,hmm,0);
+               /* sxz20 */
+               dest=NewNode(net->heap,hmm,lhmm,0);
+               /*dest=NewNode(net->heap,hmm,0);*/
                dest->chain=pInst->chain;pInst->chain=dest;
                
                nil++;
@@ -3023,7 +3235,11 @@ static void CreateX1Model(PronHolder *pInst,int p, int q,
          else {
             ncf++;
             hmm=GetHCIModel(hci,-1,pInst->phones[0],-1);
-            node=NewNode(net->heap,hmm,0);
+            /* sxz20 */
+            if (markLogHmm)
+                lhmm=GetHCILabel(hci,-1,pInst->phones[0],-1);
+            node=NewNode(net->heap,hmm,lhmm,0);
+            /*node=NewNode(net->heap,hmm,0);*/
             pInst->lc[j]=node;
             
             /* Chain these after NULL node */
@@ -3035,8 +3251,14 @@ static void CreateX1Model(PronHolder *pInst,int p, int q,
             for (n=1;n<p;n++) {
                ncf++;
                hmm=GetHCIModel(hci,-1,pInst->phones[n],-1);
+               /* sxz20 */
+               if (markLogHmm)
+                   lhmm=GetHCILabel(hci,-1,pInst->phones[n],-1);
+
                if (hmm->transP[1][hmm->numStates]<LSMALL) initTee=FALSE; /* Okay now */
-               dest=NewNode(net->heap,hmm,0);
+               /* sxz20 */
+               dest = NewNode(net->heap, hmm, lhmm, 0);
+               /*dest=NewNode(net->heap,hmm,0);*/
                node->nlinks=1;
                nil++;
                node->links=(NetLink*) New(net->heap,
@@ -3060,6 +3282,10 @@ static void CreateX1Model(PronHolder *pInst,int p, int q,
             if (pInst->rc[k]==NULL) continue;
             
             hmm=GetHCIModel(hci,j,pInst->phones[q],k);
+            /* sxz20 */
+            if (markLogHmm)
+                lhmm=GetHCILabel(hci,j,pInst->phones[q],k);
+
             for(node=pInst->ends;node!=NULL;node=node->chain)
                if (node->info.hmm==hmm) break;
             
@@ -3069,7 +3295,9 @@ static void CreateX1Model(PronHolder *pInst,int p, int q,
 
                /* Create new model */
                nin++;
-               node=NewNode(net->heap,hmm,0);
+               /* sxz20 */
+               node=NewNode(net->heap,hmm,lhmm,0);
+               /*node=NewNode(net->heap,hmm,0);*/
                node->chain=pInst->ends;pInst->ends=node;
                pInst->nend++;
                linkNode->nlinks++;
@@ -3077,9 +3305,15 @@ static void CreateX1Model(PronHolder *pInst,int p, int q,
                /* As well as copies of final context free ones */
                for (n=q+1;n<pInst->nphones;n++) {
                   hmm=GetHCIModel(hci,-1,pInst->phones[n],-1);
+                  /* sxz20 */
+                  if (markLogHmm)
+                      lhmm=GetHCILabel(hci,-1,pInst->phones[n],-1);                 
+
                   if (hmm->transP[1][hmm->numStates]<LSMALL) tee=FALSE; /* Saved */
                   ncf++;
-                  dest=NewNode(net->heap,hmm,0);
+                  /* sxz20 */
+                  dest=NewNode(net->heap,hmm,lhmm,0);
+                  /*dest=NewNode(net->heap,hmm,0);*/
                   dest->chain=pInst->chain;pInst->chain=dest;
                   
                   nil++;
@@ -3141,39 +3375,53 @@ static void CreateX1Model(PronHolder *pInst,int p, int q,
 static void CreateXEModels(PronHolder *pInst,int p, int q,
                            Network *net,HMMSetCxtInfo *hci,MemHeap *heap)
 {
-   NetNode *node,*dest,*chainNode,*searchNode;
+   NetNode *node,*dest,*chainNode;
    NetLink *links;
    HLink hmm;
    Ptr tptr;
    Boolean tee,anyTee;
    int j,n;
+   /* sxz20 */
+   LabId lhmm = NULL;
 
    /* Cross word context and more than one phone */
    
    /* Last cd phone */
-   chainNode=NULL;searchNode=NULL;
+   chainNode=NULL;
    tptr=New(heap,1);
    anyTee=FALSE; /* Haven't seen any final tee chains */
    for(j=0;j<hci->xc;j++) {
       if (pInst->rc[j]==NULL) continue;
       hmm=GetHCIModel(hci,FindLContext(hci,pInst,q,-1),
                       pInst->phones[q],j);
+      /* sxz20 */
+      if (markLogHmm)
+          lhmm=GetHCILabel(hci,FindLContext(hci,pInst,q,-1),pInst->phones[q],j);
+
       for(node=pInst->ends;node!=NULL;node=node->chain)
          if (node->info.hmm==hmm) break;
       if (node==NULL) {
          if (hmm->transP[1][hmm->numStates]<LSMALL) tee=FALSE; /* Okay now */
          else tee=TRUE; /* Still could be save by final CF models */
          nfi++;
-         node=NewNode(net->heap,hmm,0);
+         /* sxz20 */
+         node=NewNode(net->heap,hmm,lhmm,0);
+         /*node=NewNode(net->heap,hmm,0);*/
          node->chain=pInst->ends;
          pInst->ends=node;
          pInst->nend++;
          
          for (n=q+1;n<pInst->nphones;n++) {
             hmm=GetHCIModel(hci,-1,pInst->phones[n],-1);
+            /* sxz20 */
+            if (markLogHmm)
+                lhmm=GetHCILabel(hci,-1,pInst->phones[n],-1);
+
             if (hmm->transP[1][hmm->numStates]<LSMALL) tee=FALSE; /* Saved */
             ncf++;
-            dest=NewNode(net->heap,hmm,0);
+            /* sxz20 */
+            dest=NewNode(net->heap,hmm,lhmm,0);
+            /*dest=NewNode(net->heap,hmm,0);*/
             dest->chain=chainNode;chainNode=dest;
             
             nil++;
@@ -3233,14 +3481,20 @@ static void CreateXEModels(PronHolder *pInst,int p, int q,
       if (pInst->lc[j]==NULL) continue;
       hmm=GetHCIModel(hci,j,pInst->phones[p],
                       FindRContext(hci,pInst,p,-1));
+      /* sxz20 */
+      if (markLogHmm)
+          lhmm=GetHCILabel(hci,j,pInst->phones[p],FindRContext(hci,pInst,p,-1));
+
       for(node=pInst->starts;node!=NULL;node=node->chain)
          if (node->info.hmm==hmm) break;
       if (node==NULL) {
          if (hmm->transP[1][hmm->numStates]<LSMALL) tee=FALSE; /* Okay now */
          else tee=TRUE; /* Still could be save by initial CF models */
          nin++;
-         node=NewNode(net->heap,hmm,
-                      (pInst->chain==NULL?pInst->nend:1));
+         /* sxz20 */
+         node = NewNode(net->heap, hmm, lhmm, (pInst->chain == NULL? pInst->nend: 1));
+         /*node=NewNode(net->heap,hmm,
+                      (pInst->chain==NULL?pInst->nend:1));*/
          nil+=node->nlinks;
          
          node->chain=pInst->starts;pInst->starts=node;
@@ -3263,8 +3517,14 @@ static void CreateXEModels(PronHolder *pInst,int p, int q,
             dest=node;
             ncf++;
             hmm=GetHCIModel(hci,-1,pInst->phones[n],-1);
+            /* sxz20 */
+            if (markLogHmm)
+                lhmm=GetHCILabel(hci,-1,pInst->phones[n],-1);
+
             if (hmm->transP[1][hmm->numStates]<LSMALL) tee=FALSE; /* Saved */
-            node=NewNode(net->heap,hmm,1);
+            /* sxz20 */
+            node=NewNode(net->heap,hmm,lhmm,1);
+            /*node=NewNode(net->heap,hmm,1);*/
             if (n!=0) {
                node->chain=chainNode;
                chainNode=node;

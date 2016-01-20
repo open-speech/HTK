@@ -1,0 +1,163 @@
+#!/bin/bash
+
+#set verbose
+
+############################################################
+# Step 15: Bottleneck DNN building and feature generation
+############################################################
+
+source environment
+
+# dependencies
+if [ ! -d $RMWORK/R9/ml/hmm4 ]
+then
+    echo ERROR: step 15 depends on completion of step 9
+    exit 1
+fi
+
+if [[ ! -d ${RMWORK}/R15/dnntrain ]]; then
+    mkdir -p ${RMWORK}/R15/dnntrain 
+fi
+
+# 15.1 Forced alignment by R11/mpe to produce the training labels
+
+# link/copy the resources
+cd ${RMWORK}/R15/dnntrain
+
+if [[ ! -d hmm0 ]]; then
+    mkdir hmm0
+fi
+
+# link R11/mpe/hmm2 for alignment & bottleneck DNN output target states
+if [[ ! -f hmm0/MODELS ]]; then
+    ln -s ${RMWORK}/R9/ml/hmm4/MODELS hmm0/MODELS
+fi
+
+# copy the (logical triphone state) alignment HTE for DNN training 
+cp $RMHTK/lib/htefiles/HTE.align.trn .
+
+# perform forced alignment
+htestrm HTE.align.trn ind trn109 hmm0
+ln -s $PWD/hmm0/align_ind_trn109.1/ind_trn109.mlf train.mlf
+egrep -w 'lab|rec' train.mlf | awk -f $RMHTK/lib/awks/mlflabs2scp.awk - a=1 $RMLIB/flists/ind_trn109.scp | sort > ind_trn109.scp
+
+# 15.2 Generate intial DNN-HMM and prepare for DNN training
+cp $RMHTK/lib/configs/config.dnncvn .
+cp $RMHTK/lib/configs/config.dnnbasic .
+cp $RMHTK/lib/info/ident_MFCC_E_D_A_Z_cvn .
+
+# do CMN & CVN
+if [[ ! -d cvn/mfc ]]; then
+    mkdir -p cvn/mfc
+fi
+HCompV -p '*%%%' -k '*.%%%' -A -D -V -T 1 -C config.dnncvn -q v -c cvn -S $RMLIB/flists/ind_trn109.scp > cvn/LOG
+
+# split the train and validation sets
+python $RMHTK/python_scripts/SubsetSCP.py --percent 0.1 --speakermask '%%%%%%' --speaker ind_trn109.scp cv.scp
+comm -3 ind_trn109.scp cv.scp > train.scp
+
+# generate the initial 3-layer DNN-HMMs
+cp $RMHTK/lib/htefiles/HTE.dnn.bn .
+source HTE.dnn.bn
+cp $RMHTK/lib/replacesil.hed .
+cp $RMHTK/python_scripts/GenInitDNN.py .
+cp $RMLIB/mlists/treeg.list .
+# convert to single silence state model
+if [[ ! -f proto/work ]]; then
+    mkdir -p proto/work 
+fi
+HHEd -A -D -V -T 1 -H hmm0/MODELS -M proto/work replacesil.hed treeg.list > proto/work/LOG
+
+# 15.3 Do layerwise discriminative pretraining and finetuning
+if [[ ! -z $HTKLIB ]]; then
+    HTKLIB='-LIB '$HTKLIB
+else
+    HTKLIB=''
+fi
+pretrain $HTKLIB -HNTRAINSGD $HTKBIN/HNTrainSGD -HHED $HTKBIN/HHEd HTE.dnn.bn
+finetune $HTKLIB -HNTRAINSGD $HTKBIN/HNTrainSGD HTE.dnn.bn
+
+# 15.4 Write out the bottleneck features by HNForward
+if [[ ! -d ${RMWORK}/R15/dnnfwd ]]; then
+    mkdir -p ${RMWORK}/R15/dnnfwd
+fi
+
+# link/copy the resources
+cd ${RMWORK}/R15/dnnfwd
+cp $RMHTK/lib/configs/config.dnnbasic .
+cp $RMHTK/lib/info/ident_MFCC_E_D_A_Z_cvn .
+cp $RMHTK/lib/htefiles/HTE.dnn.bn .
+ln -s ${RMWORK}/R15/dnntrain/cvn .
+cp $RMLIB/mlists/treeg.list treeg.list
+ln -s ${RMWORK}/R15/dnntrain/dnn*.finetune .
+cp ${RMHTK}/lib/configs/config.mfc.uncompress .
+cp ${RMHTK}/lib/configs/config.mlp.uncompress .
+cp ${RMHTK}/lib/configs/config.tandem.compress .
+cp ${RMHTK}/python_scripts/CatHTKFeatures.py .
+
+# Add other test sets (ind_oct89 ind_feb91 ind_sep92) if needed
+for taskid in ind_trn109 ind_feb89 
+do
+    cp $RMLIB/flists/${taskid}.scp .
+    # forward the bottleneck features
+    mkdir -p data/mlp/${taskid}
+    python $RMHTK/python_scripts/ConvertExtSCP.py -x mlp -o $PWD/data/mlp/${taskid} -n ${taskid}.scp ${taskid}.mlp.scp
+    forward $HTKLIB -HNFORWARD $HTKBIN/HNForward -HHED $HTKBIN/HHEd HTE.dnn.bn $taskid 
+    # form the tandem features
+    mkdir -p data/tandem/${taskid}
+    python $RMHTK/python_scripts/ConvertExtSCP.py -x pma -o $PWD/data/tandem/${taskid} -n ${taskid}.scp ${taskid}.tandem.scp
+    addmlp $HTKLIB -HCOPY $HTKBIN/HCopy ${taskid}.scp data/mlp/${taskid} data/tandem/${taskid}
+    rm -r data/mlp/${taskid}
+done
+
+# 15.5 generate initial 78d tandem GMM-HMMs, hmm0/MODELS
+if [[ ! -d ${RMWORK}/R15/dnn.semit ]]; then
+    mkdir -p ${RMWORK}/R15/dnn.semit
+fi
+cd $RMWORK/R15/dnn.semit
+
+if [[ ! -d ${RMWORK}/R9/ml/hmm4 ]]; then
+    echo "ERROR: ${RMWORK}/R9/ml/hmm4 required as tandem system prototype"
+fi
+
+mkdir -p hmm0/init
+ln -s $RMWORK/R9/ml/hmm4/MODELS hmm0/init
+cp $RMHTK/lib/maketandem.hed hmm0
+HHEd -A -D -V -B -T 1 -H hmm0/init/MODELS -w hmm0/MODELS hmm0/maketandem.hed $RMLIB/mlists/treeg.list > hmm0/LOG
+
+# 15.6 estimate a global semi-tied transform to de-correlate the tandem features
+cp $RMHTK/lib/htefiles/HTE.tandem.semit .
+# Add other test sets (ind_oct89 ind_feb91 ind_sep92) if needed
+for taskid in ind_trn109 ind_feb89
+do
+    cp $RMWORK/R15/dnnfwd/${taskid}.tandem.scp ${taskid}.scp
+done
+
+cat <<__EOF__ >hmm0/global
+  ~b "global"
+  <MMFIDMASK> * 
+  <PARAMETERS> MIXBASE
+  <NUMCLASSES> 1
+    <CLASS> 1  {*.state[2-4].mix[1-100]}      
+__EOF__
+
+herest HTE.tandem.semit hmm0 hmm1
+
+# 15.7 refine the tandem system with further iterations of ML training. 
+#This can be simply done by commenting out the line associated with "HEUPD=stw".
+cp HTE.tandem.semit HTE
+
+cat <<__EOF__ | ed HTE
+/HEUPD/s/^/# /
+wq
+__EOF__
+
+herest HTE hmm1 hmm2
+herest HTE hmm2 hmm3
+herest HTE hmm3 hmm4
+
+# Finally evaluate the performance
+htestrm HTE wp feb89 hmm4
+
+echo step 15 completed
+

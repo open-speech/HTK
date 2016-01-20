@@ -1,0 +1,150 @@
+#!/bin/bash
+############################################################
+# Step 6: Tied-Mixture Word-Internal Triphones
+############################################################
+source environment
+# 6.1  Tied Mixture Initialisation
+
+# The models created in step 2 will be converted to a set of triphones
+# in a similar way to that used in step 5. At the same time the single
+# stream continuous models will be converted to tied-mixture and
+# expanded to use four streams.
+
+# First create an initial set of models.
+
+mkdir -p $RMWORK/R6/ml
+cd $RMWORK/R6/ml
+
+ln -s $RMLIB/mlists/mono.list mono.list
+ln -s $RMLIB/mlists/tri.list tri.list
+
+cat <<__EOF__ > $RMWORK/R6/ml/HTE
+#---------------------------------------------------------------#
+# HTK RM Environment File                08/09/95               #
+#                                                               #
+# This version is for:                                          #
+#                                                               #
+#         Baseline - Monophones                                 #
+#         39th Order MFCC_E_D_A Data (data in MFCC_E format)    #
+#         1 Mixture/Diagonal/3 State no Skip + sp model         #
+#                                                               #
+#---------------------------------------------------------------#
+
+# Set priority at which processes are run
+set NICE = 5
+
+# Define the rmwork and rmdata areas
+set rmwork=\$RMWORK
+set rmdata=\$RMDATA
+set rmlib=\$RMLIB
+
+# define input filters
+setenv HNETFILTER 'gzip -d -c \$.gz'          # Networks compress well
+
+# Define input configuration files
+setenv HECONFIG \$rmlib/configs/config.basic  # Basic configuration
+setenv HVCONFIG \$rmlib/configs/config.basic  # Basic configuration
+
+# Define HMMs - should reflect current models set
+set HMMLIST=\$rmwork/R6/ml/tri.list # ****** #
+
+# Define Training Data and Label files for current models
+set TRAINDATALIST=\$rmlib/flists/ind_trn109.scp
+set TRAINMLF=\$rmlib/labs/tri.mlf   # ****** #
+
+# Define Test Data
+# Note that TESTSET is defined by htestrm before sourcing HTE
+set SETLIST=(feb89 oct89 feb91 sep92)
+if (\$?TESTSET) then
+   set TESTDATALIST=\$rmlib/flists/ind_\${TESTSET}.scp
+   set TESTMLF=\$rmlib/wlabs/ind_tst.mlf
+endif
+
+# HERest Program Options
+set HETRACE=1
+set HEMINWEIGHT=2.0
+set HETMTHRESH=20.0    # Only needs to be same order as numerical accuracy
+set HEPRUNE=600.0      # 250==VERY TIGHT, 500==TIGHT, 1000==LOOSE #
+set HESTATS=stats      # stats files aren't always needed but are interesting #
+set HEMINEG=0          # Potentially bad choice for unclustered models
+#set HEUPD=
+
+# Define possible test conditions
+set TYPELIST=(ng wp)
+
+# HVite Network Defn & Program Options
+set HVTRACE=1
+set HVNET=(\$rmlib/nets/net.ng \$rmlib/nets/net.wp)
+set HVVOC=(\$rmlib/dicts/mono.dct \$rmlib/dicts/mono.dct)
+set HVPRUNE=(150.0 200.0)
+set HVMAXACTIVE=(0 0)
+set HVGSCALE=(7.0 7.0)
+set HVIMPROB=(0.0 0.0)
+
+# HResults Results Analysis
+set WORDLIST=\$rmlib/wordlist
+set HREQSETS=(\$rmlib/eq.ng \$rmlib/eq.wp)
+set HRNIST
+
+#---------------------------------------------------------------#
+#                END OF ENVIRONMENT DEFINITION                  #
+#---------------------------------------------------------------#
+__EOF__
+
+# Create an HHEd edit file in $RMWORK/R6/ml called clone.hed containing
+# the following commands.
+
+cat<<EOF > $RMWORK/R6/ml/clone.hed
+MM "trP_" { *.transP }
+SS 4
+JO 128 2.0
+TI MIX_1_ {*.state[2-4].stream[1].mix}
+JO 128 2.0
+TI MIX_2_ {*.state[2-4].stream[2].mix}
+JO 128 2.0
+TI MIX_3_ {*.state[2-4].stream[3].mix}
+JO 32 2.0
+TI MIX_4_ {*.state[2-4].stream[4].mix}
+UT {sp.state[2-4]}
+HK TIEDHS
+CL "tri.list"
+EOF
+
+# Create a directory for the initial cloned triphones and run HHEd.
+
+mkdir hmm0
+HHEd -A -D -V -B -T 1 -H $RMWORK/R2/ml/hmm4/MODELS -w hmm0/MODELS clone.hed mono.list
+
+# Then train the models
+
+hbuild 1 2
+
+# and test them using  htestrm as usual.
+
+htestrm HTE wp feb89 hmm2
+
+# As a final stage to training it is possible to use deleted
+# interpolation smoothing to provide more robust estimates for the
+# mixture weights using HSmooth as the final stage of a parallel mode
+# run of HERest
+
+for i in 1 2 3 4
+do
+  gawk '{ if ((++i%4)==(n%4)) print }' n=$i $RMLIB/flists/ind_trn109.scp \
+	  > ind_trn109.$i.scp
+done
+mkdir hmm3
+for i in 1 2 3 4 
+do
+  HERest -A -D -V -H hmm2/MODELS -M hmm3 -T 1 -I $RMLIB/labs/tri.mlf \
+	  -t 600.0 -w 2.0 -c 20.0 -C $RMLIB/configs/config.basic \
+	  -p $i -S ind_trn109.$i.scp $RMLIB/mlists/tri.list > hmm3/LOG$i
+done
+HSmooth -A -D -V -H hmm2/MODELS -M hmm3 -T 1 -m 1 -w 2.0 -s hmm3/stats \
+    -C $RMLIB/configs/config.basic $RMLIB/mlists/tri.list hmm3/HER*
+
+# Finally test these models as usual
+
+htestrm HTE wp feb89 hmm3
+
+echo step 6 completed

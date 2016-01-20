@@ -3,30 +3,33 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Machine Intelligence Laboratory                        */
-/*      Department of Engineering                              */
-/*      University of Cambridge                                */
-/*      http://mi.eng.cam.ac.uk/                               */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2002-2003  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLVRec-misc.c Miscellaneous functions for     */
-/*                             HTK LV Decoder                  */
+/* File: HLVRec-misc.c  Miscellaneous functions for LV decoder */
 /* ----------------------------------------------------------- */
+
+char *hlvrec_misc_version = "!HVER!HLVRec-misc:   3.5.0 [CUED 12/10/15]";
+char *hlvrec_misc_vc_id = "$Id: HLVRec-misc.c,v 1.1.1.1 2006/10/11 09:54:55 jal58 Exp $";
 
 /* CheckTokenSetOrder
 
@@ -51,150 +54,6 @@ void CheckTokenSetOrder (DecoderInst *dec, TokenSet *ts)
       abort();
    }
 }
-
-/* CheckTokenSetId
-
-     check whether two TokenSets that have the same id are in fact equal, i.e.
-     have the same set of RelToks
-*/
-static void CheckTokenSetId (DecoderInst *dec, TokenSet *ts1, TokenSet *ts2)
-{
-   int i1, i2;
-   RelToken *tok1, *tok2;
-   Boolean ok=TRUE;
-
-   abort ();    /* need to convert to use TOK_LMSTATE_ */
-
-   assert (ts1 != ts2);
-   assert (ts1->id == ts2->id);
-
-   if (ts2->score < dec->beamLimit || ts1->score < dec->beamLimit)
-      return;
-
-#if 0
-   if (ts1->n != ts2->n)
-      ok = FALSE;
-
-   for (i = 0; i < ts1->n; ++i) {
-      tok1 = &ts1->relTok[i];
-      tok2 = &ts2->relTok[i];
-
-      if ((tok1->lmState != tok2->lmState) ||
-          (tok1->lmscore != tok2->lmscore) ||
-          (tok1->delta != tok2->delta))
-      ok = FALSE;
-   }
-#endif
-
-   i1 = i2 = 0;
-   while (ts1->score + ts1->relTok[i1].delta < dec->beamLimit && i1 < ts1->n)
-      ++i1;
-   while (ts2->score + ts2->relTok[i2].delta < dec->beamLimit && i2 < ts2->n)
-      ++i2;
-   
-   while (i1 < ts1->n && i2 < ts2->n) {
-      tok1 = &ts1->relTok[i1];
-      tok2 = &ts2->relTok[i2];
-
-      if ((tok1->lmState != tok2->lmState) ||
-          (tok1->lmscore != tok2->lmscore) ||
-          (tok1->delta != tok2->delta))
-         ok = FALSE;
-      ++i1;
-      ++i2;
-      
-      while (ts1->score + ts1->relTok[i1].delta < dec->beamLimit && i1 < ts1->n)
-         ++i1;
-      while (ts2->score + ts2->relTok[i2].delta < dec->beamLimit && i2 < ts2->n)
-         ++i2;
-   };
-   for ( ; i1 < ts1->n; ++i1)
-      if (ts1->score + ts1->relTok[i1].delta > dec->beamLimit)
-         ok = FALSE;
-   for ( ; i2 < ts2->n; ++i2)
-      if (ts2->score + ts2->relTok[i2].delta > dec->beamLimit)
-         ok = FALSE;
-
-   if (!ok) {
-      printf ("XXXXX CheckTokenSetId  difference in tokensets \n");
-      PrintTokSet (dec, ts1);
-      PrintTokSet (dec, ts2);
-      abort();
-   }
-}
-
-
-/* CombinePaths
-
-     incorporate the traceback info from loser token into winner token
-
-     diff = T_l - T_w
-*/
-static WordendHyp *CombinePaths (DecoderInst *dec, RelToken *winner, RelToken *loser, LogFloat diff)
-{
-   WordendHyp *weHyp;
-   AltWordendHyp *alt, *newalt;
-   AltWordendHyp **p;
-   
-   abort();
-   assert (diff < 0.1);
-   assert (winner->path != loser->path);
-
-   /*   assert (winner->path->score > loser->path->score);  */
-
-   weHyp = (WordendHyp *) New (&dec->weHypHeap, sizeof (WordendHyp));
-   *weHyp = *winner->path;
-
-   weHyp->frame = dec->frame;
-
-   p = &weHyp->alt;
-   for (alt = winner->path->alt; alt; alt = alt->next) {
-      newalt = (AltWordendHyp *) New (&dec->altweHypHeap, sizeof (AltWordendHyp));
-      *newalt = *alt;
-      newalt->next = NULL;
-      *p = newalt;
-      p = &newalt->next;
-   }
-
-   /* add info from looser */
-
-   newalt = (AltWordendHyp *) New (&dec->altweHypHeap, sizeof (AltWordendHyp));
-   newalt->prev = loser->path->prev;
-   newalt->score = diff;
-   newalt->lm = loser->path->lm;
-   newalt->next = NULL;
-
-   assert (newalt->score < 0.1);
-   /*    assert (winner->path->pron->word == loser->path->pron->word); */
-
-   *p = newalt;
-   p = &newalt->next;
-   for (alt = loser->path->alt; alt; alt = alt->next) {
-      /* only add if in main Beam, otherwise we will prune 
-         it anyway later on */
-      /* should be latprunebeam? */
-      if (diff + alt->score > -dec->beamWidth) {
-         newalt = (AltWordendHyp *) New (&dec->altweHypHeap, sizeof (AltWordendHyp));
-         *newalt = *alt;
-         newalt->score = diff + alt->score;
-         newalt->next = NULL;
-         *p = newalt;
-         p = &newalt->next;
-         assert (newalt->score < 0.1);
-      }
-   }
-
-#ifndef NDEBUG
-   assert (weHyp->prev->frame <= weHyp->frame);
-   for (alt = weHyp->alt; alt; alt = alt->next) {
-      assert (alt->prev->frame <= weHyp->frame);
-      assert (alt->score <= 0.1);
-   }
-#endif
-
-   return weHyp;
-}
-
 
 /****           debug functions */
 
@@ -363,7 +222,7 @@ void InitPhonePost (DecoderInst *dec)
       phoneId = (LabId) hmm->hook;
       if (!phoneId->aux) {
          ++dec->nPhone;
-         phoneId->aux = (Ptr) dec->nPhone;
+         phoneId->aux = (Ptr)(unsigned long int)dec->nPhone;
 
          assert (dec->nPhone < 100);
          dec->monoPhone[dec->nPhone] = phoneId;
@@ -400,7 +259,7 @@ void CalcPhonePost (DecoderInst *dec)
       for (inst = dec->instsLayer[l]; inst; inst = inst->next) {
          if (inst->node->type == LN_MODEL) {
             phoneId = (LabId) inst->node->data.hmm->hook;
-            phone = (int) phoneId->aux;
+            phone = (int)(unsigned long int)phoneId->aux;
             assert (phone >= 1 && phone <= dec->nPhone);
             
             N = inst->node->data.hmm->numStates;
@@ -533,4 +392,6 @@ void AccumulateStats (DecoderInst *dec)
    ResetHeap (&statsHeap);
    DeleteHeap (&statsHeap);
 }
+
+/* ------------------------ End of HLVRec-misc.c ----------------------- */
 

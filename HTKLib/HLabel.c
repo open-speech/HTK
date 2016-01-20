@@ -3,24 +3,37 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLabel.c:   Speech Label File Input           */
+/*            File: HLabel.c  Speech label file input          */
 /* ----------------------------------------------------------- */
 
-char *hlabel_version = "!HVER!HLabel:   3.4.1 [CUED 12/03/09]";
-char *hlabel_vc_id = "$Id: HLabel.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Exp $";
+char *hlabel_version = "!HVER!HLabel:   3.5.0 [CUED 12/10/15]";
+char *hlabel_vc_id = "$Id: HLabel.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 #include "HShell.h"
 #include "HMem.h"
@@ -197,9 +210,11 @@ LabId GetLabId(char *name, Boolean insert)
    int h;
    NameCell *p;
 
+   if(!name) HError(6570,"GetLabId: no label given");
    ++numAccesses; ++numTests;
    if ((trace&T_HASH) && numAccesses%100 == 0) 
       PrintNameTabStats();
+
    h = Hash(name); p = hashtab[h];
    if (p==NULL) {  /* special case - this slot empty */
       if (insert)
@@ -1017,6 +1032,22 @@ static void LoadSCRIBELabels(MemHeap *x, Transcription *t, Source *src)
 
 /* ----------------- TriPhone Stripping ------------------- */
 
+/* EXPORT->FTriStrip: Remove contexts of form A- and +B from s */
+void FTriStrip(char *s)
+{
+   char buf[100],*p;
+   
+   if ((p = strchr(s,'-')) == NULL) p = s; else ++p;
+   strcpy(buf,p);
+   if ((p = strrchr(buf,'+')) != NULL) 
+      *p = '\0';
+   if ((p = strrchr(buf,'^')) != NULL) 
+      *p = '\0';
+   else if ((p = strrchr(buf,';')) != NULL) 
+      *p = '\0';
+   strcpy(s,buf);
+}
+
 /* EXPORT->TriStrip: Remove contexts of form A- and +B from s */
 void TriStrip(char *s)
 {
@@ -1027,6 +1058,26 @@ void TriStrip(char *s)
    if ((p = strrchr(buf,'+')) != NULL) 
       *p = '\0';
    strcpy(s,buf);
+}
+
+/* cz277 - ANN */
+/* phone name in str, state index in stateIdx */
+char *ExtractState(char *src, char *dst, int *stateIdx) {
+    char *ptr;
+
+    strcpy(dst, src);
+    *stateIdx = 0;
+    if ((ptr = strchr(dst, ']')) == NULL) {
+        return dst;
+    }
+    *ptr = '\0';
+    if ((ptr = strchr(dst, '[')) == NULL) {
+        return NULL;
+    }
+    *ptr = '\0';
+    *stateIdx = atoi(++ptr);
+
+    return dst;
 }
 
 /* EXPORT->LTriStrip: enable triphone stripping */
