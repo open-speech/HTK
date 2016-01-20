@@ -1,0 +1,107 @@
+SUFFIXES:      .exe
+
+.c.obj:
+        $(CC) /nologo /c $(CFLAGS) $<
+
+.obj.exe:
+        $(CL) $(SYSLF) /OUT:$(HBIN)\$@ $< $(libs)
+
+CC=cl
+CL=link
+CPU=win32
+HEADER = HLVLM.h  HLVModel.h  HLVNet.h  HLVRec.h config.h
+HBIN  = ..\bin.win32
+
+# use the following for full optimisation
+SYSCF = /ML /W0 /GX /O2 /G5 /Ob2 /D "NDEBUG" /D "WIN32" /D "_CONSOLE"
+
+# use the following for debugging
+#SYSCF = /ML /W1 /Gm /GX /Zi /Od /D "_DEBUG" /D "WIN32" /D "_WINDOWS"
+
+# use the following for non-debug link
+SYSLF = /nologo /subsystem:console /incremental:no
+
+# use the following for debug link
+#SYSLF = /DEBUG /DEBUGTYPE:BOTH /nologo /subsystem:console /incremental:no
+
+# the following is for HTK tools linked with HTKLib
+HTKCF = /D "NO_LAT_LM" /I "..\HTKLib" /I "."
+
+HTKLIB = ..\HTKLib\HTKLiblv.$(CPU).lib
+
+CFLAGS = $(SYSCF) $(HTKCF)
+
+LDFLAGS = 
+
+syslib = winmm.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib \
+        advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib
+
+libs = $(syslib) $(HTKLIB)
+
+tools = HDecode.exe HDecode.mod.exe
+
+origObjects = HDecode.orig.obj HLVNet.orig.obj HLVRec.orig.obj HLVLM.orig.obj HLVModel.orig.obj
+modObjects  = HDecode.mod.obj HLVNet.mod.obj HLVRec.mod.obj HLVLM.mod.obj HLVModel.mod.obj
+
+all:    $(tools)
+        echo done
+        
+
+# binaries
+HDecode.exe: $(origObjects) $(HTKLIB)
+	$(CC) $(CFLAGS)	 /Fo$@ $(origObjects) $(libs) $(LDFLAGS)
+
+HDecode.mod.exe: $(modObjects) $(HTKLIB)
+	$(CC) $(CFLAGS)	 /Fo$@ $(modObjects) $(libs) $(LDFLAGS)
+
+# normal version object files
+HLVModel.orig.obj: HLVModel.c $(HEADER)
+	$(CC) /nologo /c $(CFLAGS) HLVModel.c
+	rename HLVModel.obj $@
+
+HLVNet.orig.obj: HLVNet.c $(HEADER)
+	$(CC) /nologo /c $(CFLAGS) HLVNet.c
+	rename HLVNet.obj $@
+
+HLVLM.orig.obj: HLVLM.c $(HEADER)
+	$(CC) /nologo /c $(CFLAGS) HLVLM.c
+	rename HLVLM.obj $@
+
+HLVRec.orig.obj: HLVRec.c HLVRec-GC.c	HLVRec-LM.c	 HLVRec-misc.c	HLVRec-outP.c \
+		  HLVRec-propagate.c  HLVRec-traceback.c $(HEADER)
+	$(CC) /nologo /c $(CFLAGS) HLVRec.c 
+	rename HLVRec.obj $@
+
+HDecode.orig.obj: HDecode.c $(HEADER)
+	$(CC) /nologo /c $(CFLAGS) HDecode.c
+	rename HDecode.obj $@
+
+
+
+# .mod version object files
+HLVModel.mod.obj: HLVModel.c $(HEADER)
+	$(CC) /nologo /c /D "HDECODE_MOD" $(CFLAGS) HLVModel.c
+	rename HLVModel.obj $@
+
+HLVNet.mod.obj: HLVNet.c $(HEADER)
+	$(CC) /nologo /c /D "HDECODE_MOD" $(CFLAGS) HLVNet.c
+	rename HLVNet.obj $@
+
+HLVLM.mod.obj: HLVLM.c $(HEADER)
+	$(CC) /nologo /c /D "HDECODE_MOD" $(CFLAGS) HLVLM.c
+	rename HLVLM.obj $@
+
+HLVRec.mod.obj: HLVRec.c HLVRec-GC.c	HLVRec-LM.c	 HLVRec-misc.c	HLVRec-outP.c \
+		  HLVRec-propagate.c  HLVRec-traceback.c $(HEADER)
+	$(CC) /nologo /c /D "HDECODE_MOD" $(CFLAGS) HLVRec.c 
+	rename HLVRec.obj $@
+
+HDecode.mod.obj: HDecode.c $(HEADER)
+	$(CC) /nologo /c /D "HDECODE_MOD" $(CFLAGS) HDecode.c
+	rename HDecode.obj $@
+
+clean:
+        del *.obj *.exe
+
+cleanup:
+        del *.obj

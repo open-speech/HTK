@@ -1,0 +1,55 @@
+modules = HShell.o HMath.o  HSigP.o  HWave.o HAudio.o HParm.o HVQ.o \
+          HLabel.o HModel.o HUtil.o HTrain.o HDict.o  HLM.o   HRec.o HNet.o \
+          HAdapt.o HFB.o HMem.o HMap.o HLat.o HFBLat.o HExactMPE.o HArc.o \
+          HForest.o \
+          esignal.o esig_asc.o esig_edr.o esig_nat.o strarr.o
+
+hlib = ../HTKLib
+HLIBS = $(addprefix $(hlib)/, $(modules))
+
+CC = $(HTKCC)
+CFLAGS = -I$(hlib) $(HTKCF) 
+
+HEADER = HLVLM.h  HLVModel.h  HLVNet.h  HLVRec.h config.h
+
+
+HDecode: HDecode.o HLVNet.o HLVRec.o HLVLM.o HLVModel.o $(HLIBS)
+	$(CC)  -o HDecode HDecode.o HLVNet.o  HLVRec.o HLVLM.o HLVModel.o $(HLIBS) -lm $(HTKLF)
+
+HCombine: HCombine.o $(HLIBS)
+	$(CC)   -o HCombine HCombine.o $(HLIBS) -lm $(HTKLF)
+
+HLConf: HLConf.o $(HLIBS)
+	$(CC)   -o HLConf HLConf.o $(HLIBS) -lm $(HTKLF)
+
+HGauss: HGauss.o $(HLIBS)
+	$(CC)   -o HGauss HGauss.o $(HLIBS) -lm $(HTKLF)
+
+HFastOutP: HFastOutP.o $(HLIBS)
+	$(CC) -static -o HFastOutP HFastOutP.o  $(HLIBS) -lm $(HTKLF)
+
+HLVModel.o: HLVModel.c $(HEADER)
+
+HLVNet.o: HLVNet.c $(HEADER)
+
+HLVLM.o: HLVLM.c $(HEADER)
+
+HLVRec.o: HLVRec.c HLVRec-GC.c  HLVRec-LM.c  HLVRec-misc.c  HLVRec-outP.c	HLVRec-propagate.c  HLVRec-traceback.c $(HEADER)
+
+HDecode.o: HDecode.c $(HEADER)
+
+
+all:	
+	make -f Makefile.icc clean
+	rm -f config.h
+	ln -s config.h.std config.h
+	make -f Makefile.icc
+	mv HDecode $(HBIN)/bin.$(CPU)/
+	make -f Makefile.icc clean
+	rm -f config.h
+	ln -s config.h.mod config.h
+	make -f Makefile.icc
+	mv HDecode $(HBIN)/bin.$(CPU)/HDecode.mod
+clean:
+	-rm -f *.o *.cpu
+	touch $(CPU).cpu

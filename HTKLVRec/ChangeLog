@@ -1,0 +1,468 @@
+2006-04-28  Anna Langley <jal58@cam.ac.uk>
+
+	* Prepared Makefile.in for 3.4 release
+	
+2005-07-29  Anna Langley <jal58@cam.ac.uk>
+
+	* added Makefile.icc
+
+2005-07-29  Anna Langley <jal58@cam.ac.uk>
+
+	* Updated licence headers
+	
+2005-07-14  Andrew Liu <xl207@cam.ac.uk>
+
+	* The total number of blocks in the state output probability
+	  caching table for HDecode is using short and this may be
+	  overflowed when using model sets with a large number of
+	  Gaussians but a very small number of Gaussians for some
+	  individual states. Note the total number of cache blocks equals
+	  to the total number of Gaussians divided by the minimum number
+	  of components per state in the system. This can be prevented
+	  using the following fix. 
+
+2003-04-04  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* revert previous 2003-04-01  change.
+
+2003-04-01  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (gcFreq): increase frequency of GCs.
+	(DeactivateNode): Do not de-alloc LexNode Instances, just mark
+	them as zombies.
+	(ActivateNode): Don't allocate LexNode Instance if it is a zombie.
+
+	* HLVRec-propagate.c (PropIntoNode): Revive zombie LexNodes.
+
+	* HLVRec-GC.c (SweepLexNodeInsts): New function to allow garbage
+	collection of zombie LexNodes.
+
+	* HLVModel.h: 
+	* HLVModel.c (ConvertHSet): Support fixing feature dimension at
+	compile time.
+	(OutP_lv): Expand Gaussian calculation for nDim=39 to facilitate
+	compiler optimisation.
+
+	* HLVLM.h (NSIZE): Limit to trigrams in full decodes.
+
+	* HLVLM.c (NGHSIZE4): Increase LM hash table size for large LMs.
+
+2003-03-11  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVLM.c (InitLVLM): Diasable dict size check if
+	sizeof(PronId) is 4 .
+
+2003-02-13  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HDecode.c (ReportUsage): Remove -N and -Q options.
+
+2003-02-10  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c: Fix typo in prototype.
+
+2003-02-05  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HDecode.c (ReportUsage): Docs for xform opts.
+
+2003-02-04  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HDecode.c (main): Bugfix: with new xform code always switch to
+	USEHMODEL=T.
+
+2003-02-03  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HDecode.c: Switch to the new XForm code.
+
+2003-01-29  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c: 
+	* HLVRec-propagate.c: Cleanup: remove unused code.
+
+2003-01-09  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec-*.c: Split up HLVRec.c into parts.
+
+2002-06-25  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVNet.c: Check that pron IDs can be represented in specified
+	type.
+
+2002-04-15  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLConf.c (SortConfNet): Don't try to sort 1 cluster ConfNets.
+
+2002-03-25  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (BuildForceLat): Don't try to update path scores if
+	there is no path.
+
+2002-03-21  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVNet.c (CollectPhoneStats): Check for empty pronunciations.
+
+	* HDecode.c (Initialise): Check ReadDict() return value.
+
+	* HLVRec.c (LatTraceBack): Improved lattice traceback when no
+	token survived to sentend. Fall back in stages and force output if
+	FORCELATOUT is set.
+
+2002-03-20  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (InitDecoderInst): Always init dec->fastlmla.
+
+2002-03-10  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (Paths2Lat): Fix typo in calculation of aclike for
+	alternative lattice paths.
+	(HandleSpSkipLayer): Use temp tokenset to make sure pronprobs are
+	only added once.
+
+2002-03-07  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HCombine.c (AddSCWtoLListTail): Output wordName if pron->outSym
+	is [].
+	(FileDPalign): Disable lattice output.
+	(ReadConfNet): use NetFilter to read scf.
+
+2002-03-05  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLConf.c (ConfNetClusterFile): Only output transcription if
+	T_TRAN is specified.
+	(WriteConfnet): Use HNETOFILTER for SCF output.
+
+2002-03-03  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (InitDecoderInst): Fix fastLMLA beam comparison.
+
+	* HLVLM.c (Fast_LMLA_LMState): Disable fastLMLA for now
+
+	* HLConf.c : Massive cleanup: removed most general lattice
+	processing code to HLat.
+	New conf variables CLAMPACLIKE and FIXPRONPROB.
+	(InitConfNet): Free orderLA after use.
+	
+
+2002-03-02  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HDecode.c (DoRecognition): Call CloseBuffer() at the end of
+	utterance to avoid leaking file descriptors.
+
+	* HLVRec.c (ProcessFrame): Keep sil/sp variants distinct by
+	setting bit in we_tag.
+	(MergeTokSet): Guard tokenset ID optimisation by TSIDOPT.
+
+	* config.h: Disable TSIDOPT if MODALIGN support is built.
+
+2002-02-28  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVLM.c (CreateLMfromLat): Correct destination of LM transition
+	for </s> links in the lattice.
+
+	* HLVRec.c (BuildLattice): Only delete final modpath entry if it
+	actually is (MOD SIL).
+
+2002-02-25  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.[hc]: 
+	* HDecode.c: Lattice model alignment.
+
+	* HLVRec.c (InitLVRec): New config options: BUILDLATSENTEND,
+	GCFREQ.
+
+	* HDecode.c (ReportUsage): Output build time options.
+	(Initialise): Support for lattice model alignment.
+
+2002-02-12  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HDecode.c (main): Check for silly beamwidths.
+
+	* HLVLM.c (CreateLMfromLat): Always perform check for
+	non-deterministic lattices.
+
+2002-02-11  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (UpdateLMlookahead): Limit LM lookahead score add per
+	model (config variable MAXLMLA).
+	(TraceBack): Fix for "no token survived" case.
+
+2002-02-08  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c: Implemented model-level alignment Part I
+	(guarded by #ifdef MODALIGN) 
+
+2002-02-07  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVLM.c (LMLookAhead_3gram): Fix for ne_bg->nse==0 case.
+
+2002-02-06  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (HandleWordend): Tag Reltokens with wordend node.
+	* HLVRec.h (TOK_LMSTATE_*): Only combine Reltokens with same
+	wordend tag.
+
+2002-01-15  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c: Fix various prototypes: LMState * -> LMstate
+	* HDecode.c (SetConfParms): Add support for FASTLMLABEAM
+	* HLVLM.c (Fast_LMLA_LMState): New function: back-off to fast LMLA
+	state
+	* HLVRec.c (UpdateLMlookahead): 
+	(LMCacheLookaheadProb): Use fast LMLA, if outside beam.
+
+
+2002-01-09  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVLM.c (SetNEntryBO): Add pointer to back-off NEntry to all
+	NEntries.
+	(LMLookAhead_3gram): New function: Optimised verion of
+	LMLookAhead_ngram.
+
+2002-01-07  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HDecode.c (main): New cmdline option -R for bestalign
+	comparison.
+
+2001-12-20  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (TraceBack): Trace back from globally best node if end
+	node is not active.
+
+2001-12-10  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (HandleWordend): Fix sorting of tokens: Previosly path
+	information got overwritten randomly.
+	(BuildLattice): Handle case where no token survived in a sil model.
+
+	* HLVLM.h: 
+	* HLVLM.c (CreateLMfromLat):
+	(LMLookAhead_latlm):
+	(LMTransProb_latlm): Many fixes to make latlm actually work.
+
+2001-11-16  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVLM.c (ReadARPAngram): Only add SEntries for prons that have a
+	pronid, i.e. ignore sp- and sil-variants for sildicts.
+
+2001-11-15  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (LatTraceBackCount): 
+	(AddPronProbs): 
+	(HandleSpSkipLayer): Fixes for lattice generation with pronprobs.
+
+2001-11-15  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (GarbageCollectPaths): GC AltWordendHyps as well.
+
+	* HDecode.c (DoRecognition): Correct Frame number for PrintObs.
+
+2001-10-31  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (Paths2Lat): Remove bogus (int) casts.
+	(Paths2Lat): Correct aclike calculatuion.
+	(CombinePaths): New function.
+	(MergeTokSet): Use it.
+	(UpdateWordEndHyp): Improve <s> duplicate avoidance.
+	(BuildLattice): Update score/time for start of </s> link.
+
+	* HLVNet.h: Add new fields start/endPron to LexNet.
+	* HLVNet.c (CreateLexNet): Initialise them.
+
+	* HLVNet.c (WriteTLex): Fix printing of info if label unset.
+
+2001-10-24  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.h (TOK_LMSTATE_*): Abstract LMState comparisons into
+	macros. 
+	* HLVRec.c (CheckTokenSetOrder): 
+	(MergeTokSet): Use them.
+
+2001-10-23  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (BuildLattice): New function.
+	(LatTraceBack): use it.
+	(HandleWordend): Sort tokens by LMState.
+	(UpdateWordEndHyp): Only update time and score in WEHyp if
+	necessary -- avoids duplicate <s> nodes.
+
+2001-10-23  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVLM.h: 
+	* HLVLM.c (CreateLM):
+	(LMLookAhead): Introduce function pointers for lookahead and
+	transprob in FSLM structure.
+	(LMTransProb_ngram): New LMState 0xfffffffe for </s>
+
+2001-10-08  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (CreateDecoderInst): 
+	(ProcessFrame): Only calc phone posteriors if needed.
+
+	* HLVLM.c: fix signed warnings.
+
+	* *.[hc]: update to StateNet version.
+
+2001-10-08  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* *.c: update to LMNode version.
+
+2001-07-09  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (ProcessFrame): Always call HandleWordend from
+	PropagateExternal if we don't use wordend pruning.
+	(Paths2Lat): Fix lattice generation to set foll/pred pointers.
+
+2001-07-05  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HDecode.c: Add support for lattice pruning.
+
+2001-06-20  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HDecode.c (main): New option '-v' for wordend beam width.
+
+2001-06-19  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (HandleSpSkipLayer): Moved special code for sp/sil/-
+	pronprob handling out of ProcessFrame into new function.
+	(ProcessFrame): Get rid of initial Pass 2 pruning loop.
+	(AccumulateStats): New funnction.
+
+2001-05-30  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c: new LM/OutP caches. Infrastructure for blocking of
+	OutP calculation
+
+2001-04-05  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (MergeTokSet): Make reltok sanity checks conditional on
+	NDEBUG.
+
+2001-04-04  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c : 
+	* HLVRec.c : Implement max model pruning and complex LM lookahead.
+
+2001-04-03  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVNet.c (TraverseTree): Fix compression of LMLA tree.
+
+	* HLVLM.c (CreateBoNGram): Change size of ablist and wordlist
+	arrays from npropns to nunigrams since we need a to assign LMIds
+	to all words occuring in the on-disk LM (for reading binary LMs).
+	(CreateBoNGram): pronId2LMId needs vocSize+1 entries.
+
+2001-03-29  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (MergeTokSet): Histogram pruning style algortihm.
+	* HLVRec.c: Enable main beam pruning (in addition to rel beam) in
+	MergeTokSet, PruneTokSet and HandleWordend.
+
+2001-03-26  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (MergeTokSet): Keep Tokens in sorted order.
+
+2001-03-01  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVLM.c (CreateLMfromLat): 
+	(LMTransProb_latlm): 
+	(LMLookAhead_latlm): Split LatNode/LMState into substate for
+	different pronunciations of the word.
+
+2001-02-28  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (GarbageCollectPaths): Add simple Mark&Sweep GC for
+	WordendHyps.
+	(ProcessFrame): Trigger GC every 100 frames. 
+
+2001-02-27  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVNet.[hc] (CreateStartEnd): 
+	* HLVRec.c (ProcessFrame): Add sp/sil nodes at end of final word
+	for transition into !SENT_END.
+	(MergeTokSet): Fiddle dodgy srcDeltaLimit.
+
+	* HLVRec.c: Reenable main beam for relTokens.
+
+2001-02-26  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (ProcessFrame): Correct pronprob handling for last word
+	before !SENT_END: Apply - var prob instead of sil var prob.
+
+2001-02-25  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (AddPronProbs): New function. Fix pron prob
+	application.
+
+2001-02-24  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HDecode.c:
+	* HLVLM.c:
+	* HLVNet.[hc]:
+	* HLRec.c: Implement support for -/sp/sil dictionaries and their
+	pronprobs. 		
+
+	* HForest.[hc]: New files imported from $sw/htkbin.
+
+2001-02-23  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLConf.c: Add DP pron similarity and confnet pruning. 
+	Set pronprobs in Lattice according to dictionary.
+
+2001-02-22  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLConf.c: New tool HLConf: performs confusion network clustering
+	or time-dependent posterior estimation.
+
+2001-02-17  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (LatTraceBack): Fill in lattice header fields
+	correctly.
+
+	* HLVNet.c: In the LexNet only include words/prons marked with
+	aux=1 into the network.
+
+	* HDecode.c: For lattice rescoring generate a new LexNet for each
+	utterance. 
+
+2001-02-16  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (LatTraceBack): Added Check whether any tokens survied
+	in end node.
+
+2001-02-15  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (MergeTokSet): 
+	(PruneTokSet): 
+	(HandleWordend): Disable main beam pruning for RelTokens. 
+
+	* HDecode.c (UpdateSpkrModels): New function. Finds current
+	speaker using speaker pattern and loads & applies transforms.
+	(ResetFVTrans): 
+	(LoadFVTrans): 
+	(FVTransModels): full-var transform.
+
+2001-02-08  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVRec.c (HandleWordend): 
+	(Paths2Lat): Correct recording and traceback of scores for alt
+	wordenHyps. 
+
+2001-02-07  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* HLVLM.c (CreateLMfromLat): Eliminate debug print.
+
+	* HDecode.c (DoRecognition): Only free lat if we actually have one.
+
+	* HLVLM.c (CreateLMfromLat): 
+	(ReadARPALM): Close files, so that gzip get wait4'd.
+
+	* HLVRec.c (T_LAT): new trace level T_LAT.
+	(TraceBack): Fix handling of Words with [] outSym.
+
+	* HDecode.c (main): fix output lab/lat Dir option.
+
+2001-02-07  Gunnar Evermann  <ge204@eng.cam.ac.uk>
+
+	* start of history. Current version should support lattice
+	rescoring and generation. TokenSet id optimisation is mostly
+	implemented but doesn't actually work, yet.
+

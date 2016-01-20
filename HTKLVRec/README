@@ -1,0 +1,15 @@
+HTKLVRec
+--------
+
+This directory is for the HDecode LV recogniser system.
+
+This system is licenced separately from HTK so is not included with
+the HTK distribution.  In order to obtain it you must agree to the
+licence for HDecode at http://htk.eng.cam.ac.uk/hdecode_register.shtml
+where you will also receive instructions for downloading and building
+HDecode.
+
+Anna Langley <jal58@cam.ac.uk>
+2.5.2006
+
+WINDOWS users: Note after compilation you need to rename HDecode.orig.exe into HDecode.exe and place both HDecode.exe and HDecode.mod.exe into bin.win32 or any other directory storing the rest of HTK executables.
