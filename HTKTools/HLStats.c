@@ -3,23 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*    File: HLStats.c: gather statistics from transcriptions   */
+/*    File: HLStats.c  Gather statistics from transcriptions   */
 /* ----------------------------------------------------------- */
 
-char *hlstats_version = "!HVER!HLStats:   3.4.1 [CUED 12/03/09]";
+char *hlstats_version = "!HVER!HLStats:   3.5.0 [CUED 12/10/15]";
 char *hlstats_vc_id = "$Id: HLStats.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $";
 
 #include "HShell.h"
@@ -31,6 +47,7 @@ char *hlstats_vc_id = "$Id: HLStats.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $"
 #include "HVQ.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HDict.h"
 #include "HLM.h"
@@ -366,7 +383,8 @@ void InitWordInfo(WordInfo *w, LabId id, Cntr *pCntr)
 /* InitStats: Create and init all necessary global accumulators */
 void InitStats(char *listFn)
 {
-   int h,p,l;
+   int h;
+   long int l,p;
    MLink q,hm;
    HLink hmm;
    HMMSet *hset;
@@ -420,7 +438,7 @@ void InitStats(char *listFn)
             if (hm==NULL || hmm->hook==0)
                HError(1390,"InitStats: No physical name found for %s",
                       q->id->name);
-            InitWordInfo(lTab+l,q->id,pTab+(int)hmm->hook);
+            InitWordInfo(lTab+l,q->id,pTab+(long int)hmm->hook);
             l++;
          }
    qsort(lTab+1,lSize,sizeof(WordInfo),wd_cmp);
@@ -489,13 +507,13 @@ void GatherStats(Transcription *t)
    if (l->labid==exitId) en--;
 
    /* Coerce previous labels to be enterId */
-   for (i=0; i<ASIZE; i++) in[i]=(int)enterId->aux;
-   lt = lTab+(int)enterId->aux; ++lt->count;
+   for (i=0; i<ASIZE; i++) in[i]=(int)(long int)enterId->aux;
+   lt = lTab+(long int)enterId->aux; ++lt->count;
    
    /* Process actual labels in list */ 
    for (i=st; i<=en; i++) {
       l = GetLabN(ll,i);
-      lab=(int)l->labid->aux;
+      lab=(int)(long int)l->labid->aux;
       dur = (float)(l->end - l->start)/10000.0;
       lt=lTab+lab;
       /* increment stats */
@@ -507,7 +525,7 @@ void GatherStats(Transcription *t)
       if (doBigram) {
          /* We ignore all transitions into enterId and exitId */
          /* May wish to warn user about badly formed sentences */
-         if (!(lab==(int)enterId->aux || (lab==(int)exitId->aux))) {
+	if (!(lab==(int)(long int)enterId->aux||(lab==(int)(long int)exitId->aux))){
             for (j=ASIZE-1;j>0;j--) in[j]=in[j-1];
             in[0]=lab;
             ae = GetAEntry(in,TRUE);
@@ -518,11 +536,11 @@ void GatherStats(Transcription *t)
    /* Deal with transition into EXIT */
    if (doBigram) {
       for (j=ASIZE-1;j>0;j--) in[j]=in[j-1];
-      in[0]=(int)exitId->aux;
+      in[0]=(int)(long int)exitId->aux;
       ae = GetAEntry(in,TRUE);
       ae->count++;
    }
-   lt = lTab+(int)exitId->aux; ++lt->count;
+   lt = lTab+(long int)exitId->aux; ++lt->count;
 }
 
 /* ----------------------- Output Results -------------------- */
@@ -536,7 +554,7 @@ int CmpCntr(const void *p1, const void *p2)
 
    c1=(Cntr *)p1; c2=(Cntr *)p2;
    diff=c1->count-c2->count;
-   if (diff==0) return((int)c2->name->aux-(int)c1->name->aux);
+   if (diff==0) return((long int)c2->name->aux-(long int)c1->name->aux);
    else return(diff);
 }
 
@@ -550,7 +568,7 @@ int CmpWordInfo(const void *p1, const void *p2)
    
    c1=(WordInfo *)p1; c2=(WordInfo *)p2;
    diff=c1->count-c2->count;
-   if (diff==0) return((int)c2->name->aux-(int)c1->name->aux);
+   if (diff==0) return((long int)c2->name->aux-(long int)c1->name->aux);
    else return(diff);
 }
 
@@ -663,10 +681,10 @@ static float BuildNEntry(NEntry *ne,Vector boff,float bent)
    ne->nse=0;
    tot=cnt=0.0;
    bsum=1.0;
-   if (ne->word[0]!=(int)exitId->aux)
+   if (ne->word[0]!=(long int)exitId->aux)
       for (ae=(AEntry *) ne->user; ae!=NULL; ae=ae->link) {
          tot+=ae->count;
-         if (ae->word[0]!=0 && ae->word[0]!=(int)enterId->aux &&
+         if (ae->word[0]!=0 && ae->word[0]!=(long int)enterId->aux &&
              ae->count>bigThresh)
             cnt+=(ae->count-disCount),ne->nse++,bsum-=boff[ae->word[0]];
       }
@@ -680,7 +698,7 @@ static float BuildNEntry(NEntry *ne,Vector boff,float bent)
       bowt = (bsum>0.0) ? (1.0-cnt/tot)/bsum : 0.0;
       ent  = (bowt>0.0) ? bowt*(bent-log2(bowt)) : 0.0;
       for (cse=ne->se,ae=(AEntry *) ne->user; ae!=NULL; ae=ae->link)
-         if (ae->word[0]!=0 && ae->word[0]!=(int)enterId->aux &&
+         if (ae->word[0]!=0 && ae->word[0]!=(long int)enterId->aux &&
              ae->count>bigThresh) {
             prob=((double)ae->count-disCount)/tot;
             cse->word=ae->word[0];
@@ -706,7 +724,8 @@ void OutputBoBigram(void)
    SEntry *se;
    AEntry **aelists;
    lmId ndx[NSIZE];
-   int i,tot,counts[NSIZE+1];
+   int tot,counts[NSIZE+1];
+   long int i;
    double uent,ent,bent;
 
    lm.heap=&statHeap;
@@ -723,7 +742,7 @@ void OutputBoBigram(void)
    RebuildAETab(aelists);          /* Un-hash hashtable */
 
    for (i=1,tot=0.0;i<=lSize;i++) {    /* Calculate unigrams first */
-      if (i==(int)enterId->aux)
+      if (i==(long int)enterId->aux)
          nglm->unigrams[i]=0.0;
       else if (lTab[i].count<uniFloor)
          nglm->unigrams[i]=uniFloor;
@@ -752,9 +771,9 @@ void OutputBoBigram(void)
       ent = BuildNEntry(ne,nglm->unigrams,uent);
       nglm->counts[2]+=ne->nse;
       if (trace&T_BIG) 
-         if (i!=(int)exitId->aux){
-            if (i==(int)enterId->aux)
-               bent+=nglm->unigrams[(int)exitId->aux]*ent;
+         if (i!=(long int)exitId->aux){
+            if (i==(long int)enterId->aux)
+               bent+=nglm->unigrams[(long int)exitId->aux]*ent;
             else 
                bent+=nglm->unigrams[i]*ent;
             printf("   %-20s - %4d foll, ent %6.3f [= %6.2f]\n",
@@ -795,7 +814,8 @@ void OutputMatBigram(void)
    Vector vec;
    double vsum,fsum,tot,scale;
    double ent,bent,prob,fent;
-   int i,j,nf,tf=0,nu,tu=0,np,tp=0,tn=0;
+   int nf,tf=0,nu,tu=0,np,tp=0,tn=0;
+   long int i,j;
 
    lm.heap=&statHeap;
    lm.type=matBigram;
@@ -826,7 +846,7 @@ void OutputMatBigram(void)
             ae->count=0;
       scale = (1.0 - fsum) / vsum;
       for (j=1;j<=lSize;j++) {
-         if (j==(int)enterId->aux) vec[j]=0.0;
+         if (j==(long int)enterId->aux) vec[j]=0.0;
          else if (tot==0.0) vec[j]=1.0/(lSize-1);
          else vec[j]=bigFloor;
       }
@@ -848,7 +868,7 @@ void OutputMatBigram(void)
                ent += fent;
                nf--;  np++;
             }
-         if (i!=(int)exitId->aux){
+         if (i!=(long int)exitId->aux){
             j=lTab[i].count;
             bent+=j*ent;tn+=j;
             if (tot==0.0)

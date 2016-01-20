@@ -3,37 +3,41 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/* author: Gunnar Evermann <ge204@eng.cam.ac.uk>               */
+/* author:                                                     */
+/*           Gunnar Evermann <ge204@eng.cam.ac.uk>             */
+/*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2001-2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*       File: HLRescore.c: Lattice rescoring/pruning          */
+/*         File: HLRescore.c   Lattice rescoring/pruning       */
 /* ----------------------------------------------------------- */
 
-/*#### todo:
+/* TODO:
 
      - implement lattice oracle WER calculation
      - allow batch processing?
 */
 
-char *hlrescore_version = "!HVER!HLRescore:   3.4.1 [CUED 12/03/09]";
+char *hlrescore_version = "!HVER!HLRescore:   3.5.0 [CUED 12/10/15]";
 char *hlrescore_vc_id = "$Id: HLRescore.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $";
 
 #include "HShell.h"
@@ -43,6 +47,7 @@ char *hlrescore_vc_id = "$Id: HLRescore.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Ex
 #include "HLabel.h"
 #include "HAudio.h"
 #include "HParm.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h"
 #include "HDict.h"
@@ -93,9 +98,9 @@ static char *wpNetFile = NULL;  /* word pair LM network filename */
 static Lattice *wpNet;          /* the word level recognition network */
 static Vocab vocab;		/* wordlist or dictionary */
 
-static char *startWord;         /* word at start of Lattice (!SENT_START) */
+static char *startWord="!SENT_START";         /* word at start of Lattice (!SENT_START) */
 static LabId startLab;          /* corresponding LabId */
-static char *endWord;           /* word at end of Lattice (!SENT_END) */
+static char *endWord="!SENT_END";           /* word at end of Lattice (!SENT_END) */
 static LabId endLab;            /* corresponding LabId */
 static LabId nullLab;           /* !NULL LabId */
 static char *startLMWord;       /* word at start in LM (<s>) */
@@ -109,6 +114,11 @@ static LogDouble pruneInThresh = - LZERO;  /* beam for pruning (-t) */
 static LogDouble pruneOutThresh = - LZERO; /* beam for pruning (-u) */
 static LogDouble pruneInArcsPerSec = 0.0;  /* arcs per second threshold (-t) */
 static LogDouble pruneOutArcsPerSec = 0.0; /* arcs per second threshold (-u) */
+
+static char *labFileMask = NULL;
+static char *labOFileMask = NULL;
+static char *latFileMask = NULL;
+static char *latOFileMask = NULL;
 
 /* operations to perform: */
 static Boolean pruneInLat = FALSE;  /* -t */
@@ -131,8 +141,8 @@ static MemHeap transHeap;
 
 void SetConfParms (void);
 void ReportUsage (void);
-void ProcessLattice (char *latfn);
-void ProcessLabels (char *labfn);
+void ProcessLattice (char *latfn_in, char *latfn_ou);
+void ProcessLabels (char *labfn_in, char *labfn_ou);
 
 
 /* ---------------- Process Command Line ------------------------- */
@@ -157,6 +167,18 @@ void SetConfParms(void)
          endLMWord = CopyString (&gstack, buf);
       if (GetConfBool (cParm, nParm, "FIXBADLATS", &b)) fixBadLats = b;
       if (GetConfBool (cParm, nParm, "SORTLATTICE", &b)) sortLattice = b;
+      if (GetConfStr(cParm,nParm,"LABFILEMASK",buf)) {
+         labFileMask = CopyString (&gstack, buf);
+      }
+      if (GetConfStr(cParm,nParm,"LABOFILEMASK",buf)) {
+         labOFileMask = CopyString (&gstack, buf);
+      }
+      if (GetConfStr(cParm,nParm,"LATFILEMASK",buf)) {
+         latFileMask = CopyString (&gstack, buf);
+      }
+      if (GetConfStr(cParm,nParm,"LATOFILEMASK",buf)) {
+         latOFileMask = CopyString (&gstack, buf);
+      }
    }
 }
 
@@ -457,20 +479,52 @@ int main(int argc, char *argv[])
       if (NextArg() != STRINGARG)
          HError (4019, "HLRescore: Transcription file name expected");
       if (!lab2Lat) {
-      latfn = GetStrArg();
+         char latfn_in[MAXFNAMELEN];
+         char latfn_ou[MAXFNAMELEN];
 
-      if (trace & T_TOP)
-         printf ("File: %s\n", latfn);  fflush(stdout);
+         latfn = GetStrArg();
+         if (latFileMask) {
+            if (!MaskMatch (latFileMask, latfn_in, latfn))
+               HError(2319,"HLRescore: LABFILEMASK %s has no match with segemnt %s", latFileMask, latfn);
+         }
+         else
+            strcpy (latfn_in, latfn);
 
-      ProcessLattice (latfn);
-   }
-      else {
+         if (latOFileMask) {
+            if (!MaskMatch (latOFileMask, latfn_ou, latfn))
+               HError(2319,"HLRescore: LABFILEMASK %s has no match with segemnt %s", latOFileMask, latfn);
+         }
+         else
+            strcpy (latfn_ou, latfn);
+
+         if (trace & T_TOP)
+            printf ("File: %s\n", latfn);  fflush(stdout);
+
+         ProcessLattice (latfn_in, latfn_ou);
+      } else {
+         char labfn_in[MAXFNAMELEN];
+         char labfn_ou[MAXFNAMELEN];
+
          labfn = GetStrArg();
+         if (labFileMask) {
+            if (!MaskMatch (labFileMask, labfn_in, labfn))
+               HError(2319,"HLRescore: LABFILEMASK %s has no match with segemnt %s", labFileMask, labfn);
+         }
+         else
+            strcpy (labfn_in, labfn);
+
+         if (labOFileMask) {
+            if (!MaskMatch (labOFileMask, labfn_ou, labfn))
+               HError(2319,"HLRescore: LABOFILEMASK %s has no match with segemnt %s", labOFileMask, labfn);
+         }
+         else
+            strcpy (labfn_ou, labfn);
 
          if (trace & T_TOP)
             printf ("File: %s\n", labfn);  fflush(stdout);
 
-         ProcessLabels (labfn);
+         /* obtain label using labfilename, but need to store lattice as original */
+         ProcessLabels (labfn_in, labfn_ou);
       }
    }
 
@@ -488,14 +542,14 @@ int main(int argc, char *argv[])
 
      apply all the requested operations on lattice
 */
-void ProcessLattice (char *latfn)
+void ProcessLattice (char *latfn_in, char *latfn_ou)
 {
    Lattice *lat;
    char lfn[MAXSTRLEN];
    FILE *lf;
    Boolean isPipe;
 
-   MakeFN (latfn, latInDir, latInExt, lfn);
+   MakeFN (latfn_in, latInDir, latInExt, lfn);
   
    if ((lf = FOpen(lfn,NetFilter,&isPipe)) == NULL)
       HError(4010,"HLRescore: Cannot open Lattice file %s", lfn);
@@ -559,7 +613,7 @@ void ProcessLattice (char *latfn)
                               strchr(labOutForm,'C')!=NULL,strchr(labOutForm,'T')!=NULL,
                               strchr(labOutForm,'W')!=NULL,strchr(labOutForm,'M')!=NULL);
       
-      MakeFN (latfn, labOutDir, labOutExt, lfn);
+      MakeFN (latfn_ou, labOutDir, labOutExt, lfn);
       if (LSave (lfn, trans, ofmt) < SUCCESS)
          HError (4014, "ProcessLattice: Cannot save file %s", lfn);
       ResetHeap (&transHeap);
@@ -587,7 +641,7 @@ void ProcessLattice (char *latfn)
          for(i=0, ln=lat->lnodes; i<lat->nn; i++, ln++)
             ln->score=0.0;
 
-      MakeFN (latfn, labOutDir, latInExt, lfn);
+      MakeFN (latfn_ou, labOutDir, latInExt, lfn);
       lf = FOpen (lfn, NetOFilter, &isPipe);
       if (!lf)
          HError (4014, "ProcessLattice: Could not open file '%s' for lattice output", lfn);
@@ -628,18 +682,17 @@ void ProcessLattice (char *latfn)
 
      apply all the requested operations on labels
 */
-void ProcessLabels (char *labfn)
+void ProcessLabels (char *labfn_in, char *labfn_ou)
 {
    Lattice *lat;
    char lfn[MAXSTRLEN];
    FILE *lf;
    Boolean isPipe;
    LabList *ll = NULL, *expll = NULL;
-   LLink l;
    Transcription *reftrans;
    int i, N;
 
-   MakeFN (labfn, labInDir, labInExt, lfn);
+   MakeFN (labfn_in, labInDir, labInExt, lfn);
   
    reftrans = LOpen(&labHeap, lfn, ifmt);
    if (reftrans->numLists >= 1)
@@ -652,13 +705,13 @@ void ProcessLabels (char *labfn)
    
    /* add start and end word symbols if needed */
    if (GetLabN(ll, 1)->labid != startLab) {
-      l = AddLabel(&labHeap, expll, startLab, 0.0, 0.0, 0.0);
+      AddLabel(&labHeap, expll, startLab, 0.0, 0.0, 0.0);
    }
    for (i=1; i<=N; i++) {
-      l = AddLabel(&labHeap, expll, GetLabN(ll, i)->labid, 0.0, 0.0, 0.0);
+      AddLabel(&labHeap, expll, GetLabN(ll, i)->labid, 0.0, 0.0, 0.0);
    }
    if (GetLabN(ll, 1)->labid != endLab) {
-      l = AddLabel(&labHeap, expll, endLab, 0.0, 0.0, 0.0);                  
+      AddLabel(&labHeap, expll, endLab, 0.0, 0.0, 0.0);                  
    }
      
    lat = LatticeFromLabels(expll, nullLab, &vocab, &labHeap);
@@ -678,7 +731,7 @@ void ProcessLabels (char *labfn)
    if (trace & T_LAT)
       printf ("lattice size: %d nodes/ %d arcs\n", lat->nn, lat->na);
 
-   lat->utterance = labfn;
+   lat->utterance = labfn_ou;
    lat->vocab = dictfn;
    lat->voc = &vocab;
    lat->acscale = acScale;
@@ -720,7 +773,7 @@ void ProcessLabels (char *labfn)
                               strchr(labOutForm,'C')!=NULL,strchr(labOutForm,'T')!=NULL,
                               strchr(labOutForm,'W')!=NULL,strchr(labOutForm,'M')!=NULL);
       
-      MakeFN (labfn, labOutDir, labOutExt, lfn);
+      MakeFN (labfn_ou, labOutDir, labOutExt, lfn);
       if (LSave (lfn, trans, ofmt) < SUCCESS)
          HError (4014, "ProcessLattice: Cannot save file %s", lfn);
       ResetHeap (&transHeap);
@@ -748,7 +801,7 @@ void ProcessLabels (char *labfn)
          for(i=0, ln=lat->lnodes; i<lat->nn; i++, ln++)
             ln->score=0.0;
 
-      MakeFN (labfn, labOutDir, latInExt, lfn);
+      MakeFN (labfn_ou, labOutDir, latInExt, lfn);
       lf = FOpen (lfn, NetOFilter, &isPipe);
       if (!lf)
          HError (4014, "ProcessLattice: Could not open file '%s' for lattice output", lfn);
@@ -785,9 +838,5 @@ void ProcessLabels (char *labfn)
    ResetHeap (&labHeap);
 }
 
-
-/*  CC-mode style info for emacs
-    Local Variables:
-    c-file-style: "htk"
-    End:
-*/
+/* ------------------------- End of HLRescore.c ------------------------- */
+

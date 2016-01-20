@@ -3,36 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*          2001-2002 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HNet.h  Network and Lattice Functions         */
+/*         File: HNet.h  Network and lattice functions         */
 /* ----------------------------------------------------------- */
 
-/* !HVER!HNET:   3.4.1 [CUED 12/03/09] */
+/* !HVER!HNet:   3.5.0 [CUED 12/10/15] */
 
 /*
    Nets come in two forms.
@@ -54,6 +57,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* cz277 - ANN */
+#include "HDict.h"
 
 /* ------------------------ Initialisation --------------------------- */
 
@@ -170,6 +176,8 @@ typedef struct larc
 
    float score;        /* Field used for pruning/sorting */
    LogFloat prlike;    /* Pronunciation likelihood of arc */
+   /* cz277 - scale conf score */
+   Ptr hook;
 }
 LArc;
 
@@ -386,6 +394,8 @@ struct _NetNode {
    NetInst *inst;       /* Model Instance (if one exists, else NULL) */   
    NetNode *chain;
    int aux;
+
+   LabId labid;         /* sxz20: Logical HMM name */
 };
 
 struct _NetLink{
@@ -526,8 +536,16 @@ int AddHCIContext(HMMSetCxtInfo *hci,LabId labid);
    Return its context (possibly newly added).
 */
 
+/* cz277 - scale conf score */
+void OutputIntField(char field, int val, Boolean bin, char *form, FILE *file);
+void OutputFloatField(char field, float val, Boolean bin, char *form, FILE *file);
+
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif  /* _HNET_H_ */
+
+/* ------------------------- End of HNet.h ------------------------- */
+

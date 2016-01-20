@@ -3,24 +3,40 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*      File: HCopy.c: Copy one Speech File to another         */
+/*        File: HCopy.c  Copy one speech file to another       */
 /* ----------------------------------------------------------- */
 
-char *hcopy_version = "!HVER!HCopy:   3.4.1 [CUED 12/03/09]";
-char *hcopy_vc_id = "$Id: HCopy.c,v 1.1.1.1 2006/10/11 09:54:59 jal58 Exp $";
+char *hcopy_version = "!HVER!HCopy:   3.5.0 [CUED 12/10/15]";
+char *hcopy_vc_id = "$Id: HCopy.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 #include "HShell.h"
 #include "HMem.h"
@@ -31,6 +47,7 @@ char *hcopy_vc_id = "$Id: HCopy.c,v 1.1.1.1 2006/10/11 09:54:59 jal58 Exp $";
 #include "HAudio.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 
 /* -------------------------- Trace Flags & Vars ------------------------ */
@@ -256,6 +273,11 @@ int main(int argc, char *argv[])
             HError(1019,"HCopy: MLF file name expected");
          LoadMasterFile(GetStrArg());
          labF = TRUE; break;
+      case 'J':
+         if (NextArg() != STRINGARG)
+            HError(1019, "HCopy: transform search directory expected");
+         AddInXFormDir(NULL, GetStrArg());
+         break;
       case 'L':
          if (NextArg()!=STRINGARG)
             HError(1019,"HCopy: Label file directory expected");
@@ -547,7 +569,9 @@ Boolean IsWave(char *srcFile)
 {
    FILE *f;
    long nSamp,sampP, hdrS;
-   short sampS,kind;
+   /*short sampS,kind;*/
+   short kind;
+   unsigned short sampS;	/* cz277 - cbu */
    Boolean isPipe,bSwap,isWave;
    
    isWave = tgtPK == WAVEFORM;

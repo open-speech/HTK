@@ -1,0 +1,71 @@
+#!/bin/bash
+source environment
+# dependencies
+if [ ! -d $RMWORK/R9/ml/hmm54 ]
+then
+    echo ERROR: step 11 depends on completion of step 9
+    exit 1
+fi
+
+# 11.1 Lattice Generation
+# The first step is to generate lattices that have the start and end times
+# for each phone marked (this is for efficiency in training). This involves
+# the following steps
+# i) convert word-pair network into an N-gram language model
+# ii) generate word-lattices
+# iii) mark the start and end times for each phone in the word-lattices
+# iv) generate new training scp file
+
+# Note to illustrate the effects of discriminative training a single
+# component cross-word triphone system is used.
+
+mkdir -p $RMWORK/R11/mpe
+cd $RMWORK/R11/mpe
+mkdir latgen
+cd latgen
+mkdir hmm0
+cp $RMWORK/R9/ml/hmm54/MODELS hmm0/MODELS.orig
+
+# map the 6-component model to single component models other than silence
+
+echo  "MD 1 {*-*+*.state[2-4].mix}" > edfile.md
+HHEd -A -D -V -B -H hmm0/MODELS.orig -w hmm0/MODELS edfile.md $RMLIB/mlists/treeg.list > hmm0/LOG.md
+
+# Copy the HTE file associated with lattice generation and phone marking
+
+cp $RMHTK/lib/htefiles/HTE.latgen .
+
+# Create a monophone dictionary suitable for HDecode (strip the final "sp")
+
+cd $RMLIB/dicts
+sed 's/sp//g' mono.dct > mono.hd.dct
+cd $RMWORK/R11/mpe/latgen
+
+# All 4 steps can then be run using
+
+latgen HTE.latgen hmm0 lattices
+
+# 11.2 MPE Model Training
+
+#Having generated the training lattices dsicriminative training can now be run.
+#The default script uses MPE training, though an MMI config file is also supplied.
+#Create directories and copy the HTE file 
+cd $RMWORK/R11/mpe
+mkdir hmm0
+cd hmm0
+ln -s  $RMWORK/R11/mpe/latgen/hmm0/MODELS .
+cd ..
+ln -s $RMWORK/R11/mpe/latgen/lattices/lattices .
+cp $RMHTK/lib/htefiles/HTE.mpe HTE
+
+# Now perform 2 iterations of MPE training
+
+hbuild 1 2
+
+# And then test the ML and MPE models
+
+htestrm HTE wp feb89 hmm0
+htestrm HTE wp feb89 hmm1
+htestrm HTE wp feb89 hmm2
+
+echo step 11 completed

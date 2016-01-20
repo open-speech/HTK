@@ -3,31 +3,32 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Machine Intelligence Laboratory                        */
-/*      Department of Engineering                              */
-/*      University of Cambridge                                */
-/*      http://mi.eng.cam.ac.uk/                               */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2002-2003  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLVNet.c Network handling for HTK LV Decoder  */
+/*      File: HLVNet.c Network handling for HTK LV decoder     */
 /* ----------------------------------------------------------- */
 
-char *hlvnet_version = "!HVER!HLVNet:   3.4.1 [GE 12/03/09]";
+char *hlvnet_version = "!HVER!HLVNet:   3.5.0 [CUED 12/10/15]";
 char *hlvnet_vc_id = "$Id: HLVNet.c,v 1.1.1.1 2006/10/11 09:54:55 jal58 Exp $";
 
 #include "HShell.h"
@@ -38,11 +39,12 @@ char *hlvnet_vc_id = "$Id: HLVNet.c,v 1.1.1.1 2006/10/11 09:54:55 jal58 Exp $";
 #include "HAudio.h"
 #include "HParm.h"
 #include "HDict.h"
+#include "HANNet.h"
 #include "HModel.h"
 /* all the above are necessary just to include HModel.h */
 /* #### sort out  include file dependencies! */
 
-#include "config.h"
+#include "lvconfig.h"
 
 #include "HLVLM.h"      /* for LMId */
 #include "HLVNet.h"
@@ -68,17 +70,24 @@ static int nParm = 0;
 
 static MemHeap tnetHeap;                /* used for temporary data in net creation */
 
+/* sxz20: if TRUE logical hmm name will appear in phone-marked lattices */
+static Boolean markLogHmm = FALSE;
+
 /* --------------------------- Initialisation ---------------------- */
 
 /* EXPORT->InitLVNet: register module & set configuration parameters */
 void InitLVNet(void)
 {
    int i;
+   /* sxz20 */
+   Boolean b;
    
    Register(hlvnet_version,hlvnet_vc_id);
    nParm = GetConfig("HLVNET", TRUE, cParm, MAXGLOBS);
    if (nParm>0){
       if (GetConfInt(cParm,nParm,"TRACE",&i)) trace = i;
+      /* sxz20 */
+      if (GetConfBool(cParm, nParm, "MARKLOGHMM", &b)) markLogHmm = b;
    }
 
    CreateHeap (&tnetHeap, "Net temp heap", MSTAK, 1, 0,100000, 800000);
@@ -106,6 +115,8 @@ TLexNode *NewTLexNodeMod (MemHeap *heap, TLexNet *net, int layerId, HLink hmm)
    ln->pron = NULL;
    ln->hmm = hmm;
    ln->type = LN_MODEL;
+   /* sxz20 */
+   ln->labid = NULL;
 
    return ln;
 }
@@ -130,6 +141,8 @@ TLexNode *NewTLexNodeWe (MemHeap *heap, TLexNet *net, int layerId, Pron pron)
    ln->hmm = NULL;
    ln->pron = pron;
    ln->type = LN_WORDEND;
+   /* sxz20 */
+   ln->labid = NULL; 
 
    return ln;
 }
@@ -154,27 +167,14 @@ TLexNode *NewTLexNodeCon (MemHeap *heap, TLexNet *net, int layerId, LabId lc, La
    ln->type = LN_CON;
    ln->lc = lc;
    ln->rc = rc;
+   /* sxz20 */
+   ln->labid = NULL; 
 
    return ln;
 }
 
 
 
-/* from HNet.c */
-/* Binary search to find elem in n element array */
-static int BSearch (Ptr elem, int n, Ptr *array)
-{
-   int l,u,c;
-
-   l=1;u=n;
-   while(l<=u) {
-      c=(l+u)/2;
-      if (array[c]==elem) return(c);
-      else if (array[c]<elem) l=c+1; 
-      else u=c-1;
-   }
-   return(0);
-}
 
 /* from HNet.c */
 /* Binary search to find elem in n element array */
@@ -208,7 +208,7 @@ static int BAddSearch (Ptr elem, int *np, Ptr **ap)
    return(c);
 }
 
-#define HASH1(p1,s)  (((int)(p1))%(s))
+#define HASH1(p1,s)  (((long)(p1))%(s))
 #define HASH2(p1,p2,s)  (( HASH1(p1,s) + HASH1(p2,s)) % (s))
 
 TLexConNode *FindAddTLCN (MemHeap *heap, TLexNet *net, int layerId, int *n, TLexConNode *lcnHashTab[], LabId lc, LabId rc)
@@ -279,19 +279,34 @@ HLink FindTriphone (HMMSet *hset, LabId a, LabId b, LabId c)
    
    /*   if (snprintf (buf, BUFLEN, "%s-%s+%s", a->name, b->name, c->name) == -1)  */
    if (sprintf (buf, "%s-%s+%s", a->name, b->name, c->name) == -1) 
-      HError (9999, "HLVNet: model names too long");
+      HError (7720, "HLVNet: model names too long");
    
    triLabId = GetLabId (buf, FALSE);
    if (!triLabId)
-      HError (9999, "HLVNet: no model label for phone (%s)", buf);
+      HError (7721, "HLVNet: no model label for phone (%s)", buf);
    
    triMLink = FindMacroName (hset, 'l', triLabId);
    if (!triMLink)
-      HError (9999, "HLVNet: no model macro for phone (%s)", buf);
+      HError (7721, "HLVNet: no model macro for phone (%s)", buf);
    
    return ((HLink) triMLink->structure);
 }
 
+/* sxz20: triphone label */
+LabId TriphoneLab(LabId a, LabId b, LabId c)
+{
+   char buf[BUFLEN];
+   LabId triLabId;
+
+   if (sprintf (buf, "%s-%s+%s", a->name, b->name, c->name) == -1)
+      HError (7720, "HLVNet: model names too long");
+
+   triLabId = GetLabId (buf, FALSE);
+   if (!triLabId)
+      HError (7721, "HLVNet: no model label for phone (%s)", buf);
+
+   return triLabId;
+}
 
 /*  scan vocabulary pronunciations for phone sets A, B, AB, YZ
     sets A and B are small (~50) and stored in arays
@@ -309,7 +324,7 @@ void CollectPhoneStats (MemHeap *heap, TLexNet *net)
          if (word->aux == (Ptr) 1 && (word->wordName != net->startId && word->wordName != net->endId))
             for (pron = word->pron; pron ; pron = pron->next) {
                if (pron->nphones < 1)
-                  HError (9999, "CollectPhoneStats: pronunciation of '%s' is empty", word->wordName->name);
+                  HError (7722, "CollectPhoneStats: pronunciation of '%s' is empty", word->wordName->name);
 
                if (pron->aux == (Ptr) 1) {
                   BAddSearch ((Ptr) pron->phones[0], &net->nlexA, ((Ptr **) &net->lexA));
@@ -333,7 +348,7 @@ void CollectPhoneStats (MemHeap *heap, TLexNet *net)
    /* add 'sil' to A and Z lists */
    sil = GetLabId ("sil", FALSE);
    if (!sil)
-      HError (9999, "cannot find 'sil' model.");
+      HError (7723, "cannot find 'sil' model.");
 
    BAddSearch ((Ptr) sil, &net->nlexA, ((Ptr **) &net->lexA));
    BAddSearch ((Ptr) sil, &net->nlexZ, ((Ptr **) &net->lexZ));
@@ -452,6 +467,9 @@ void CreateAnodes (MemHeap *heap, TLexNet *net)
             /* create Node z-a+b */
             hmm = FindTriphone (net->hset, z, a, b);
             lnZAB = FindAddTLexNode (heap, net, LAYER_A, &net->nNodeA, net->nodeAhash, LN_MODEL, hmm);
+            /* sxz20 */
+            if (markLogHmm)
+                lnZAB->labid = TriphoneLab(z, a, b);
 
 #ifdef DEBUG_LABEL_NET          /*#### expensive name lookup for dot graph! */
             lnZAB->lc = FindMacroStruct (net->hset, 'h', hmm)->id;
@@ -508,6 +526,9 @@ void CreateZnodes (MemHeap *heap, TLexNet *net)
             /* create Node y-z+a */
             hmm = FindTriphone (net->hset, y, z, a);
             lnYZA = FindAddTLexNode (heap, net, LAYER_Z, &net->nNodeZ, net->nodeZhash, LN_MODEL, hmm);
+            /* sxz20 */
+            if (markLogHmm)
+                lnYZA->labid = TriphoneLab(y, z, a);
 
 #ifdef DEBUG_LABEL_NET          /*#### expensive name lookup for dot graph! */
             lnYZA->lc = FindMacroStruct (net->hset, 'h', hmm)->id;
@@ -548,7 +569,7 @@ HLink FindHMM (HMMSet *hset, LabId id)
    assert (id);
    ml = FindMacroName (hset, 'l', id);
    if (!ml)
-      HError (9999, "cannot find model for label '%s'", id->name);
+      HError (7723, "cannot find model for label '%s'", id->name);
    assert (ml->structure);
    return ((HLink) ml->structure);
 }
@@ -565,11 +586,11 @@ void CreateSILnodes (MemHeap *heap, TLexNet *net)
    /* find sil & sp models */
    sil = GetLabId ("sil", FALSE);
    if (!sil)
-      HError (9999, "cannot find 'sil' model.");
+      HError (7723, "cannot find 'sil' model.");
    hmmSIL = FindHMM (net->hset, sil);
    sp = GetLabId ("sp", FALSE);
    if (!sp)
-      HError (9999, "cannot find 'sp' model.");
+      HError (7723, "cannot find 'sp' model.");
    hmmSP = FindHMM (net->hset, sp);
 
    for (i = 0; i < LEX_CON_HASH_SIZE; ++i)
@@ -578,6 +599,9 @@ void CreateSILnodes (MemHeap *heap, TLexNet *net)
          s = lcnZS->rc;
          /*         printf ("ZS node %p %s-%s i %d\n", lcnZS, z->name, s->name, i); */
          ln = NewTLexNodeMod (heap, net, LAYER_SIL, (s==sil) ? hmmSIL : hmmSP);
+         /* sxz20 */
+         if (markLogHmm)
+             ln->labid = (s == sil)? sil: sp; 
 
          ln->next = net->nodeSIL;
          net->nodeSIL = ln;
@@ -638,7 +662,7 @@ void Handle1PhonePron (MemHeap *heap, TLexNet *net, Pron pron)
    pronid = ++net->nPronIds;
    lmlaIdx = ++net->lmlaCount;
 
-   pron->aux = (Ptr) (int) pronid;
+   pron->aux = (Ptr) (unsigned long int) pronid;
 
    /* for each word end phone Z
         create a WE node and link to appropriate nodes in SA & YZ layers
@@ -710,6 +734,9 @@ void CreateBYnodes (MemHeap *heap, TLexNet *net)
                         }
                         else {             /* model not found -> create a new one */
                            ln = NewTLexNodeMod (heap, net, LAYER_BY, hmm);
+                           /* sxz20 */
+                           if (markLogHmm)
+                               ln->labid=TriphoneLab(pron->phones[p-1], pron->phones[p], pron->phones[p+1]);
                            
                            ln->next = net->nodeBY;
                            net->nodeBY = ln;
@@ -765,9 +792,9 @@ TLexNode *CreateBoundary (MemHeap *heap, TLexNet *tnet, LabId labid, int modLaye
 
    w = GetWord (tnet->voc, labid, FALSE);
    if (!w)
-      HError (9999, "HLVNet: cannot find START/ENDWORD '%s'", labid->name);
+      HError (7723, "HLVNet: cannot find START/ENDWORD '%s'", labid->name);
    if (w->nprons != 1 || w->pron->nphones != 1)
-      HError (9999, "HLVNet: only one pronuinciation with one model allowed for START/ENDWORD '%s'", 
+      HError (7724, "HLVNet: only one pronuinciation with one model allowed for START/ENDWORD '%s'", 
               labid->name);
    
    /* create model node */
@@ -809,7 +836,7 @@ void CreateStartEnd (MemHeap *heap, TLexNet *tnet)
 
    lnWe->loWE = lnWe->hiWE = ++tnet->nPronIds;
    lnWe->lmlaIdx = ++tnet->lmlaCount;
-   lnWe->pron->aux = (Ptr) lnWe->loWE;
+   lnWe->pron->aux = (Ptr) (long int)lnWe->loWE;
 
    /* connect start WE -> all matching SA nodes */
    /* loop over all SA nodes */
@@ -833,7 +860,7 @@ void CreateStartEnd (MemHeap *heap, TLexNet *tnet)
    
    lnWe->loWE = lnWe->hiWE = ++tnet->nPronIds;
    lnWe->lmlaIdx = ++tnet->lmlaCount;
-   lnWe->pron->aux = (Ptr) lnWe->loWE;
+   lnWe->pron->aux = (Ptr)(long int)lnWe->loWE;
    
    lnTime = NewTLexNodeCon (heap, tnet, LAYER_SA, lnWe->lc, lnWe->lc);
    AddLink (heap, lnTime, lnMod);
@@ -857,16 +884,21 @@ void CreateStartEnd (MemHeap *heap, TLexNet *tnet)
       /* find sil & sp models */
       sil = GetLabId ("sil", FALSE);
       if (!sil)
-         HError (9999, "cannot find 'sil' model.");
+         HError (7723, "cannot find 'sil' model.");
       hmmSIL = FindHMM (tnet->hset, sil);
       sp = GetLabId ("sp", FALSE);
       if (!sp)
-         HError (9999, "cannot find 'sp' model.");
+         HError (7723, "cannot find 'sp' model.");
       hmmSP = FindHMM (tnet->hset, sp);
       
       
       tnet->lnSEsp = NewTLexNodeMod (heap, tnet, LAYER_SIL, hmmSP);
       tnet->lnSEsil = NewTLexNodeMod (heap, tnet, LAYER_SIL, hmmSIL);
+      /* sxz20 */
+      if (markLogHmm) {
+          tnet->lnSEsp->labid = sp;
+          tnet->lnSEsil->labid = sil;
+      }
 
       AddLink (heap, tnet->lnSEsp, lnTime);
       AddLink (heap, tnet->lnSEsil, lnTime);
@@ -903,7 +935,7 @@ int TraverseTree (TLexNode *ln, int start, int *lmlaCount)
       ln->loWE = ln->hiWE = start;
       /*# store ID in ln->pron */
 
-      ln->pron->aux = (Ptr) ln->loWE;
+      ln->pron->aux = (Ptr)(long int)ln->loWE;
       /*       printf("LMLA %p %d %d  %d\n", ln, ln->loWE, ln->hiWE, *lmlaCount); */
       --depth;
       return start;
@@ -991,7 +1023,7 @@ void AssignWEIds(TLexNet *tnet)
    if (sizeof(PronId) < 4 || sizeof (LMId) < 4) {
       if (highest > (1UL << (8 * sizeof (PronId))) ||
           highest > (1UL << (8 * sizeof (LMId))))
-         HError (9999, "AssignWEIds: too many pronunciations for PronId/LMId type. Recompile with type int");
+         HError (7725, "AssignWEIds: too many pronunciations for PronId/LMId type. Recompile with type int");
    }
 }
 
@@ -1169,32 +1201,47 @@ LexNet *ConvertTLex2Lex (MemHeap *heap, TLexNet *tnet)
    /* the real conversion follows here: */
    net->start = tnet->start->ln;
    net->end = tnet->end->ln;
+   /* sxz20 */
+   if (markLogHmm) {
+      net->start->labid=tnet->start->ln->labid;
+      net->end->labid = tnet->end->ln->labid;
+   }
    
    /* copy info and convert links */
    for (tln = tnet->root; tln; tln = tln->chain) {
       ln = tln->ln;
       ln->type = (unsigned short) tln->type;
 
+      assert(tln->labid->name);	/* sxz20 */
+
       switch (tln->type) {
       case LN_MODEL:
          ln->data.hmm = tln->hmm;
+         ln->labid = tln->labid;	/* sxz20 */
          break;
       case LN_CON:
          ln->data.hmm = NULL;
+         ln->labid = NULL;	/* sxz20 */
          break;
       case LN_WORDEND:
          assert (tln->loWE == tln->hiWE);
          ln->data.pron = tln->loWE;
          net->pronlist[tln->loWE] = tln->pron;
+         ln->labid = NULL;	/* sxz20 */
          break;
       default:
-         HError (9999, "HLVNet: unknown node type %d\n", tln->type);
+         HError (7790, "HLVNet: unknown node type %d\n", tln->type);
          break;
       }
 
       if (tnet->silDict) {
          net->lnSEsp = tnet->lnSEsp->ln;
          net->lnSEsil = tnet->lnSEsil->ln;
+         /* sxz20 */
+         if (markLogHmm) {
+             net->lnSEsp->labid = tnet->lnSEsp->ln->labid;
+             net->lnSEsil->labid = tnet->lnSEsil->ln->labid;
+         }
       }
 
       ln->lmlaIdx = tln->lmlaIdx;
@@ -1429,10 +1476,10 @@ LexNet *CreateLexNet (MemHeap *heap, Vocab *voc, HMMSet *hset,
 
    tnet->startId = GetLabId (startWord, FALSE);
    if (!tnet->startId) 
-      HError (9999, "HLVNet: cannot find STARTWORD '%s'\n", startWord);
+      HError (7723, "HLVNet: cannot find STARTWORD '%s'\n", startWord);
    tnet->endId = GetLabId (endWord, FALSE);
    if (!tnet->endId) 
-      HError (9999, "HLVNet: cannot find ENDWORD '%s'\n", endWord);
+      HError (7723, "HLVNet: cannot find ENDWORD '%s'\n", endWord);
 
 
    for (i = 0; i < NLAYERS; ++i)
@@ -1525,8 +1572,8 @@ LexNet *CreateLexNet (MemHeap *heap, Vocab *voc, HMMSet *hset,
       model of a new word. Update time and score in last weHyp of token in this layer */
    net->wordEndLayerId = LAYER_SA;
 
-   net->startPron = (PronId) (int) GetWord (voc, tnet->startId, FALSE)->pron->aux;
-   net->endPron = (PronId) (int) GetWord (voc, tnet->endId, FALSE)->pron->aux;
+   net->startPron = (PronId) (long int) GetWord (voc, tnet->startId, FALSE)->pron->aux;
+   net->endPron = (PronId) (long int) GetWord (voc, tnet->endId, FALSE)->pron->aux;
 
    /* add pronprobs in ZS nodes and (if S==sp) propagate - variant bypassing sp model. */
    net->spSkipLayer = LAYER_ZS;
@@ -1534,7 +1581,7 @@ LexNet *CreateLexNet (MemHeap *heap, Vocab *voc, HMMSet *hset,
       LabId spLab;
       spLab = GetLabId ("sp", FALSE);
       if (!spLab)
-         HError (9999, "cannot find 'sp' model.");
+         HError (7723, "cannot find 'sp' model.");
       net->hmmSP = FindHMM (net->hset, spLab);
    }
    net->silDict = silDict;
@@ -1587,7 +1634,7 @@ void ConvertSilDict (Vocab *voc, LabId spLab, LabId silLab,
             continue;
 
          if ((word->nprons % 3) != 0)
-            HError (9999, "ConvertSilDict: word '%s' does not have -/sp/sil variants",
+            HError (7726, "ConvertSilDict: word '%s' does not have -/sp/sil variants",
                     word->wordName->name);
 
          if (word->nprons  > maxnPron) {
@@ -1621,8 +1668,8 @@ void ConvertSilDict (Vocab *voc, LabId spLab, LabId silLab,
             if (p->aux > (Ptr) 1) {   /* ignore - variant */
                for (j = 0; j < nPron; j += 3) {
                   if (CompareBasePron (pSort[j], p)) {
-                     assert (j + (((int) p->aux) - 1) <= nPron);
-                     pSort [j + (((int) p->aux) - 1)] = p;
+                     assert (j + (((long int) p->aux) - 1) <= nPron);
+                     pSort [j + (((long int) p->aux) - 1)] = p;
                      p->aux = (Ptr) 0;  /* unmark pron for CreateLexNet !! */
                      break;     /* next p */
                   }
@@ -1634,11 +1681,11 @@ void ConvertSilDict (Vocab *voc, LabId spLab, LabId silLab,
          for (j = 0; j < nPron-1; ++j) {
             pSort[j]->next = pSort[j+1];
             if (!pSort[j])
-               HError (9999, "ConvertSilDict: word '%s' does not have -/sp/sil variants",
+               HError (7726, "ConvertSilDict: word '%s' does not have -/sp/sil variants",
                        word->wordName->name);
          }
          if (!pSort[nPron - 1])
-            HError (9999, "ConvertSilDict: word '%s' does not have -/sp/sil variants",
+            HError (7726, "ConvertSilDict: word '%s' does not have -/sp/sil variants",
                     word->wordName->name);
          pSort[nPron-1]->next = NULL;
          
@@ -1893,10 +1940,10 @@ LexNet *CreateLexNet_S (MemHeap *heap, Vocab *voc, HMMSet *hset, char *startWord
    /* find start and end Ids */
    startId = GetLabId (startWord, FALSE);
    if (!startId) 
-      HError (9999, "HLVNet: cannot find STARTWORD '%s'\n", startWord);
+      HError (7723, "HLVNet: cannot find STARTWORD '%s'\n", startWord);
    endId = GetLabId (endWord, FALSE);
    if (!endId) 
-      HError (9999, "HLVNet: cannot find ENDWORD '%s'\n", endWord);
+      HError (7723, "HLVNet: cannot find ENDWORD '%s'\n", endWord);
 
 
    /* init root node */
@@ -1988,11 +2035,5 @@ LexNet *CreateLexNet_S (MemHeap *heap, Vocab *voc, HMMSet *hset, char *startWord
 }
 
 
+/* ------------------------ End of HLVNet.c ----------------------- */
 
-
-
-/*  CC-mode style info for emacs
- Local Variables:
- c-file-style: "htk"
- End:
-*/

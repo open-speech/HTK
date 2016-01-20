@@ -3,21 +3,22 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*                                                             */
-/*              2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
@@ -27,7 +28,7 @@
 /*         File: HExactMPE.c   Discriminative training         */
 /* ----------------------------------------------------------- */
 
-char *hexactmpe_version = "!HVER!HExactMPE:   3.4.1 [CUED 12/03/09]";
+char *hexactmpe_version = "!HVER!HExactMPE:   3.5.0 [CUED 12/10/15]";
 char *hexactmpe_vc_id = "$Id: HExactMPE.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Exp $";
 
 /*
@@ -46,6 +47,7 @@ char *hexactmpe_vc_id = "$Id: HExactMPE.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Ex
 #include "HAudio.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HTrain.h"
 #include "HUtil.h"
@@ -268,7 +270,7 @@ float DoCorrectness(FBLatInfo *fbInfo, MemHeap *mem, ArcInfo *ai, float prune,
     if(locc > prune){   /* ... if above prune threshold then attach the 'cn' structure */
       if(!PhoneMEE && StartOfWord(a)/*expands to a->pos==0*/){  /* This is the MWE case. Create a cn structure for the first phone of the word. */
 	LArc *la = a->parentLarc; 
-	int iword = (int)/*from LabId*/ la->end->word->wordName;
+	int iword = (int)(unsigned long int)la->end->word->wordName;
 	int id = (a->calcArc ? a->calcArc->id : a->id);
 	HArc *b,*lastArc; int x;
 
@@ -285,7 +287,7 @@ float DoCorrectness(FBLatInfo *fbInfo, MemHeap *mem, ArcInfo *ai, float prune,
 	cn->nArcs = la->nAlign; x=1; /*n arcs in cn.*/
 	lastArc=a;
 	if(a->follTrans)
-	  for(b=a->follTrans->end;b->parentLarc==la;b->follTrans&&(b=b->follTrans->end)){
+	  for(b=a->follTrans->end;b->parentLarc==la;b=b->follTrans->end){
 	    HArc *cb =  (b->calcArc ? b->calcArc : b);
 	    x++;
 	    b->mpe->cn = (CorrN*)(void*)-1;
@@ -329,10 +331,8 @@ float DoCorrectness(FBLatInfo *fbInfo, MemHeap *mem, ArcInfo *ai, float prune,
 	
 	for(x=cn->nArcs;x>1;x--){ /* loop only happens in Quinphone case (when nArcs>1). */
 	  if(b){
-	    HArc *cb;
 	    b=b->follTrans->end; /*so b is last one ... */
 	    b->mpe->cn = (CorrN*)(void*)-1; /* set to -1 for all others but the first...*/
-	    cb = (b->calcArc ? b->calcArc : b);
 	    cn->scaled_aclike += b->ac->aclike * latProbScale + translm(b->precTrans->lmlike)/*should be zero unless inspen used in a funny way.*/;
 	  } /* else  will be error . */
 	}
@@ -661,7 +661,7 @@ void DoExactCorrectness(FBLatInfo *fbInfo, Lattice *lat){
     w=0;
     for(node=lat->lnodes+0; node->foll; node=node->foll->end)
       if(node->foll->nAlign > 1 ||  (node->foll->nAlign==1 && ! IsSilence(node->foll->lAlign[0].label->name))) /* a word [ not sil. ]...*/
-	iwords[w++][0] = (int)node->foll->end->word->wordName; /* word is at the node at the end of the arc. */
+	iwords[w++][0] = (int)(unsigned long int)node->foll->end->word->wordName; /* word is at the node at the end of the arc. */
 	 
     for(larc=lat->larcs,a=0;a<lat->na;larc++,a++){   
       if(IsNonSilArc(larc)){  /* Is a word [not sil]*/
@@ -841,5 +841,5 @@ void InitExactMPE(void)
 
 }
 
-
+/* ------------------------- End of HExactMPE.c ------------------------- */
 

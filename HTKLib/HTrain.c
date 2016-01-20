@@ -3,36 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*              2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HTrain.c   HMM Training Support Routines      */
+/*         File: HTrain.c   HMM training support routines      */
 /* ----------------------------------------------------------- */
 
-char *htrain_version = "!HVER!HTrain:   3.4.1 [CUED 12/03/09]";
+char *htrain_version = "!HVER!HTrain:   3.5.0 [CUED 12/10/15]";
 char *htrain_vc_id = "$Id: HTrain.c,v 1.1.1.1 2006/10/11 09:54:58 jal58 Exp $";
 
 #include "HShell.h"
@@ -44,6 +47,7 @@ char *htrain_vc_id = "$Id: HTrain.c,v 1.1.1.1 2006/10/11 09:54:58 jal58 Exp $";
 #include "HVQ.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h"
 #include "HTrain.h"
@@ -89,6 +93,11 @@ void InitTrain(void)
       if (GetConfBool(cParm,nParm,"BINARYACCFORMAT",&b)) ldBinary = b;
       if (GetConfBool(cParm,nParm,"STREAMPROJECTION",&b)) strmProj = b;
    }
+}
+
+Boolean LoadDumpAccBinary()
+{
+  return ldBinary;
 }
 
 /* -------------------- Generic Sequence Type ------------------- */
@@ -714,7 +723,7 @@ static void InitClustering(MemHeap *x, Sequence vpool, int nc,
 {
    int i,numClust;
    Vector v;
-   Covariance cov;
+   Covariance cov={.var=NULL,.inv=NULL,.xform=NULL};
 
    nItems = vpool->nItems;
    if (nItems < nc)
@@ -1628,7 +1637,7 @@ Source LoadAccsParallel(HMMSet *hset, char *fname, UPDSet uFlags, int index)
    Source src;
    HLink hmm;
    HMMScanState hss;
-   int size,negs,m,s;
+   int size,m,s,negs;
    MixPDF* mp;
    
    if (trace & T_ALD)
@@ -1641,7 +1650,7 @@ Source LoadAccsParallel(HMMSet *hset, char *fname, UPDSet uFlags, int index)
       hmm = hss.hmm;
       CheckPName(&src,hss.mac->id->name); 
       ReadInt(&src,&negs,1,ldBinary);
-      negs += (int)hmm->hook; hmm->hook = (void *)negs;
+      negs += (int)(unsigned long int)hmm->hook; hmm->hook = (void *)(unsigned long int)negs;
       while (GoNextState(&hss,TRUE)) {
          while (GoNextStream(&hss,TRUE)) {
             if ((uFlags&UPSEMIT) && (strmProj)) size = hset->vecSize;
@@ -1713,11 +1722,10 @@ void RestoreAccs(HMMSet *hset){ RestoreAccsParallel(hset,0); }
 void RestoreAccsParallel(HMMSet *hset, int index)
 {
    HMMScanState hss;
-   int s,m,size;
+   int s,m;
 
    if(hset->hsKind==TIEDHS){
       for (s=1; s<=hset->swidth[0]; s++){
-         size = hset->swidth[s];
          for (m=1;m<=hset->tmRecs[s].nMix; m++)
             RestorePDF(hset->tmRecs[s].mixes[m], index);
       }

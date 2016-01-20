@@ -1,0 +1,169 @@
+#!/bin/bash
+
+source environment
+
+if [ ! -d $RMWORK/R9/ml/hmm54 ]
+then
+		echo ERROR: step 10 depends on completion of step 9
+		exit 1
+fi
+
+# 10. Adaptation
+
+# 10.1 Incremental MLLR adaptation
+
+mkdir -p $RMWORK/R10/ml/hmm0
+cd $RMWORK/R10/ml/hmm0
+
+# The first step is to generate a regression class tree.
+# A regression class tree
+# for that model may be generated using (this assumes that a stats
+# file has been generated).
+cp $RMWORK/R9/ml/hmm54/{MODELS,stats} .
+HHEd -A -D -V -T 1 -B -H MODELS -w /dev/null $RMHTK/lib/regtree_c2.hed \
+    $RMLIB/mlists/treeg.list > regtree_c2.LOG
+cd ..
+
+# This should have generated two files regtree_2.tree and
+# regtree_2.base. These are the regression class tree and associated
+# baseclasses respectively . Using these regression class trees it is
+# possible to incrementally generate MLLR transforms.  Add the
+# following lines to the HTE file
+
+cp $RMWORK/R9/ml/HTE HTE.step9
+htestrm HTE.step9 wp feb89 hmm0
+cat<<__EOF__ >> HTE.step9
+# Specify the form of transform to be generated
+setenv HVXFORMCONFIG $RMLIB/configs/config.mllr
+
+# HVite adaptation options
+set HVSPKRMASK      = '*/%%%%%%_*.mfc'
+set HVFORCEXFORMDIR = ($RMWORK/R10/ml/hmm0)
+set HVOUTXFORMEXT   = mllr1
+set HVINCADAPT      = 1
+__EOF__
+
+# HVFORCEXFORMDIR (and the related HEFORCEXFORMDIR) allow directories
+# to be specified for the various transformation macros to be found.
+# The information associated with precisely which transform is used is
+# stored in the LOG file. In the above case the line is required to
+# specify where the correct regression class tree (and associated base
+# classes) are stored.
+
+ htestrm HTE.step9 wp feb89 hmm0 
+
+# Run htestrm as usual to perform incremental adaptation. The final
+# transform is stored in the test directory (assumed to be
+# hmm0/test_wp_feb89.2). When generating transforms extensions to the
+# transforms are extensively used. In this case mllr1. This final
+# transform can then be used as the input transform. First comment out
+# HVINCADAPT in the HTE file and add
+
+cp HTE.step9 HTE.step10.1
+cat <<__EOF__ | ed HTE.step10.1
+/HVINCADAPT/s/^/# /
+a
+set HVINXFORMEXT    = mllr1
+.
+wq
+__EOF__
+
+# This specifies the extension of the transform for decoding. To decode run 
+
+ htestrm HTE.step10.1 wp feb89 hmm0 hmm0/test_wp_feb89.2
+
+# 10.2 Speaker Adaptive Training
+
+# For some tasks it is useful to use adaptive training. Adaptive
+# training with constrained MLLR transforms is fully supported in HTK.
+# First copy the 6 component models and the regression class trees.
+
+if [ ! -d $RMWORK/R10/sat ]
+then
+  mkdir -p $RMWORK/R10/sat
+fi
+cd $RMWORK/R10/sat
+mkdir hmm0
+cp $RMWORK/R10/ml/hmm0/MODELS hmm0
+cp $RMWORK/R10/ml/hmm0/regtree_2.* hmm0
+
+# Copy the HTE files associated with SAT training.
+
+cp $RMHTK/lib/htefiles/HTE.sat.model .
+cp $RMHTK/lib/htefiles/HTE.sat.xform .
+cp $RMHTK/lib/htefiles/HTE.align .
+chmod +w HTE*
+
+# First generate the CMLLR transforms for the adaptive training
+
+ herest HTE.sat.xform hmm0 hmm0/cmllr
+
+# Then generate the models. This uses the above transforms as the
+# input and the parent xforms. It is important that the transform is
+# used as a parent transform as well as the input transform, otherwise
+# the model will be generated in the original model space.
+
+ herest HTE.sat.model hmm0 hmm1 hmm0/cmllr
+ herest HTE.sat.model hmm1 hmm2 hmm0/cmllr
+
+# To use these models for recognition with no supervised data, first
+# the standard models are used for recognition. The output from these
+# are then used to obtain the phone level transcription.
+
+ mkdir hmm0/wlabs
+ cp $RMWORK/R10/ml/hmm0/test_wp_feb89.1/wp_feb89.mlf hmm0/wlabs
+ htestrm HTE.align wp feb89 hmm0
+ herest HTE.align hmm0 hmm0/cmllr1
+
+# It is useful to use different extensions each time transforms are
+# generated.  To do this change HEOUTXFORMEXT in HTE.align to
+# cmllr2. Comment out HVALIGN from HTE.align so that decoding is
+# run. Generate new transforms and then decode.
+
+cp HTE.align HTE.align.step10.2 
+cat <<__EOF__ | ed HTE.align.step10.2
+/HVALIGN/s/^/# /
+/HEOUTXFORMEXT/s/cmllr1/cmllr2/
+wq
+__EOF__
+
+ herest HTE.align.step10.2 hmm2 hmm2/cmllr2 hmm0/cmllr1
+ htestrm HTE.align.step10.2 wp feb89 hmm2 hmm2/cmllr2
+
+# Standard MLLR can then be built on top of this CMLLR transform. This
+# is achieved by specifying the cmllr2 transforms as the parent
+# transforms for generating the MLLR transform. Add the following
+# lines to HTE.align
+
+cp HTE.align.step10.2 HTE.align2.step10.2
+cat<<__EOF__ >> HTE.align2.step10.2
+set HEPAXFORMDIR    = hmm0/cmllr2
+set HEPAXFORMEXT    = cmllr2
+__EOF__
+
+# and change the xform config file to config.mllr. You will also need to 
+# alter the transform extensions so that 
+# set HEOUTXFORMEXT   = mllr1
+# set HEINXFORMEXT    = cmllr2
+# set HVINXFORMEXT    = mllr1
+
+cat<<EOF | ed HTE.align2.step10.2
+/HEXFORMCONFIG/s/configs\/.*$/configs\/config.mllr/
+/HEOUTXFORMEXT/s/cmllr2/mllr1/
+/HEINXFORMEXT/s/cmllr1/cmllr2/
+/HVINXFORMEXT/s/cmllr2/mllr1/
+wq
+EOF
+
+# The transforms can then be trained and used in decoding with
+
+herest HTE.align2.step10.2 hmm2 hmm2/mllr1 hmm2/cmllr2
+htestrm HTE.align2.step10.2 wp feb89 hmm2 hmm2/mllr1
+
+# The configuring of the transformations is very general. It is
+# possible to vary the block-sizes, size of regression class tree,
+# nature of the transforms (CMLLR, MLLRMEAN, MLLRCOV - see
+# config.cov). These may be combined into general combinations, for
+# example cascade transforms.
+
+echo step 10 completed

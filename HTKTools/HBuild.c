@@ -3,23 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*     File: HBuild.c:  Word-Lattice Building                  */
+/*            File: HBuild.c   Word-lattice building           */
 /* ----------------------------------------------------------- */
 
-char *hbuild_version = "!HVER!HBuild:   3.4.1 [CUED 12/03/09]";
+char *hbuild_version = "!HVER!HBuild:   3.5.0 [CUED 12/10/15]";
 char *hbuild_vc_id = "$Id: HBuild.c,v 1.1.1.1 2006/10/11 09:54:59 jal58 Exp $";
 
 /* The HBuild program takes input files in a number of different
@@ -45,6 +61,7 @@ char *hbuild_vc_id = "$Id: HBuild.c,v 1.1.1.1 2006/10/11 09:54:59 jal58 Exp $";
 #include "HVQ.h"
 #include "HParm.h" 
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h" 
 #include "HDict.h"
@@ -375,7 +392,8 @@ Lattice *ProcessBoBiGram(MemHeap *latHeap, Vocab *voc, NGramLM *nLM)
    LArc *la;
 
    lmId ndx[NSIZE+1];  
-   int i,j,k;
+   int i,k;
+   unsigned long int j;
    Lattice *lat;
    Boolean enterFound=FALSE;
    Boolean exitFound=FALSE;
@@ -415,7 +433,7 @@ Lattice *ProcessBoBiGram(MemHeap *latHeap, Vocab *voc, NGramLM *nLM)
                 nLM->wdlist[i]->name);
       ln = lat->lnodes+j;
       ln->word = wd; ln->n=0; ln->v=0;
-      wd->aux = (Ptr) j;
+      wd->aux = (Ptr)j;
       if (nLM->wdlist[i] != enterId) {
          la = lat->larcs+k;
          la->start = lat->lnodes;
@@ -436,7 +454,7 @@ Lattice *ProcessBoBiGram(MemHeap *latHeap, Vocab *voc, NGramLM *nLM)
       ndx[0] = i;
       ne = GetNEntry(nLM,ndx,FALSE);
       fromWd =  GetWord(voc,nLM->wdlist[i],FALSE);
-      fromNode =  lat->lnodes+((int) fromWd->aux);
+      fromNode =  lat->lnodes+((unsigned long int) fromWd->aux);
       la->start = fromNode;    /* backoff weight */
       la->end = lat->lnodes;
       if (ne==NULL) la->lmlike = 0.0;
@@ -447,7 +465,7 @@ Lattice *ProcessBoBiGram(MemHeap *latHeap, Vocab *voc, NGramLM *nLM)
             if ((nLM->wdlist[se->word] == unknownId) && zapUnknown)
                continue;
             toWd = GetWord(voc,nLM->wdlist[se->word],FALSE);
-            toNode = lat->lnodes+((int) toWd->aux);
+            toNode = lat->lnodes+((unsigned long int) toWd->aux);
             if (nLM->wdlist[se->word] != enterId) {
                la->start = fromNode;
                la->end = toNode;
@@ -466,7 +484,8 @@ Lattice *ProcessMatBiGram(MemHeap *latHeap, Vocab *voc, MatBiLM *bg)
    LNode *ln,*fromNode,*toNode;
    LArc *la;
    Word wd,fromWd,toWd;
-   int i,j;
+   int i;
+   unsigned long int j;
    int skipWord=0;
    Lattice *lat;
    Vector row;
@@ -502,12 +521,12 @@ Lattice *ProcessMatBiGram(MemHeap *latHeap, Vocab *voc, MatBiLM *bg)
    for (i=1,j=0; i < bg->numWords; i++) {
       row = bg->bigMat[i];
       fromWd =  GetWord(voc,bg->wdlist[i],FALSE);
-      fromNode =  lat->lnodes+((int) fromWd->aux);
+      fromNode =  lat->lnodes+((unsigned long int) fromWd->aux);
       if (i == skipWord) continue;
       for (j=2; j <= (i==1?bg->numWords-1:bg->numWords); j++) {
          if (j == skipWord) continue;
          toWd = GetWord(voc,bg->wdlist[j],FALSE);
-         toNode = lat->lnodes+((int) toWd->aux);
+         toNode = lat->lnodes+((unsigned long int) toWd->aux);
          la->start = fromNode;
          la->end = toNode;
          la->lmlike = row[j];
@@ -749,6 +768,4 @@ Lattice *ProcessWordPair(MemHeap *latHeap, Vocab *voc, char *gramFn)
 
 
 /* ------------------- End of HBuild.c --------------------------------- */
-
-
 

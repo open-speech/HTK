@@ -3,31 +3,33 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*                                                             */
-/*              2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HArc.c   Forward Backward routines        */
+/*           File: HArc.c   Forward backward routines          */
 /* ----------------------------------------------------------- */
 
-char *arc_version = "!HVER!HArc:   3.4.1 [CUED 12/03/09]";
-char *arc_vc_id = "$Id: HArc.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Exp $";
+char *arc_version = "!HVER!HArc:   3.5.0 [CUED 12/10/15]";
+char *arc_vc_id = "$Id: HArc.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 
 /*
@@ -43,6 +45,7 @@ char *arc_vc_id = "$Id: HArc.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Exp $";
 #include "HAudio.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h"
 #include "HDict.h"
@@ -68,7 +71,7 @@ static Boolean IsLMScale = FALSE;
 static float WDPEN = 0;
 static Boolean IsWdPen = FALSE;
 static float FRAMEDUR = 0; 
-static int debug=0;
+/*static int debug=0;*/
 
 
 #define MAX(a,b) ((a)>(b) ? (a):(b))
@@ -77,9 +80,8 @@ static int debug=0;
 
 Boolean StackInitialised=FALSE;
 static MemHeap tempArcStack;                  /* for temporary structures. */
-
-
-
+/* cz277 - mtload */
+static MemHeap arcstak;
 
 
 /* -------------------------- Arc support routines.----------------------- */
@@ -147,7 +149,11 @@ int TimeToNFrames(float time, ArcInfo *aInfo){
    float fans; int ans;
    fans =  time/aInfo->framedur;
    ans = (int)(fans+0.5); 
-   if(fabs(ans-fans) > 0.1) HError(1, "There is a problem with lattice frame length.  Set ARC:FRAMEDUR to frame length in seconds (e.g 0.01)");
+
+   if(fabs(ans-fans) > 0.1) { 
+       HError(1, "There is a problem with lattice frame length.  Set ARC:FRAMEDUR to frame length in seconds (e.g 0.01)");
+   }
+
    return ans;
 }
 
@@ -210,8 +216,8 @@ HArc *CreateArc(MemHeap *mem, Lattice *lat, LArc *la, int start_time, int pos, i
 
 void PrintArc(FILE *f, HArc *a){
    ArcTrans *at;
-   fprintf(f, "Arc{ id=%d, pos=%d, parentLarc=0x%x, t_start=%f, t_end=%f",
-           a->id, a->pos, (int)a->parentLarc, (float)a->t_start, (float)a->t_end);
+   fprintf(f, "Arc{ id=%d, pos=%d, parentLarc=%p, t_start=%f, t_end=%f",
+           a->id, a->pos, a->parentLarc, (float)a->t_start, (float)a->t_end);
    if(a->prec && a->t_end > a->prec->t_end){
       printf("(>%f by %E)\n", (float)a->prec->t_end, (float)(a->t_end - a->prec->t_end));
       if(a->t_end + 0.0 == a->prec->t_end){ printf("****\n"); }
@@ -270,7 +276,17 @@ int arc_compare( const void* a , const void* b )
 void SortArcs( ArcInfo *aInfo )
 {
    int q;
-   HArc   **arclist = New( &gstack , aInfo->nArcs * sizeof(HArc*) );
+
+   /* cz277 - mtload */
+   if(!StackInitialised) {
+      CreateHeap(&tempArcStack, "tempArcStore", MSTAK, 1, 0.5, 10000, 100000);
+      StackInitialised = TRUE;
+   }
+
+   /* cz277 - mtload */
+   /*HArc   **arclist = New( &gstack , aInfo->nArcs * sizeof(HArc*) );*/
+   HArc **arclist = New(&tempArcStack, aInfo->nArcs * sizeof(HArc*));
+
    HArc   *a , *prec = NULL ;  
    HArc   **al = arclist , **ale = arclist + aInfo->nArcs ;
    int   id = 1 ;
@@ -301,7 +317,11 @@ void SortArcs( ArcInfo *aInfo )
    q=0;
    for(a=aInfo->start;a;a=a->foll)
       a->id = ++q;
-   Dispose( &gstack , arclist );
+   /* cz277 - mtload */
+   /*Dispose( &gstack , arclist );*/
+   /*Dispose(&gcheap, arclist);*/
+   Dispose(&tempArcStack, arclist);
+
 }
 
 
@@ -348,9 +368,182 @@ void FixLatTimes(Lattice *lat){ /*Makes it so that the sum of phone lengths equa
 }
 
 
-
-
 /* -------------------------- Creates the arcs from the lattice. ----------------------- */
+
+/* cz277 - cuda fblat */
+#ifdef CUDA
+void InitAcousticDev(Acoustic *ac, AcousticDev *acDev) {
+    int i, j, T1, Nq1, size;
+    StreamElem *ste;
+    AcousticDev acHost;
+    int *indexes;
+    NFloat *transp;
+
+    Nq1 = ac->Nq + 1;
+    T1 = ac->t_end - ac->t_start + 1 + 1;
+    /* Nq */
+    acHost.Nq = ac->Nq;
+    acHost.t_start = ac->t_start;
+    acHost.t_end = ac->t_end;
+    acHost.aclike = ac->aclike;
+    acHost.locc = ac->locc;
+    acHost.SP = ac->SP;
+    
+    /* indexes */
+    size = sizeof(int) * Nq1;
+    indexes = (int *) New(&arcstak, size); 
+    for (i = 2; i < ac->Nq; ++i) {
+        indexes[i] = ac->hmm->svec[i].info->pdf[1].targetIdx;
+    }
+    DevNew((void **) &acHost.indexes, size);
+    SyncHost2Dev(indexes, acHost.indexes, size); 
+    /* transp */
+    size = sizeof(NFloat) * Nq1 * Nq1;
+    transp = (NFloat *) New(&arcstak, size);
+    for (i = 1; i <= ac->Nq; ++i) 
+        for (j = 1; j <= ac->Nq; ++j) 
+            transp[i * Nq1 + j] = ac->hmm->transP[i][j];
+    DevNew((void **) &acHost.transp, size);
+    SyncHost2Dev(transp, acHost.transp, size);
+    /* alphaPlus */
+    size = sizeof(NFloat) * T1 * Nq1;
+    acHost.alphaPlus = NULL;
+    if (ac->alphaPlus != NULL) {
+        DevNew((void **) &acHost.alphaPlus, size);
+    }
+    /* betaPlus */
+    acHost.betaPlus = NULL;
+    if (ac->betaPlus != NULL) {
+        DevNew((void **) &acHost.betaPlus, size);
+    }
+    /* otprob */
+    acHost.otprob = NULL;
+    if (ac->otprob != NULL) {
+        DevNew((void **) &acHost.otprob, size);
+    }
+
+    /*Dispose(&arcstak, transp);*/
+    Dispose(&arcstak, indexes);
+
+    /* transfer */
+    SyncHost2Dev(&acHost, acDev, sizeof(AcousticDev));
+}
+#endif
+
+
+/* cz277 - cuda fblat */
+#ifdef CUDA
+void ClearAcousticDev(AcousticDev *acDev) {
+    int i, T1, Nq1, size;
+    AcousticDev acHost;
+
+    SyncDev2Host(acDev, &acHost, sizeof(AcousticDev));
+    T1 = acHost.t_end - acHost.t_start + 1 + 1;
+    Nq1 = acHost.Nq + 1;
+    /* indexes */
+    size = sizeof(int) * Nq1;
+    DevDispose(acHost.indexes, size);
+    /* transp */
+    size = sizeof(NFloat) * Nq1 * Nq1;
+    DevDispose(acHost.transp, size);
+    /* alphaPlus */
+    size = sizeof(NFloat) * T1 * Nq1;
+    if (acHost.alphaPlus != NULL) {
+        DevDispose(acHost.alphaPlus, size);
+    }
+    /* betaPlus */
+    if (acHost.betaPlus != NULL) {
+        DevDispose(acHost.betaPlus, size);
+    }
+    /* otprob */
+    if (acHost.otprob != NULL) {
+        DevDispose(acHost.otprob, size);
+    }
+
+}
+#endif
+
+
+/* cz277 - cuda fblat */
+#ifdef CUDA
+void SyncAcousticDev2HostBeta(AcousticDev *acDev, Acoustic *ac, MemHeap *mem) {
+    int i, j, t, T1, Nq1, size, base;
+    NFloat *betaPlus, *otprob;
+    AcousticDev acHost;
+
+    SyncDev2Host(acDev, &acHost, sizeof(AcousticDev));
+    T1 = acHost.t_end - acHost.t_start + 1 + 1;
+    Nq1 = acHost.Nq + 1;
+    /* aclike */
+    ac->aclike = acHost.aclike;
+
+    /* betaPlus (not necessary?) */
+    if (acHost.SP == FALSE) {
+        size = sizeof(NFloat) * T1 * Nq1;
+        betaPlus = (NFloat *) New(&arcstak, size);
+        SyncDev2Host(acHost.betaPlus, betaPlus, size);
+        for (i = ac->t_start; i <= ac->t_end; ++i) {
+            t = i - ac->t_start + 1;
+            base = t * Nq1;
+            for (j = 1; j <= ac->Nq; ++j)
+                ac->betaPlus[i][j] = betaPlus[base + j];
+        }
+        /* otprob (not necessary?) */
+        otprob = (NFloat *) New(&arcstak, size);
+        SyncDev2Host(acHost.otprob, otprob, size);
+        for (i = ac->t_start; i <= ac->t_end; ++i) {
+            t = i - ac->t_start + 1;
+            base = t * Nq1;
+            for (j = 2; j < ac->Nq; ++j) {
+                if (ac->otprob[i][j][0] == NULL)
+                    ac->otprob[i][j][0] = (float *) New(mem, sizeof(float) * 1);
+                ac->otprob[i][j][0][0] = (float) otprob[base + j];
+            }
+        }  
+
+        /* Dispose(&arcstak, otprob); */
+        Dispose(&arcstak, betaPlus); 
+    }
+}
+#endif
+
+
+/* cz277 - cuda fblat */
+#ifdef CUDA
+void SyncAcousticHost2DevAlpha(Acoustic *ac, AcousticDev *acDev) {
+    NFloat locc;
+
+    locc = ac->locc;
+    /* locc */
+    SyncHost2Dev(&locc, &acDev->locc, sizeof(float));
+}
+#endif
+
+
+/* cz277 - cuda fblat */
+#ifdef CUDA
+void SyncAcousticDev2HostAlpha(AcousticDev *acDev, Acoustic *ac) {
+    int size, i, j, t, T1, Nq1, base;
+    AcousticDev acHost;
+    NFloat *alphaPlus;
+
+    SyncDev2Host(acDev, &acHost, sizeof(AcousticDev));
+    T1 = acHost.t_end - acHost.t_start + 1 + 1;
+    Nq1 = acHost.Nq + 1;
+    /* alphaPlus */
+    size = sizeof(NFloat) * T1 * Nq1;
+    alphaPlus = (NFloat *) New(&arcstak, size);
+    SyncDev2Host(acHost.alphaPlus, alphaPlus, size);
+    for (i = ac->t_start; i <= ac->t_end; ++i) {
+        t = i - ac->t_start + 1;
+        base = t * Nq1;
+        for (j = 1; j <= ac->Nq; ++j)
+            ac->alphaPlus[i][j] = alphaPlus[base + j];
+    }
+    Dispose(&arcstak, alphaPlus);
+    
+}
+#endif
 
 
 void ArcFromLat(ArcInfo *aInfo, HMMSet *hset){
@@ -361,8 +554,11 @@ void ArcFromLat(ArcInfo *aInfo, HMMSet *hset){
    int l;
    float framedur;
 
-   if(!StackInitialised)
-      CreateHeap(&tempArcStack,    "tempArcStore",       MSTAK, 1, 0.5, 1000,  10000);
+   /* cz277 - mtload */
+   if(!StackInitialised) {
+      CreateHeap(&tempArcStack, "tempArcStore", MSTAK, 1, 0.5, 10000, 100000);
+      StackInitialised = TRUE;
+   }
 
    aInfo->start=aInfo->end=0;
    aInfo->nArcs=0;
@@ -437,6 +633,7 @@ void ArcFromLat(ArcInfo *aInfo, HMMSet *hset){
       aInfo->Q = Q = q; /* num unique arcs. */
       aInfo->T = T; 
       aInfo->ac = New(aInfo->mem, sizeof(Acoustic) * (q+1)); 
+
       q=0;
       for(arc=aInfo->start;arc;arc=arc->foll){
          if(!arc->calcArc){  /* if this is one of the 'calculated' arcs */
@@ -453,6 +650,8 @@ void ArcFromLat(ArcInfo *aInfo, HMMSet *hset){
             if(ac->t_start == ac->t_end+1){ 
                ac->SP=TRUE; 
                ac->alphat=ac->alphat1=NULL;ac->betaPlus=NULL;ac->otprob=NULL;
+               /* cz277 - cuda fblat */
+               ac->alphaPlus = NULL;
             } else {
                int j,s,SS,S = hset->swidth[0]; /* probably just 1. */
 	       StreamElem *ste;
@@ -463,9 +662,15 @@ void ArcFromLat(ArcInfo *aInfo, HMMSet *hset){
                ac->alphat1 = CreateDVector(aInfo->mem, ac->Nq);
                ac->betaPlus = ((DVector*)New(aInfo->mem, sizeof(DVector)*(ac->t_end-ac->t_start+1)))-ac->t_start;
                ac->otprob = ((float****)New(aInfo->mem, sizeof(float***)*(ac->t_end-ac->t_start+1)))-ac->t_start;
+               /* cz277 - cuda fblat */
+               ac->alphaPlus = ((DVector *) New(aInfo->mem, sizeof(DVector) * (ac->t_end - ac->t_start + 1))) - ac->t_start; 
+
                for(t=ac->t_start;t<=ac->t_end;t++){
                   ac->betaPlus[t] = CreateDVector(aInfo->mem,ac->Nq);
 		  ac->otprob[t] = ((float***)New(aInfo->mem,(ac->Nq-2)*sizeof(float **)))-2;
+                  /* cz277 - cuda fblat */
+                  ac->alphaPlus[t] = CreateDVector(aInfo->mem, ac->Nq);
+
 		  for(j=2;j<ac->Nq;j++){
                      ac->otprob[t][j] = (float**)New(aInfo->mem,SS*sizeof(float*)); /*2..Nq-1*/
 		     ste = ac->hmm->svec[j].info->pdf+1;
@@ -484,9 +689,7 @@ void ArcFromLat(ArcInfo *aInfo, HMMSet *hset){
       }
       for(arc=aInfo->start;arc;arc=arc->foll)  if(arc->calcArc) arc->ac = arc->calcArc->ac;
 
-
       /* Set up arrays qLo[t] and qHi[t] which are used to speed up iterations over q. */
-    
       aInfo->qLo = (int*)New(aInfo->mem, sizeof(int)*(aInfo->T+1));  /* For efficiency later, work out min & max q active at each time t. */
       aInfo->qHi = (int*)New(aInfo->mem, sizeof(int)*(aInfo->T+1));
       for(t=1;t<=T;t++){  aInfo->qLo[t] = T+1; aInfo->qHi[t] = -1;  }
@@ -499,8 +702,26 @@ void ArcFromLat(ArcInfo *aInfo, HMMSet *hset){
       } 
    }
 
-   if(trace&T_ARC && debug++ < 100){
-      printf("[HArc:] %d arcs, depth %f, depth[reduced] %f\n", aInfo->nArcs, Depth(aInfo,TRUE), Depth(aInfo,FALSE));
+    /* cz277 - cuda fblat */
+#ifdef CUDA
+    if (aInfo->FBLatCUDA == TRUE) {
+        /* acDev */
+        DevNew((void **) &aInfo->acDev, sizeof(AcousticDev) * (aInfo->Q + 1));
+        for (l = 1; l <= aInfo->Q; ++l) {
+            InitAcousticDev(&aInfo->ac[l], &aInfo->acDev[l]);
+        }
+        /* qLoDev & qHiDev */
+        DevNew((void **) &aInfo->qLoDev, sizeof(int) * (aInfo->T + 1));
+        DevNew((void **) &aInfo->qHiDev, sizeof(int) * (aInfo->T + 1));
+        SyncHost2Dev(aInfo->qLo, aInfo->qLoDev, sizeof(int) * (aInfo->T + 1));
+        SyncHost2Dev(aInfo->qHi, aInfo->qHiDev, sizeof(int) * (aInfo->T + 1)); 
+    }
+#endif
+
+   /* cz277 - arcs */
+   /*if(trace&T_ARC && debug++ < 100){*/
+   if(trace&T_ARC) {
+      printf("\t\t[HArc:] %d arcs, depth %f, depth[reduced] %f\n", aInfo->nArcs, Depth(aInfo,TRUE), Depth(aInfo,FALSE));
       if(trace&T_ARC2)
          PrintArcs(stdout, aInfo->start);
    }
@@ -533,10 +754,14 @@ Boolean LatInLatRec(LNode *n1, LNode *n2){
       return TRUE; /*Path found.*/
    }
 
-   if(n1->pred && n1->pred->parc != NULL) return TRUE; /*This is to take the case where the numerator could have choices of arcs (multiple prons).
+   if(n1->pred && n1->pred->parc != NULL) {
+       return TRUE; /*This is to take the case where the numerator could have choices of arcs (multiple prons).
                                                          Where the arcs re-join, just check the last one re-joining.  This makes sure we don't take exponential time.*/
+   }
 
-   if(n1->foll==NULL || n2->foll==NULL) return FALSE;
+   if(n1->foll==NULL || n2->foll==NULL) {
+      return FALSE;
+   }
    else{
       LNode *newn1;
       LArc *la;
@@ -553,7 +778,9 @@ Boolean LatInLatRec(LNode *n1, LNode *n2){
                SameArcs(n1FollArc, la))
                if(LatInLatRec(newn1, newn2)) ThisIsOK = TRUE; /*We've found a path to the end (or to re-join point).  --> this num pron is OK.*/
          }
-         if (!ThisIsOK) return FALSE; /*This num pron was not there.*/
+         if (!ThisIsOK) {
+             return FALSE; /*This num pron was not there.*/
+         }
       }
       return TRUE;
    }
@@ -581,5 +808,9 @@ void InitArc(void)
       if (GetConfFlt(cParm,nParm,"FRAMEDUR",&f)){ FRAMEDUR = f; }                 /*   Important.  Frame duration in seconds.  If != 0.01, specify it. */
       if (GetConfFlt(cParm,nParm,"WDPEN",&f)){ WDPEN = f; IsWdPen = TRUE; }       /*   Overrides lattice-specified one.  */
    }
+   /* cz277 - mtload */
+   CreateHeap(&arcstak, "HArc Stack", MSTAK, 1, 0.0, 100000, ULONG_MAX);
 }
+
+/* ------------------------- End of HArc.c ------------------------- */
 

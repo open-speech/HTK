@@ -3,33 +3,36 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/* author:                                                     */
+/*           M.J.F. Gales <mjfg@eng.cam.ac.uk>                 */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*                                                             */
-/*              2003  M.J.F. Gales and                         */
-/*                    Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2003-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HAdapt.c      Adaptation Library module       */
+/*         File: HAdapt.c      Adaptation library module       */
 /* ----------------------------------------------------------- */
 
-char *hadapt_version = "!HVER!HAdapt:   3.4.1  [CUED 12/03/09]";
-char *hadapt_vc_id =  "$Id: HAdapt.c,v 1.2 2006/12/07 11:09:07 mjfg Exp $";
+char *hadapt_version = "!HVER!HAdapt:   3.5.0  [CUED 12/10/15]";
+char *hadapt_vc_id =  "$Id: HAdapt.c,v 1.3 2015/10/12 12:07:24 cz277 Exp $";
 
 
 #include <stdio.h>      /* Standard C Libraries */
@@ -46,11 +49,16 @@ char *hadapt_vc_id =  "$Id: HAdapt.c,v 1.2 2006/12/07 11:09:07 mjfg Exp $";
 #include "HAudio.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"     /* cz277 - ANN */
 #include "HModel.h"
 #include "HTrain.h"
 #include "HUtil.h"
 #include "HAdapt.h"
 #include "HFB.h"
+#include "HNet.h"
+#include "HArc.h"
+#include "HFBLat.h"
+#include "HNCache.h"	/* cz277 - ANN */
 
 /* trace flags */
 #define T_TOP   00001    /* Top level tracing */
@@ -323,7 +331,9 @@ static IntVec ParseConfIntVec(MemHeap *x, char *inbuf)
 }
 
 /* EXPORT->InitAdapt: initialise configuration parameters */
-void InitAdapt (XFInfo *xfinfo) 
+/*void InitAdapt (XFInfo *xfinfo) */
+/* cz277 - xform */
+void InitAdapt()
 {
    int i;
    Boolean b;
@@ -408,8 +418,9 @@ void InitAdapt (XFInfo *xfinfo)
          cmllrAdaptKind = Str2AdaptKind(buf);
    }
 
+   /* cz277 - xform */
    /* Initialise the XFInfo values */
-   xfinfo->outSpkrPat = "*.%%%";
+   /*xfinfo->outSpkrPat = "*.%%%";
    xfinfo->inSpkrPat = NULL;
    xfinfo->paSpkrPat = NULL;
    xfinfo->outXFormExt = NULL;
@@ -426,8 +437,37 @@ void InitAdapt (XFInfo *xfinfo)
    xfinfo->paXForm = NULL;
    xfinfo->al_hset = NULL;
    xfinfo->alXFormExt = NULL;
-   xfinfo->alXFormDir = NULL;
+   xfinfo->alXFormDir = NULL;*/
+
    CheckAdaptOptions();
+}
+
+/* cz277 - xform */
+void InitXFInfo(XFInfo *xfinfo) {
+    xfinfo->nSpkr = 0;
+    xfinfo->curOutSpkr = NULL;
+    xfinfo->curInSpkr = NULL;
+    xfinfo->curPaSpkr = NULL;
+
+    /* Initialise the XFInfo values */
+    xfinfo->outSpkrPat = "*.%%%";
+    xfinfo->inSpkrPat = NULL;
+    xfinfo->paSpkrPat = NULL;
+    xfinfo->outXFormExt = NULL;
+    xfinfo->inXFormExt = NULL;
+    xfinfo->paXFormExt = NULL;
+    xfinfo->outXFormDir = NULL;
+    xfinfo->paXFormDir = NULL;
+    xfinfo->useOutXForm = FALSE;
+    xfinfo->useInXForm = FALSE;
+    xfinfo->usePaXForm = FALSE;
+    xfinfo->xformTMF = NULL;
+    xfinfo->inXForm = NULL;
+    xfinfo->outXForm = NULL;
+    xfinfo->paXForm = NULL;
+    xfinfo->al_hset = NULL;
+    xfinfo->alXFormExt = NULL;
+    xfinfo->alXFormDir = NULL;
 }
 
 /* Additional code to parse configs to for appropriate thresholds */
@@ -992,7 +1032,6 @@ static void CreateBaseTriMat(MemHeap *x, MixPDF *mp, AdaptXForm *xform, int clas
     regAcc->obsVec =  CreateVector(x,vsize);
     ZeroVector(regAcc->obsVec);
     regAcc->bDiagMat = CreateBlockTriMat(x,blockSize); 
-    ZeroBlockTriMat(regAcc->bDiagMat);
     tm = (TriMat *)New(x,sizeof(TriMat)*(vsize+1));
     vsp = (int *)tm; *vsp = vsize;
     for (b=1,cntj=1;b<=IntVecSize(blockSize);b++) {
@@ -1032,13 +1071,14 @@ void UpdateAccCache(double Lr, Vector svec, MixPDF *mp)
    TriMat m;
    int vsize = VectorSize(svec);
    Vector covar;
-   int i, j, bl, bstart, nblock, bsize; 
+   int i, j, bl, bstart, bsize;
+   unsigned long int nblock;
 
    paac = GetPAAccCache(mp);    
    if ( paac != NULL ) {
       /* This needs to be altered so that it does not rely on a non-zero first element */
       if ( paac->bTriMat[1][1][1] == 0 ) {
-	nblock = (int)(paac->bTriMat[0]);
+	nblock = (unsigned long int)(paac->bTriMat[0]);
 	for (bl=1,bstart=0;bl<=nblock;bl++) {
 	  m = paac->bTriMat[bl];
 	  bsize = TriMatSize(m);
@@ -1061,7 +1101,8 @@ void UpdateAccCache(double Lr, Vector svec, MixPDF *mp)
 
 void UpdateBaseAccs(Vector svec)
 {
-   int i,j,b,k, bsize, nblock, bl;
+   int i,j,b,k, bsize, bl;
+   unsigned long int nblock;
    int cnt, cnti, cntj;
    TriMat tm, m;
    RegAcc *ra;
@@ -1076,7 +1117,7 @@ void UpdateBaseAccs(Vector svec)
       ra = GetRegAcc(mp);
       if ((ra->bTriMat != NULL) && (ra->bVector[1]>0)) {    
          acc = ra->bVector;
-         nblock = (int)(ra->bDiagMat[0]);
+         nblock = (unsigned long int)(ra->bDiagMat[0]);
 
          /* generate the outer-product */
          /* moved to here for speed with large numbers of baseclasses */
@@ -1114,7 +1155,8 @@ void UpdateBaseAccs(Vector svec)
 
 void UpdateBaseAccsWithPaac(void)
 {
-   int i,j,k, b, bsize, nblock, bl;
+   int i,j,k, b, bsize, bl;
+   unsigned long int nblock;
    int cnti;
    TriMat tm, m;
    RegAcc *ra;
@@ -1133,7 +1175,7 @@ void UpdateBaseAccsWithPaac(void)
         for (paac = headac; paac!= NULL; paac=paac->next) { 
           if ( (paac->baseclass == b)&& (paac->bVector[1]>0) ){
             acc = paac->bVector;
-            nblock = (int)(ra->bDiagMat[0]);
+            nblock = (unsigned long int)(ra->bDiagMat[0]);
             for (bl=1,cnti=1;bl<=nblock;bl++) {
               m = paac->bTriMat[bl];
               bsize = TriMatSize(m);
@@ -1378,7 +1420,6 @@ static AccStruct *CreateAccStruct(MemHeap *x, AdaptXForm *xform,
 static void SetSemiTiedAvCov(HMMSet *hset)
 {
    HMMScanState hss;
-   StateInfo *si   ;
    StreamElem *ste;
    MixPDF *mp;
    STriMat inv;
@@ -1410,7 +1451,6 @@ static void SetSemiTiedAvCov(HMMSet *hset)
    NewHMMScan(hset,&hss);
    occAcc = 0.0;
    while(GoNextState(&hss,FALSE)) {
-      si = hss.si;
       while (GoNextStream(&hss,TRUE)) {
          s = hss.s;
          if (strmProj) vsize = hset->vecSize;
@@ -1547,7 +1587,7 @@ static float SetNodeOcc(RegNode *node, BaseClass *bclass)
 static Boolean ParseNode(RegNode *node, AdaptXForm *xform, 
 			 RegTree *rtree, IntVec classes)
 {
-   int b,c,size;
+   int b,c;
    Boolean genXForm;
    IntVec lclasses;
 
@@ -1556,7 +1596,6 @@ static Boolean ParseNode(RegNode *node, AdaptXForm *xform,
    genXForm = FALSE;
    if (trace&T_TRE) printf("Node %d (%f)\n",node->nodeIndex,node->nodeOcc);
    if (node->nodeOcc > rtree->thresh) {
-      size = IntVecSize(classes);
       lclasses = CreateIntVec(&gstack,IntVecSize(classes));
       ZeroIntVec(lclasses);
       if (node->numChild>0) { /* Not a terminal node */
@@ -1910,7 +1949,6 @@ static AccCache  *CreateAccCache(IntVec size,  int b)
    ac->bVector  = CreateDVector(&acccaStack,vsize);
    ZeroDVector(ac->bVector);
    ac->bTriMat = CreateBlockTriMat(&acccaStack,size);
-   ZeroBlockTriMat(ac->bTriMat);
    ac->next = headac;
    headac = ac;
    return(ac);
@@ -3715,6 +3753,7 @@ static Boolean GenClassXForm(BaseClass *bclass, AdaptXForm *xform)
     }
     Dispose(&gstack,accs);
   }
+  FreeIntVec(&gstack,classes);
   return TRUE;
 }
 
@@ -4538,12 +4577,13 @@ Boolean UpdateSpkrStats(HMMSet *hset, XFInfo *xfinfo, char *datafn)
       if (!keepXFormDistinct) {
          if (xfinfo->xformTMF == NULL) {
             MakeFN("TMF",xfinfo->outXFormDir,NULL,newFn);
-            SaveAllXForms(hset,newFn,xfinfo->saveBinary);
-         } else 
+         } else { 
             MakeFN(xfinfo->xformTMF,xfinfo->outXFormDir,NULL,newFn);
-            SaveAllXForms(hset,newFn,xfinfo->saveBinary);
+	 }
+         SaveAllXForms(hset,newFn,xfinfo->saveBinary);
       }
    }
+
    return spkrChange;
 }
 
@@ -4594,4 +4634,6 @@ void UpdateProjectModels(HMMSet *hset, char *dir)
    /* gconsts fixed in main script */
 }
 
+
+/* ------------------------- End of HAdapt.c ------------------------- */
 

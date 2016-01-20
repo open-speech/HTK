@@ -3,23 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/* File: HSmooth.c: Perform Parameter Smoothing on a HMM Set   */
+/*  File: HSmooth.c  perform parameter smoothing on a HMM set  */
 /* ----------------------------------------------------------- */
 
-char *hsmooth_version = "!HVER!HSmooth:   3.4.1 [CUED 12/03/09]";
+char *hsmooth_version = "!HVER!HSmooth:   3.5.0 [CUED 12/10/15]";
 char *hsmooth_vc_id = "$Id: HSmooth.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $";
 
 
@@ -32,6 +48,7 @@ char *hsmooth_vc_id = "$Id: HSmooth.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $"
 #include "HVQ.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HTrain.h"
 #include "HUtil.h"
@@ -474,7 +491,7 @@ void StatReport(void)
    px=1;
    do {
       hmm = hss.hmm;
-      PrintStats(f,px,hmm,(int)hmm->hook);
+      PrintStats(f,px,hmm,(int)(unsigned long int)hmm->hook);
       px++;
    } while (GoNextHMM(&hss));
    EndHMMScan(&hss);
@@ -930,7 +947,7 @@ void UpdateTMVars(void)
    MixPDF *mpdf;
    Vector mean;
    Covariance cov;
-   Boolean mixFloored,shared;
+   Boolean shared;
 
    for (s=1;s<=nStreams;s++){
       vSize = hset.swidth[s];
@@ -944,7 +961,6 @@ void UpdateTMVars(void)
          ma = (MuAcc *) GetHook(mean);     
          if (va != NULL){
             occim = va->occ;
-            mixFloored = FALSE;
             if (occim > 0.0){
                shared=(GetUse(cov.var)>1 || ma==NULL || ma->occ<=0.0);
                if ((mpdf->ckind==DIAGC)||(mpdf->ckind==INVDIAGC))
@@ -953,7 +969,6 @@ void UpdateTMVars(void)
                      x = va->cov.var[k]/occim - muDiffk*muDiffk;
                      if (x<minV[k]) {
                         x = minV[k];
-                        mixFloored = TRUE;
                      }
                      cov.var[k] = x;
                   }
@@ -965,7 +980,6 @@ void UpdateTMVars(void)
                         x = va->cov.inv[k][l]/occim - muDiffk*muDiffl;
                         if (k==l && x<minV[k]){
                            x = minV[k];
-                           mixFloored = TRUE;
                         }              
                         cov.inv[k][l] = x;
                      }
@@ -1017,7 +1031,7 @@ void UpdateModels(void)
    NewHMMScan(&hset,&hss);
    do {
       hmm = hss.hmm;   
-      n = (int)hmm->hook;
+      n = (int)(unsigned long int)hmm->hook;
       if (n<minEgs && !(trace&T_OPT))
          HError(-2428,"%s copied: only %d egs\n",HMMPhysName(&hset,hmm),n);
       if (n>=minEgs) {

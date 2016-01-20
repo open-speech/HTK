@@ -1,0 +1,56 @@
+#---------------------------------------------------------------#
+# HTK RM Environment File                02/10/15               #
+#                                                               #
+# This version is for:                                          #
+#                                                               #
+#         state-clustered xwrd triphones                        #
+#         39th Order MFCC_E_D_A Data (data in MFCC_E format)    #
+#                                                               #
+#---------------------------------------------------------------#
+
+# Set priority at which processes are run
+set NICE = 5
+
+# Define the rmwork and rmdata areas
+set rmwork=$RMWORK
+set rmdata=$RMDATA
+set rmlib=$RMLIB
+
+# define input filters
+setenv HNETFILTER 'gzip -d -c $.gz'          # Networks compress well
+
+# Define input configuration files
+setenv HVCONFIG $rmlib/configs/config.dnn.xwrd  # Basic configuration
+
+# Define HMMs - should reflect current models set
+set HMMLIST=$rmlib/mlists/treeg.list # ****** #
+
+# Define Test Data 
+# Note that TESTSET is defined by htestrm before sourcing HTE
+set SETLIST=(feb89 oct89 feb91 sep92)
+if ($?TESTSET) then
+   set TESTDATALIST=$rmlib/flists/ind_${TESTSET}.scp
+   set TESTMLF=$rmlib/wlabs/ind_tst.mlf
+endif
+
+# Define possible test conditions
+set TYPELIST=(ng wp)
+
+# HVite Network Defn & Program Options
+set HVTRACE=1
+set HVNET=($rmlib/nets/net.ng $rmlib/nets/net.wp)
+set HVVOC=($rmlib/dicts/mono.dct $rmlib/dicts/mono.dct)
+set HVPRUNE=(200.0 200.0)
+set HVMAXACTIVE=(10000 10000)
+set HVGSCALE=(5.0 5.0)
+set HVIMPROB=(0.0 0.0)
+
+# HResults Results Analysis
+set WORDLIST=$rmlib/wordlist
+set HREQSETS=($rmlib/eq.ng $rmlib/eq.wp)
+set HRNIST 
+
+
+#---------------------------------------------------------------#
+#                END OF ENVIRONMENT DEFINITION                  #
+#---------------------------------------------------------------#

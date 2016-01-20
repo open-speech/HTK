@@ -3,37 +3,40 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*              2001  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*  File: HCompV.c: HMM global mean/variance initialisation    */
+/*    File: HCompV.c HMM global mean/variance initialisation   */
 /* ----------------------------------------------------------- */
 
-char *hcompv_version = "!HVER!HCompV:   3.4.1 [CUED 12/03/09]";
-char *hcompv_vc_id = "$Id: HCompV.c,v 1.1.1.1 2006/10/11 09:54:59 jal58 Exp $";
+char *hcompv_version = "!HVER!HCompV:   3.5.0 [CUED 12/10/15]";
+char *hcompv_vc_id = "$Id: HCompV.c,v 1.2 2012/10/12 12:07:24 cz277 Exp $";
 
 
 /* 
@@ -59,6 +62,7 @@ char *hcompv_vc_id = "$Id: HCompV.c,v 1.1.1.1 2006/10/11 09:54:59 jal58 Exp $";
 #include "HVQ.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h"
 
@@ -133,7 +137,8 @@ static char oflags[MAXSTRLEN] = "m";     /* export flags for CMV */
 static char cmDir[MAXSTRLEN];            /* directory to export CMV */
 static char TargetPKStr[MAXSTRLEN];      /* target parm kind string */
 static Boolean DoCMV = FALSE;            /* switch from old HCompV to CMV */
-
+/* cz277 - mkdir */
+static Boolean enableSetupDir = FALSE;
 
 /* ------------- Process Command Line and Check Data ------------ */
 
@@ -150,6 +155,8 @@ void SetConfParms(void)
       if (GetConfBool(cParm,nParm,"UPDATEMEANS",&b)) meanUpdate = b;
       if (GetConfBool(cParm,nParm,"SAVEBINARY",&c)) saveBinary = c;
       if (GetConfFlt(cParm,nParm,"MINVARFLOOR",&d)) minVar = d;
+      /* cz277 - mkdir */
+      if (GetConfBool(cParm, nParm, "MAKEDIR", &c)) enableSetupDir = c;
    }
 }
 
@@ -705,6 +712,11 @@ void ExportNMV(SpkrAccListItem *sal, char *OutDirName, char *tgtPKStr)
       }
       else
          MakeFN(p->sa->SpkrName,OutDirName,NULL,oFileName);
+
+      /* cz277 - mkdir */
+      if (enableSetupDir == TRUE) {
+          SetupDir(PathOf(oFileName, pathBuffer1));
+      }
 
       /* open and write */
       oFile = FOpen(oFileName,NoOFilter,&isPipe);

@@ -1,0 +1,46 @@
+#---------------------------------------------------------------#
+# HTK RM Environment File                05/09/15               #
+#                                                               #
+# This version is for:                                          #
+#                                                               #
+#   HTE.dnn.bn - bottleneck DNN(-HMMs) training                 #
+#   for Tandem GMM-HMM systems                                  #
+#                                                               #
+#---------------------------------------------------------------#
+
+# DNN definition variables
+set FEATURETYPE=MFCC_E_D_A_Z
+set FEATUREDIM=39
+set CONTEXTSHIFT=-4,-3,-2,-1,0,1,2,3,4                  # input feature context shift
+set DNNSTRUCTURE=351X500X500X500X500X39X3000	# BN DNN structure (351 = 39 * 9), BN dim = 39
+set HIDDENACTIVATION=SIGMOID				# Sigmoid hidden activation function
+set OUTPUTACTIVATION=SOFTMAX				# Softmax output activation function
+set LOGOBSVPRIOR=0.0					# log p(o_t) = 0.0 
+set MINIBATCHSIZE=800					# mini-batch size
+set DATACACHESIZE=200000000				# maximum num of cached samples (a virtual num)
+                                                        # better shuffling when more samples cached
+                                                        # saves reloading cost when all samples cached
+
+# DNN layerwise discriminative pretraining variables
+set PTLEARNRATEKIND=LIST				# use LIST learning rate scheduler for PT
+set PTLEARNRATEVALS=0.001				# one epoch for PT, learning rate 0.001
+set PTMOMENTUM=0.5					# momentum set to 0.5 for PT
+set PTWEIGHTDECAY=0.001					# weight decay set to 0.001 for PT
+set PTGRADIENTCLIP=0.32					# PT gradients cliping threshold 0.32
+
+# DNN finetuning variables
+set FTLEARNRATEKIND=NEWBOB				# use NEWBOB learning rate scheduler for FT
+set FTNEWBOBCRITERION=ACC				# use (validation) class accuracy for NEWBOB
+set FTNEWBOBRAMPSTART=0.001				# NEWBOB ramp start threshold 0.001 * 100%
+set FTNEWBOBSTOPDIFF=0.001				# NEWBOB stops when increase < 0.001 * 100%
+set FTNEWBOBDECAY=0.5					# NEWBOB reduces learning rate by 0.5, if needed
+set FTLEARNRATEVALS=0.002				# intial learning rate for NEWBOB
+set FTMINEPOCHNUM=12					# minmum epoch number for NEWBOB FT
+set FTMAXEPOCHNUM=16					# maximum epoch number for NEWBOB FT
+set FTMOMENTUM=0.5					# momentum set to 0.5 for FT
+set FTWEIGHTDECAY=0.001					# weight decay set to 0.001 for FT
+set FTGRADIENTCLIP=0.32					# FT gradients cliping threshold 0.32
+
+#---------------------------------------------------------------#
+#                 End of Environment definition                 #
+#---------------------------------------------------------------#

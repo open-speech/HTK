@@ -3,36 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*              2001  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*    File: HDMan:   pronunciation dictionary manager          */
+/*        File: HDMan   pronunciation dictionary manager       */
 /* ----------------------------------------------------------- */
 
-char *hdman_version = "!HVER!HDMan:   3.4.1 [CUED 12/03/09]";
+char *hdman_version = "!HVER!HDMan:   3.5.0 [CUED 12/10/15]";
 char *hdman_vc_id = "$Id: HDMan.c,v 1.2 2006/12/07 11:09:08 mjfg Exp $";
 
 #include "HShell.h"
@@ -60,10 +63,10 @@ static int nParm = 0;               /* total num params */
 
 #define MAXARGS  100    /* max args in any command */
 /* MAXPHONES (max phones in any pronunciation) is defined in HDict.h */
-#define MAXPRONS 400     /* max number of pronunciations per word */
+#define MAXPRONS 1000     /* max number of pronunciations per word */
 #define MAXDICTS 100     /* max number of source dictionaries */
 #define MAXCONS  20     /* max number of contexts per script */
-#define MAXPVOC  500    /* max num distinct phones */
+#define MAXPVOC  2000    /* max num distinct phones */
 
 /* ---------------------- Global Data Structures ------------------------------ */
 
@@ -397,49 +400,50 @@ void LoadPhoneList(void)
 /*           aux = -2, if undef and printed, aux = -3 if defd and printed */
 void PutPhone(LabId id)
 {
-   char buf[80];
+   char buf[MAXSTRLEN];
    LabId baseId;
 
-   if (((int)id->aux == 0 || (int)id->aux == -1) && newPhones != NULL) {
+   if (((long int)id->aux == 0 || (long int)id->aux == -1) && newPhones != NULL) {
       fprintf(newPhones,"%s\n",ReWriteString(id->name,NULL,ESCAPE_CHAR));
       /* avoid printing it again */
-      id->aux = (Ptr)((int)id->aux - 2);
+      id->aux = (Ptr)((long int)id->aux - 2);
    }
    strcpy(buf,id->name);
    TriStrip(buf);
    baseId=GetLabId(buf,TRUE);
-   if ((int)baseId->aux <= 0 ) {  /* not seen this label before */
-      if ((int)baseId->aux == 0 || (int)baseId->aux == -2){
+   if ((long int)baseId->aux <= 0 ) {  /* not seen this label before */
+      if ((long int)baseId->aux == 0 || (long int)baseId->aux == -2){
          if (nNewPhones == MAXPVOC)
             HError(1430,"PutPhone: MAXPVOC exceeded");
          newList[nNewPhones++] = baseId;
       }
-      baseId->aux = (Ptr)0;            
+      baseId->aux = (Ptr)0;
    }
-   baseId->aux = (Ptr)((int)baseId->aux + 1);
+   baseId->aux = (Ptr)((long int)baseId->aux + 1);
 }
 
 /* ListNewPhones: list new phones to log file along with counts */
 void ListNewPhones(void)
 {
-   int i,c;
+   int i;
+   long c;
 
    if (nDefPhones>0){
       fprintf(logF,"Def Phone Usage Counts\n");
       fprintf(logF,"---------------------\n");
       for (i=0; i<nDefPhones; i++) {
-         c = (int)defList[i]->aux;
+         c = (long int)defList[i]->aux;
          if (c<0) c=0;
-         fprintf(logF," %2d. %-5s : %5d\n",i+1,defList[i]->name,c);
+         fprintf(logF," %2d. %-5s : %5ld\n",i+1,defList[i]->name,c);
       }
    }
    if (nNewPhones>0){
       fprintf(logF,"New Phone Usage Counts\n");
       fprintf(logF,"---------------------\n");
       for (i=0; i<nNewPhones; i++){
-         c = (int)newList[i]->aux;
+         c = (long int)newList[i]->aux;
          if (c<0) c=0;
-         fprintf(logF," %2d. %-5s : %5d\n",i+1, newList[i]->name,c);
+         fprintf(logF," %2d. %-5s : %5ld\n",i+1, newList[i]->name,c);
       }
    }
 }
@@ -1003,7 +1007,7 @@ Boolean ReadDictProns(DBuffer *db)
 
    if (db->nextWord == NULL) return FALSE;
    if (db->wbuf.word != NULL && strcmp(db->wbuf.word->name,db->nextWord->name) > 0 )
-      HError(1452,"ReadDictProns: word %s out of order in dict %s",
+      HError(-1,"ReadDictProns: word %s out of order in dict %s",
              db->nextWord->name,db->name);
    db->wbuf.word = thisWord = db->nextWord;
    db->wbuf.outsym = db->nextOutSym;
@@ -1629,16 +1633,16 @@ void SetActiveCount(void)
 /* HighestInput: return alphabetically highest next word */
 LabId HighestInput(void)
 {
-   int i, hi;
+   int i;
    LabId best,next;
 
    i = 0; 
    while ((next=inbuf[i].nextWord) == NULL) i++;
-   hi = i++; best = next;
+   i++; best = next;
    while (i<nInputs){
       if ((next=inbuf[i].nextWord) != NULL)
          if (strcmp(next->name,best->name) < 0){
-            best = next; hi = i;
+            best = next;
          }
       i++;
    }

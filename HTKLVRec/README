@@ -5,11 +5,57 @@ This directory is for the HDecode LV recogniser system.
 
 This system is licenced separately from HTK so is not included with
 the HTK distribution.  In order to obtain it you must agree to the
-licence for HDecode at http://htk.eng.cam.ac.uk/hdecode_register.shtml
+licence for HDecode at 
+
+http://htk.eng.cam.ac.uk/prot-docs/hdecode_register.shtml
+
 where you will also receive instructions for downloading and building
-HDecode.
+HDecode. If you have HTK 3.5 Beta downloaded and unpacked the instructions 
+can be found in the README file.
 
-Anna Langley <jal58@cam.ac.uk>
-2.5.2006
+WINDOWS users: Note that current, Linux, version has not been tested on 
+Windows.
 
-WINDOWS users: Note after compilation you need to rename HDecode.orig.exe into HDecode.exe and place both HDecode.exe and HDecode.mod.exe into bin.win32 or any other directory storing the rest of HTK executables.
+Compiling & Installing HTK under UNIX/Linux, OS X or Cygwin
+===========================================================
+
+HDecode 3.5 comes with three sets of Makefiles enabling compilation for:
+
+1. CPU (standard)
+2. CPU using MKL (Intel Math Kernel library)
+3. NVIDIA GPUs (Graphic Processing Unit) using the NVIDIA CUDA compiler NVCC
+
+These alternative Makefiles are located in HLVRec directory.
+
+Examine the MakefileCPU, MakefileMKL and  MakefileNVCC files and change 
+the default locations of CPU/GPU compilers and libraries to match the
+locations on the system for which HDecode 3.5 is to be installed.
+
+In order to compile either the standard CPU version, or 
+the CPU version with MKL support or GPU version execute one of the following 
+
+1. make -f MakefileCPU all
+2. make -f MakefileMKL all 
+3. make -f MakefileNVCC all
+
+commands.
+
+Having compiled one of the branches (CPU/MKL/NVCC), the 
+relevant HDecode tools can be installed executing one of the following
+
+1. make -f MakefileCPU install
+2. make -f MakefileMKL install
+3. make -f MakefileNVCC install
+
+commands. By default HDecode tools will be installed in bin.cpu, bin.mkl 
+or bin.gpu depending on the branch. 
+
+Prior to compiling a new branch it is important to clean the distribution
+
+1. make -f MakefileCPU clean
+2. make -f MakefileMKL clean
+3. make -f MakefileNVCC clean
+
+Anton Ragni <ar527@cam.ac.uk>
+31.12.2015
+

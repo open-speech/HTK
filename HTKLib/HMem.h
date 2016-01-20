@@ -3,23 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HMem.h:   Memory Management Module            */
+/*           File: HMem.h   Memory Management Module           */
 /* ----------------------------------------------------------- */
 
-/* !HVER!HMem:   3.4.1 [CUED 12/03/09] */
+/* !HVER!HMem:   3.5.0 [CUED 12/10/15] */
 
 /*
    This module provides a type MemHeap which once initialised
@@ -53,6 +69,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#include "HShell.h"
+#include <stddef.h>
+
+#include "config.h"
 
 /* ----------------- Define Memory Management Functions ---------------- */
 
@@ -192,6 +213,10 @@ int ShortVecSize(ShortVec v);
 int IntVecSize(IntVec v);
 int VectorSize(Vector v);
 int DVectorSize(DVector v);
+
+/* cz277 - ANN */
+Boolean CmpIntVec(IntVec lhVec, IntVec rhVec);
+
 /*
    Return the number of components in vector v
 */
@@ -285,6 +310,124 @@ char *CopyString(MemHeap *x, char *s);
 /*
    Returns a pointer to a copy of string s
 */
+
+/* ------------------ ANN Types ----------------- */
+
+typedef struct _CVector {
+    size_t vecLen;
+    float *vecElems;    /* index starts from 0 */
+    int nUse;
+} CVector;
+
+typedef struct _CMatrix {
+    size_t rowNum;
+    size_t colNum;
+    float *matElems;    /* row is leading; index starts from 0 */
+    int nUse;
+} CMatrix;
+
+typedef struct _CDVector {
+    size_t vecLen;
+    double *vecElems;   /* index starts from 0 */
+    int nUse;
+} CDVector;
+
+typedef struct _CDMatrix {
+    size_t rowNum;
+    size_t colNum;
+    double *matElems;   /* row is leading; index starts from 0 */
+    int nUse;
+} CDMatrix;
+
+/* types used by various kernel functions */
+#ifdef DOUBLEANN
+typedef double NFloat;
+#else
+typedef float NFloat;
+#endif
+
+typedef struct _NVector {
+    size_t vecLen;
+    NFloat *vecElems;   /* index starts from 0 */
+#ifdef CUDA
+    NFloat *devElems;	/* the elements on the GPU */
+#endif
+    int nUse;
+} NVector;
+
+typedef struct _NMatrix {
+    size_t rowNum;
+    size_t colNum;
+    NFloat *matElems;   /* row is leading; index starts from 0 */
+#ifdef CUDA
+    NFloat *devElems;   /* the elements on the GPU */
+#endif
+    int nUse;
+} NMatrix;
+
+
+/* ------------- ANN Vector/Matrix Memory Management -------------- */
+
+
+size_t CVectorElemSize(int nlen);
+size_t CMatrixElemSize(int nrows, int ncols);
+size_t CDVectorElemSize(int nlen);
+size_t CDMatrixElemSize(int nrows, int ncols);
+size_t NVectorElemSize(int nlen);
+size_t NMatrixElemSize(int nrows, int ncols);
+
+CVector *CreateCVector(MemHeap *x, int nlen);
+CMatrix *CreateCMatrix(MemHeap *x, int nrows, int ncols);
+CDVector *CreateCDVector(MemHeap *x, int nlen);
+CDMatrix *CreateCDMatrix(MemHeap *x, int nrows, int ncols);
+NVector *CreateHostNVector(MemHeap *x, int nlen);
+NMatrix *CreateHostNMatrix(MemHeap *x, int nrows, int ncols);
+NVector *CreateNVector(MemHeap *x, int nlen);
+NMatrix *CreateNMatrix(MemHeap *x, int nrows, int ncols);
+
+size_t CVectorSize(CVector *v);
+size_t NumCRows(CMatrix *m); 
+size_t NumCCols(CMatrix *m);
+size_t CDVectorSize(CDVector *v);
+size_t NumCDRows(CDMatrix *m);
+size_t NumCDCols(CDMatrix *m);
+size_t NVectorSize(NVector *v);
+size_t NumNRows(NMatrix *m);
+size_t NumNCols(NMatrix *m);
+
+void FreeCVector(MemHeap *x, CVector *v);
+void FreeCMatrix(MemHeap *x, CMatrix *m);
+void FreeCDVector(MemHeap *x, CDVector *v);
+void FreeCDMatrix(MemHeap *x, CDMatrix *m);
+void FreeNVector(MemHeap *x, NVector *v);
+void FreeNMatrix(MemHeap *x, NMatrix *m);
+
+#ifdef CUDA
+void SyncNVectorDev2Host(NVector *v);
+void SyncNVectorHost2Dev(NVector *v);
+void SyncNMatrixDev2Host(NMatrix *m);
+void SyncNMatrixHost2Dev(NMatrix *m);
+#endif
+
+void CopyVector2NVector(Vector v1, NVector *v2);
+void CopyNVector2Vector(NVector *v1, Vector v2);
+void CopyMatrix2NMatrix(Matrix m1, NMatrix *m2);
+void CopyNMatrix2Matrix(NMatrix *m1, Matrix m2);
+void CopyMatrix2TrNMatrix(Matrix m1, NMatrix *m2);
+void CopyNMatrix2TrMatrix(NMatrix *m1, Matrix m2);
+void CopyPartialNMatrix2NMatrix(NMatrix *m1, NMatrix *m2);
+void CopyNMatrix2NMatrix(NMatrix *m1, NMatrix *m2);
+void CopyPartialNVector2NVector(NVector *v1, NVector *v2);
+void CopyNVector2NVector(NVector *v1, NVector *v2);
+void CopyNFloatSeg2FloatSeg(NFloat *fv1, int segLen, float *fv2);
+NMatrix *GenMaskTrNMatrix(MemHeap *x, int mappedTargetNum, IntVec mapVec);
+void CopyDMatrix2NMatrix(DMatrix m1, NMatrix *m2);
+void CopyPartialDMatrix2NMatrix(DMatrix m1, NMatrix *m2);
+void CopyNMatrix2DMatrix(NMatrix *m1, DMatrix m2);
+
+void ShowNVector(NVector *inVec);
+void ShowNMatrix(NMatrix *inMat, int nrows);
+
 
 #ifdef __cplusplus
 }

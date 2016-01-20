@@ -7,24 +7,23 @@
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* author:                                                     */
+/*           Rod Johnson                                       */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
+/*               File: esig_nat.c native binary I/O            */
+/* ----------------------------------------------------------- */
 
-
-/*
- * Example programs for Esignal public external file format.
- * native binary I/O.
- *
- * Author:  Rod Johnson
- */
-
+/* !HVER!esig_nat:   3.5.0 [CUED 12/10/15] */
 
 #include "esignal.h"
 
@@ -961,3 +960,6 @@ WriteNativeString(char *string,
 
    return TRUE;
 }
+
+/* ------------------------ End of esig_nat.c ------------------------- */
+

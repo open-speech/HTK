@@ -3,38 +3,48 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*          2001-2004 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*      File: HVite.c: recognise or align file or audio        */
+/*       File: HVite.c  recognise or align file or audio       */
 /* ----------------------------------------------------------- */
 
-char *hvite_version = "!HVER!HVite:   3.4.1 [CUED 12/03/09]";
-char *hvite_vc_id = "$Id: HVite.c,v 1.1.1.1 2006/10/11 09:55:02 jal58 Exp $";
+char *hvite_version = "!HVER!HVite:   3.5.0 [CUED 12/10/15]";
+char *hvite_vc_id = "$Id: HVite.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
+#include "config.h"
+#ifdef IMKL
+#include "mkl.h"
+#endif
+#ifdef CUDA
+#include "HCUDA.h"
+#endif
 #include "HShell.h"
 #include "HMem.h"
 #include "HMath.h"
@@ -44,6 +54,7 @@ char *hvite_vc_id = "$Id: HVite.c,v 1.1.1.1 2006/10/11 09:55:02 jal58 Exp $";
 #include "HVQ.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h"
 #include "HTrain.h"
@@ -52,7 +63,11 @@ char *hvite_vc_id = "$Id: HVite.c,v 1.1.1.1 2006/10/11 09:55:02 jal58 Exp $";
 #include "HFB.h"
 #include "HDict.h"
 #include "HNet.h"
+#include "HArc.h"
+#include "HFBLat.h"
 #include "HRec.h"
+#include "HNCache.h"
+
 
 /* -------------------------- Trace Flags & Vars ------------------------ */
 
@@ -92,6 +107,9 @@ static char * labInDir = NULL;    /* input network/label file directory */
 static char * labInExt = "lab";   /* input network/label file extension */
 static char * latExt = NULL;      /* output lattice file extension */
 static char * labFileMask = NULL; /* mask for reading lablels (lattices) */
+static char * labOFileMask = NULL; /* mask for reading lablels (lattices) */
+static char * latFileMask = NULL; /* mask for reading lablels (lattices) */
+static char * latOFileMask = NULL; /* mask for reading lablels (lattices) */
 static FileFormat dfmt=UNDEFF;    /* Data input file format */
 static FileFormat ifmt=UNDEFF;    /* Label input file format */
 static FileFormat ofmt=UNDEFF;    /* Label output file format */
@@ -133,6 +151,11 @@ static PSetInfo *alignpsi;        /* Private data used by HRec */
 static VRecInfo *alignvri;        /* Visible HRec Info */
 static Boolean saveBinary=FALSE;  /* Save tmf in binary format */
 
+/* cz277 - ANN */
+/*static int batchSamples;*/
+static LabelInfo labelInfo;
+static DataCache *cache[SMAX];
+
 /* Heaps */
 static MemHeap ansHeap;
 static MemHeap modelHeap;
@@ -140,6 +163,8 @@ static MemHeap netHeap;
 static MemHeap bufHeap;
 static MemHeap repHeap;
 static MemHeap regHeap;
+/* cz277 - ANN */
+static MemHeap cacheHeap;
 
 /* information about transforms */
 static XFInfo xfInfo;
@@ -169,6 +194,15 @@ void SetConfParms(void)
          saveBinary = b;
       if (GetConfStr(cParm,nParm,"LABFILEMASK",buf)) {
          labFileMask = CopyString(&gstack, buf);
+      }
+      if (GetConfStr(cParm,nParm,"LABOFILEMASK",buf)) {
+         labOFileMask = CopyString(&gstack, buf);
+      }
+      if (GetConfStr(cParm,nParm,"LATFILEMASK",buf)) {
+         latFileMask = CopyString(&gstack, buf);
+      }
+      if (GetConfStr(cParm,nParm,"LATOFILEMASK",buf)) {
+         latOFileMask = CopyString(&gstack, buf);
       }
    }
 }
@@ -215,6 +249,8 @@ int main(int argc, char *argv[])
    void Initialise(void);
    void DoRecognition(void);
    void DoAlignment(void);
+   /* cz277 - ANN */
+   int i;
 
    if(InitShell(argc,argv,hvite_version,hvite_vc_id)<SUCCESS)
       HError(3200,"HVite: InitShell failed");
@@ -223,6 +259,11 @@ int main(int argc, char *argv[])
    InitMath();  InitSigP();
    InitWave();  InitAudio();
    InitVQ();    InitModel();
+/* cz277 - ANN */
+#ifdef CUDA
+    InitCUDA();
+#endif
+   InitANNet();
 
    if(InitParm()<SUCCESS)  
       HError(3200,"HVite: InitParm failed");
@@ -230,7 +271,13 @@ int main(int argc, char *argv[])
    InitDict();
    InitNet();   InitRec();
    InitUtil(); 
-   InitAdapt(&xfInfo); InitMap();
+   /* cz277 - xform */
+   /*InitAdapt(&xfInfo);*/
+   InitAdapt();
+   InitXFInfo(&xfInfo);
+   
+   InitMap();
+   InitNCache();
 
    if (!InfoPrinted() && NumArgs() == 0)
       ReportUsage();
@@ -460,8 +507,27 @@ int main(int argc, char *argv[])
       HError(3230,"HVite: Must use -K option with incremental adaptation");
 
 
+#ifdef CUDA
+   StartCUDA();
+#endif
+    /* cz277 - 151020 */
+#ifdef MKL
+    StartMKL();
+#endif
    Initialise();
-
+#ifdef CUDA
+   ShowGPUMemUsage();
+#endif
+   
+    /* cz277 - ANN */
+   if (trace & T_TOP) {
+      if (hset.annSet == NULL) {
+         printf("Processing data directly from the input files");
+      }
+      else {
+         printf("Proccesing data through the cache\n");
+      }
+   }
 
    /* Process the data */
    if (wdNetFn==NULL)
@@ -476,13 +542,25 @@ int main(int argc, char *argv[])
       PrintAllHeapStats();
    }
 
-
    DeleteVRecInfo(vri);
    ResetHeap(&netHeap);
    FreePSetInfo(psi);
    UpdateSpkrStats(&hset,&xfInfo, NULL); 
    ResetHeap(&regHeap);
    ResetHeap(&modelHeap);
+
+   /* cz277 - ANN */
+   /* remove the ANNSet matrices and vectors */
+   if (hset.annSet != NULL) {
+       FreeANNSet(&hset);
+       for (i = 1; i <= hset.swidth[0]; ++i) {
+          FreeCache(cache[i]);
+       }
+   }
+#ifdef CUDA
+   StopCUDA();
+#endif
+
    Exit(0);
    return (0);          /* never reached -- make compiler happy */
 }
@@ -494,6 +572,9 @@ void Initialise(void)
 {
    Boolean eSep;
    int s;
+   /* cz277 - ANN */
+   FILE *script;
+   int scriptcount;
 
    /* Load hmms, convert to inverse DiagC */
    if(MakeHMMSet(&hset,hmmListFn)<SUCCESS) 
@@ -505,7 +586,7 @@ void Initialise(void)
    /* Create observation and storage for input buffer */
    SetStreamWidths(hset.pkind,hset.vecSize,hset.swidth,&eSep);
    obs=MakeObservation(&gstack,hset.swidth,hset.pkind,
-                       hset.hsKind==DISCRETEHS,eSep);
+                       hset.hsKind==DISCRETEHS,eSep);	/* TODO: for Tandem system, might need an extra obs */
 
    /* sort out masks just in case using adaptation */
    if (xfInfo.inSpkrPat == NULL) xfInfo.inSpkrPat = xfInfo.outSpkrPat; 
@@ -539,8 +620,20 @@ void Initialise(void)
       maxMixInS[s] = MaxMixInSetS(&hset, s);
    if (trace&T_TOP) {
       printf("Read %d physical / %d logical HMMs\n",
-             hset.numPhyHMM,hset.numLogHMM);  fflush(stdout);
+             hset.numPhyHMM,hset.numLogHMM); 
+      /* cz277 - ANN */
+      if (hset.annSet != NULL) {
+         if (hset.hsKind == HYBRIDHS)
+            printf("Hybrid ANN set: ");
+         else
+            printf("Tandem ANN set: ");
+         ShowANNSet(&hset);
+      }
+      fflush (stdout);
    }
+
+   SetupNMatRPLInfo(&hset);
+   SetupNVecRPLInfo(&hset);
    
    /* Initialise recogniser */
    if (nToks>1) nBeam=genBeam;
@@ -556,9 +649,73 @@ void Initialise(void)
       printf("Memory State After Initialisation\n");
       PrintAllHeapStats();
    }
+
+   /* cz277 - ANN */
+   /* ANN and data cache related code */
+   /* set label info */
+   if (hset.annSet != NULL) {
+      labelInfo.labelKind = LABLK;
+      labelInfo.labFileMask = NULL;
+      labelInfo.labDir = labDir;
+      labelInfo.labExt = labExt;
+      labelInfo.latFileMask = NULL;
+      labelInfo.latMaskNum = NULL;
+      labelInfo.numLatDir = NULL;
+      labelInfo.nNumLats = 0;
+      labelInfo.numLatSubDirPat = NULL;
+      labelInfo.latMaskDen = NULL;
+      labelInfo.denLatDir = NULL;
+      labelInfo.nDenLats = 0;
+      labelInfo.denLatSubDirPat = NULL;
+      labelInfo.latExt = NULL;
+      /* get script info */
+      script = GetTrainScript(&scriptcount);
+      /* initialise the cache heap */
+      CreateHeap(&cacheHeap, "cache heap", CHEAP, 1, 0, 100000000, ULONG_MAX);
+      /* initialise DataCache structure */
+      for (s = 1; s <= hset.swidth[0]; ++s) {
+         /*cache[s] = CreateCache(&cacheHeap, script, scriptcount, (Ptr) &hset, &obs, 1, -1, NONEVK, &xfInfo, NULL, TRUE);*/
+         cache[s] = CreateCache(&cacheHeap, script, scriptcount, (Ptr) &hset, &obs, 1, GetDefaultNCacheSamples(), NONEVK, &xfInfo, NULL, TRUE);
+         InitCache(cache[s]);
+      }
+   }
+
 }
 
 /* ------------------ Utterance Level Recognition  ----------------------- */
+
+/*  */
+void LoadCacheVec(Observation *obs, int shift, HMMSet *hset) {
+    int s, S, i, offset;
+    NMatrix *srcMat;
+    FELink feaElem;
+    LELink layerElem;
+
+    if (hset->annSet == NULL) 
+        HError(3290, "LoadCacheVec: DataCache is only applicable for ANN related systems");
+
+    S = hset->swidth[0];
+    for (s = 1; s <= S; ++s) {
+        if (hset->hsKind == HYBRIDHS) {  /* hybrid models, cache the outputs */
+            layerElem = hset->annSet->outLayers[s];
+            srcMat = hset->annSet->llhMat[s];
+            CopyNFloatSeg2FloatSeg(srcMat->matElems + shift * layerElem->nodeNum, layerElem->nodeNum, &obs->fv[s][1]);
+        }
+        else if (hset->feaMix[1] != NULL) {    /* tandem models, cache the features */
+            offset = 0;
+            for (i = 0; i < hset->feaMix[s]->elemNum; ++i) {
+                feaElem = hset->feaMix[s]->feaList[i];
+                srcMat = feaElem->feaMats[1];	/* cz277 - many */
+                CopyNFloatSeg2FloatSeg(srcMat->matElems + feaElem->dimOff + shift * feaElem->extDim, feaElem->extDim, &obs->fv[s][1] + offset);
+                offset += feaElem->extDim;
+            }
+        }
+        else {
+            HError(3290, "LoadCacheVec: DataCache is only applicable for hybrid and tandem systems");
+        }
+    }
+
+}
 
 /* ReplayAudio:  replay the last audio input */
 void ReplayAudio(BufferInfo info)
@@ -652,7 +809,16 @@ Boolean ProcessFile(char *fn, Network *net, int utterNum, LogDouble currGenBeam,
    int s,j,tact,nFrames;
    LatFormat form;
    char *p,lfn[255],buf1[80],buf2[80],thisFN[MAXSTRLEN];
+   char labfn[MAXFNAMELEN];
    Boolean enableOutput = TRUE, isPipe;
+   /* cz277 - ANN */
+   int uttCnt, cUttLen, uttLen, nLoaded, i;
+   LELink layerElem;
+   /* cz277 - clock */
+   clock_t fwdStClock, fwdClock = 0, decStClock, decClock = 0, loadStClock, loadClock = 0;
+   double fwdSec = 0.0, decSec = 0.0, loadSec = 0.0;
+   /* cz277 - xform */
+   UttElem *uttElem;
 
    if (fn!=NULL)
       strcpy(thisFN,fn);
@@ -676,37 +842,118 @@ Boolean ProcessFile(char *fn, Network *net, int utterNum, LogDouble currGenBeam,
    SetPruningLevels(vri,maxActive,currGenBeam,wordBeam,nBeam,tmBeam);
  
    tact=0;nFrames=0;
-   StartBuffer(pbuf);
-   while(BufferStatus(pbuf)!=PB_CLEARED) {
-      ReadAsBuffer(pbuf,&obs);
-      if (trace&T_OBS) PrintObservation(nFrames,&obs,13);      
 
-      if (hset.hsKind==DISCRETEHS){
-         for (s=1; s<=hset.swidth[0]; s++){
-            if( (obs.vq[s] < 1) || (obs.vq[s] > maxMixInS[s]))
-               HError(3250,"ProcessFile: Discrete data value [ %d ] out of range in stream [ %d ] in file %s",obs.vq[s],s,fn);
+   /* cz277 - ANN */
+   if (hset.annSet == NULL) {
+      StartBuffer(pbuf);
+      while(BufferStatus(pbuf)!=PB_CLEARED) {
+         ReadAsBuffer(pbuf,&obs);
+         if (trace&T_OBS) PrintObservation(nFrames,&obs,13);      
+
+         if (hset.hsKind==DISCRETEHS){
+            for (s=1; s<=hset.swidth[0]; s++){
+               if( (obs.vq[s] < 1) || (obs.vq[s] > maxMixInS[s]))
+                  HError(3250,"ProcessFile: Discrete data value [ %d ] out of range in stream [ %d ] in file %s",obs.vq[s],s,fn);
+            }
          }
-      }
 
-      ProcessObservation(vri,&obs,-1,xfInfo.inXForm);
+         ProcessObservation(vri,&obs,-1,xfInfo.inXForm);
       
-      if (trace & T_FRS) {
-         for (d=vri->genMaxNode,j=0;j<30;d=d->links[0].node,j++)
-            if (d->type==n_word) break;
-         if (d->type==n_word){
-            if (d->info.pron==NULL) p=":bound:";
-            else p=d->info.pron->word->wordName->name;
+         if (trace & T_FRS) {
+            for (d=vri->genMaxNode,j=0;j<30;d=d->links[0].node,j++)
+               if (d->type==n_word) break;
+            if (d->type==n_word){
+               if (d->info.pron==NULL) p=":bound:";
+               else p=d->info.pron->word->wordName->name;
+            }
+            else p=":external:";
+            m=FindMacroStruct(&hset,'h',vri->genMaxNode->info.hmm);
+            printf("Optimum @%-4d HMM: %s (%s)  %d %5.3f\n",
+                   vri->frame,m->id->name,p,
+                   vri->nact,vri->genMaxTok.like/vri->frame);
+            fflush(stdout);
          }
-         else p=":external:";
-         m=FindMacroStruct(&hset,'h',vri->genMaxNode->info.hmm);
-         printf("Optimum @%-4d HMM: %s (%s)  %d %5.3f\n",
-                vri->frame,m->id->name,p,
-                vri->nact,vri->genMaxTok.like/vri->frame);
-         fflush(stdout);
+         nFrames++;
+         tact+=vri->nact;
       }
-      nFrames++;
-      tact+=vri->nact;
    }
+   else {
+      /* get utterance name in cache */
+      if (strcmp(GetCurUttName(cache[1]), fn) != 0) 
+         HError(3234, "Mismatched utterance in the cache and script file");
+      uttElem = GetCurUttElem(cache[1]);	/* cz277 - xform */
+      /* install the current replaceable parts */
+      InstallOneUttNMatRPLs(uttElem);
+      InstallOneUttNVecRPLs(uttElem);
+      /* check the observation vector number */
+      uttCnt = 1;
+      uttLen = ObsInBuffer(pbuf);
+      cUttLen = GetCurUttLen(cache[1]);
+      if (cUttLen != uttLen) 
+         HError(3292, "Unequal utterance length in the cache and the original feature file");
+      while (nFrames < uttLen) {
+         /* load a data batch */
+         loadStClock = clock();  /* cz277 - clock */
+         for (s = 1; s <= hset.swidth[0]; ++s) {
+            FillAllInpBatch(cache[s], &nLoaded, &uttCnt);
+            /* cz277 - mtload */
+            /*UpdateCacheStatus(cache[s]);*/
+            LoadCacheData(cache[s]);
+         }
+         /*if (nLoaded != 1) 
+             HError(9999, "HVite is only able to process frame by frame");*/
+         loadClock += clock() - loadStClock;   /* cz277 - clock */
+         /* forward these frames */
+         fwdStClock = clock();   /* cz277 - clock */
+         ForwardProp(hset.annSet, nLoaded, cache[1]->CMDVecPL);
+         /*SetBatchIndex(GetBatchIndex() + 1);*/
+         /* apply log transform */
+         for (s = 1; s <= hset.swidth[0]; ++s) {
+            layerElem = hset.annSet->outLayers[s];
+            ApplyLogTrans(layerElem->yFeaMats[1], nLoaded, layerElem->nodeNum, hset.annSet->llhMat[s]);	/* cz277 - many */
+            AddNVectorTargetPen(hset.annSet->llhMat[s], hset.annSet->penVec[s], nLoaded, hset.annSet->llhMat[s]);
+#ifdef CUDA
+            SyncNMatrixDev2Host(hset.annSet->llhMat[s]);
+#endif
+         }
+         fwdClock += clock() - fwdStClock;   /* cz277 - clock */
+         /* load the ANN outputs into dec->cacheVecs */
+         decStClock = clock();   /* cz277 - clock */
+         for (i = 0; i < nLoaded; ++i) {
+             LoadCacheVec(&obs, i, &hset);
+             /* decode current frame */
+             ProcessObservation(vri, &obs, -1, xfInfo.inXForm);
+             if (trace & T_FRS) {
+                 for (d = vri->genMaxNode, j = 0; j < 30; d = d->links[0].node, j++)
+                     if (d->type == n_word) break;
+                 if (d->type == n_word) {
+                     if (d->info.pron == NULL) p = ":bound:";
+                     else p = d->info.pron->word->wordName->name;
+                 }
+                 else p = ":external:";
+                 m = FindMacroStruct(&hset, 'h', vri->genMaxNode->info.hmm);
+                 printf("Optimum @%-4d HMM: %s (%s)  %d %5.3f\n",
+                        vri->frame, m->id->name, p, vri->nact, 
+                        vri->genMaxTok.like / vri->frame);
+                 fflush(stdout);
+             }
+             tact += vri->nact;
+             /* increate nFrames */
+             ++nFrames;
+         }
+         decClock += clock() - decStClock;   /* cz277 - clock */
+         /* cz277 - 1007 */
+         /*SetBatchIndex(GetBatchIndex() + 1);*/
+      }
+      /* cz277 - mtload */
+      for (s = 1; s <= hset.swidth[0]; ++s) {
+         UnloadCacheData(cache[s]);
+      }
+      /* reset the replaceable parts */
+      ResetNMatRPL();
+      ResetNVecRPL();
+   }
+
    lat=CompleteRecognition(vri,pbinfo.tgtSampRate/10000000.0,&ansHeap);
    
    if (lat==NULL) {
@@ -758,6 +1005,18 @@ Boolean ProcessFile(char *fn, Network *net, int utterNum, LogDouble currGenBeam,
              (aclk+lmlk)/nFrames, aclk,lmlk,(float)tact/nFrames);
       fflush(stdout);
    }
+
+    /* cz277 - clock */
+    if (hset.annSet != NULL) {
+       fwdSec = fwdClock / (double) CLOCKS_PER_SEC;
+       decSec = decClock / (double) CLOCKS_PER_SEC;
+       loadSec = loadClock / (double) CLOCKS_PER_SEC;
+       printf("\tForwarding time is %f\n", fwdSec);
+       printf("\tDecoding time is %f\n", decSec);
+       printf("\tCache loading time is %f\n", loadSec);
+       fflush(stdout);
+    }
+
    if (pbinfo.a != NULL && replay)  ReplayAudio(pbinfo);
    
    /* accumulate stats for online unsupervised adaptation 
@@ -767,7 +1026,12 @@ Boolean ProcessFile(char *fn, Network *net, int utterNum, LogDouble currGenBeam,
 
    if (enableOutput){
       if (nToks>1 && latExt!=NULL) {
-         MakeFN(thisFN,labDir,latExt,lfn);
+         if (latOFileMask) {
+            if (!MaskMatch (latOFileMask, labfn, thisFN))
+               HError(2319,"HLRescore: LATOFILEMASK %s has no match with segemnt %s", latOFileMask, thisFN);
+         } else
+            strcpy (labfn, thisFN);
+         MakeFN(labfn,labDir,latExt,lfn);
          if ((file=FOpen(lfn,NetOFilter,&isPipe))==NULL) 
             HError(3211,"ProcessFile: Could not open file %s for lattice output",lfn);
          if (latForm==NULL)
@@ -808,7 +1072,12 @@ Boolean ProcessFile(char *fn, Network *net, int utterNum, LogDouble currGenBeam,
                              strchr(labForm,'C')!=NULL,strchr(labForm,'T')!=NULL,
                              strchr(labForm,'W')!=NULL,strchr(labForm,'M')!=NULL);
 
-      MakeFN(thisFN,labDir,labExt,lfn);
+      if (labOFileMask) {
+         if (!MaskMatch (labOFileMask, labfn, thisFN))
+               HError(2319,"HLRescore: LABOFILEMASK %s has no match with segemnt %s", labOFileMask, thisFN);
+      } else
+         strcpy (labfn, thisFN);
+      MakeFN(labfn,labDir,labExt,lfn);
       /* if(LSave(lfn,trans,ofmt)<SUCCESS)
          HError(3214,"ProcessFile: Cannot save file %s", lfn); */
       LSave(lfn,trans,ofmt);
@@ -837,6 +1106,8 @@ void DoAlignment(void)
    int n=0;
    LogDouble currGenBeam;
    AdaptXForm *incXForm;
+   /* cz277 - ANN */
+   char fnbuf[1024];
 
    if (trace&T_TOP) {
       if (loadNetworks) 
@@ -850,17 +1121,20 @@ void DoAlignment(void)
       if (NextArg() != STRINGARG)
          HError(3219,"DoAlignment: Data file name expected");
       datFN = GetStrArg();
+      /* cz277 - ANN */
+      strcpy(fnbuf, datFN);
+
       if (trace&T_TOP) {
-         printf("Aligning File: %s\n",datFN);  fflush(stdout);
-      }
-      if (labFileMask != NULL ) { /* support for rescoring lattice masks */
-         if (!MaskMatch(labFileMask,buf,datFN))
-            HError(2319,"DoAlignment: mask %s has no match with segemnt %s",labFileMask,datFN);
-         MakeFN(buf,labInDir,labInExt,lfn);
-      } else {
-         MakeFN(datFN,labInDir,labInExt,lfn);
+         printf("Aligning File: %s\n",fnbuf);  fflush(stdout);
       }
       if (loadNetworks) {
+         if (latFileMask != NULL ) { /* support for rescoring label masks */
+            if (!MaskMatch(latFileMask,buf,fnbuf))
+               HError(2319,"DoAlignment: mask %s has no match with segemnt %s",latFileMask,fnbuf);
+            MakeFN(buf,labInDir,labInExt,lfn);
+         } else {
+            MakeFN(fnbuf,labInDir,labInExt,lfn);
+         }
          if ( (nf = FOpen(lfn,NetFilter,&isPipe)) == NULL)
             HError(3210,"DoAlignment: Cannot open Word Net file %s",lfn);
          if((wdNet = ReadLattice(nf,&netHeap,&vocab,TRUE,FALSE))==NULL)
@@ -873,6 +1147,13 @@ void DoAlignment(void)
          }
       }
       else {
+         if (labFileMask != NULL ) { /* support for rescoring label masks */
+            if (!MaskMatch(labFileMask,buf,fnbuf))
+               HError(2319,"DoAlignment: mask %s has no match with segemnt %s",labFileMask,fnbuf);
+            MakeFN(buf,labInDir,labInExt,lfn);
+         } else {
+            MakeFN(fnbuf,labInDir,labInExt,lfn);
+         }
          LabList *ll = NULL;
 
          trans=LOpen(&netHeap,lfn,ifmt);
@@ -894,22 +1175,22 @@ void DoAlignment(void)
       currGenBeam = genBeam;
       /* This handles the initial input transform, parent transform setting
 	 and output transform creation */
-      if (UpdateSpkrStats(&hset, &xfInfo, datFN) && (!(xfInfo.useInXForm)) && (hset.semiTied == NULL)) {
+      if (UpdateSpkrStats(&hset, &xfInfo, fnbuf) && (!(xfInfo.useInXForm)) && (hset.semiTied == NULL)) {
          xfInfo.inXForm = NULL;
       }
       if (genBeamInc == 0.0)
-         ProcessFile (datFN, net, n, currGenBeam, FALSE);
+         ProcessFile (fnbuf, net, n, currGenBeam, FALSE);
       else {
          Boolean completed;
 
-         completed = ProcessFile (datFN, net, n, currGenBeam, TRUE);
+         completed = ProcessFile (fnbuf, net, n, currGenBeam, TRUE);
          currGenBeam += genBeamInc;
          while (!completed && (currGenBeam <= genBeamLim - genBeamInc)) {
-            completed = ProcessFile (datFN, net, n, currGenBeam, TRUE);
+            completed = ProcessFile (fnbuf, net, n, currGenBeam, TRUE);
             currGenBeam += genBeamInc;
          }
          if (!completed)
-            ProcessFile (datFN, net, n, currGenBeam, FALSE);
+            ProcessFile (fnbuf, net, n, currGenBeam, FALSE);
       }
 
       if (update > 0 && n%update == 0) {
@@ -941,6 +1222,8 @@ void DoRecognition(void)
    Boolean isPipe;
    int n=0;
    AdaptXForm *incXForm;
+   /* cz277 - ANN */
+   char fnbuf[1024];
 
    if ( (nf = FOpen(wdNetFn,NetFilter,&isPipe)) == NULL)
       HError(3210,"DoRecognition: Cannot open Word Net file %s",wdNetFn);
@@ -995,15 +1278,18 @@ void DoRecognition(void)
          if (NextArg()!=STRINGARG)
             HError(3219,"DoRecognition: Data file name expected");
          datFN = GetStrArg();
+         /* cz277 - ANN */
+         strcpy(fnbuf, datFN);
+
          if (trace&T_TOP) {
-            printf("File: %s\n",datFN); fflush(stdout);
+            printf("File: %s\n",fnbuf); fflush(stdout);
          }
 	 /* This handles the initial input transform, parent transform setting
 	    and output transform creation */
-         if (UpdateSpkrStats(&hset, &xfInfo, datFN) && (!(xfInfo.useInXForm)) && (hset.semiTied == NULL)) {
+         if (UpdateSpkrStats(&hset, &xfInfo, fnbuf) && (!(xfInfo.useInXForm)) && (hset.semiTied == NULL)) {
             xfInfo.inXForm = NULL;
          }
-         ProcessFile(datFN,net,n++,genBeam,FALSE);
+         ProcessFile(fnbuf,net,n++,genBeam,FALSE);
          if (update > 0 && n%update == 0) {
             if (trace&T_TOP) {
                printf("Transforming model set\n");

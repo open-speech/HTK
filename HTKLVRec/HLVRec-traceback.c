@@ -3,30 +3,33 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Machine Intelligence Laboratory                        */
-/*      Department of Engineering                              */
-/*      University of Cambridge                                */
-/*      http://mi.eng.cam.ac.uk/                               */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2002-2003  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLVRec-traceback.c Traceback for              */
-/*                                  HTK LV Decoder             */
+/*    File: HLVRec-traceback.c  Traceback for HTK LV decoder   */
 /* ----------------------------------------------------------- */
+
+char *hlvrec_trace_version = "!HVER!HLVRec-traceback:   3.5.0 [CUED 12/10/15]";
+char *hlvrec_trace_vc_id = "$Id: HLVRec-traceback.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 /* Print Path
  */
@@ -44,15 +47,6 @@ static void PrintPath (DecoderInst *dec, WordendHyp *we)
       printf ("%s%d (%d %.3f %.3f)  ", pron->word->wordName->name, pron->pnum, 
               we->frame, we->score, we->lm);
    }
-}
-
-/* PrintTok
-*/
-static void PrintTok(DecoderInst *dec, Token *tok)
-{
-   printf ("lmState %p score %f path %p ", tok->lmState, tok->score, tok->path);
-   PrintPath (dec, tok->path);
-   printf ("\n");
 }
 
 /* PrintRelTok
@@ -91,26 +85,32 @@ TokenSet *BestTokSet (DecoderInst *dec)
    int i, N;
 
    bestInst = dec->bestInst;
-   switch (bestInst->node->type) {
-   case LN_MODEL:
-      N = bestInst->node->data.hmm->numStates;
-      break;
-   case LN_CON:
-   case LN_WORDEND:
-      N = 1;
-      break;
-   default:
-      abort ();
-      break;
-   }
-   
    ts = NULL;
-   best = LZERO;
-   for (i = 0; i < N; ++i) {
-      tsi = &bestInst->ts[i];
-      if (tsi->n > 0 && tsi->score > best)
-         ts = tsi;
+
+   /* cz277 - best tok */
+   if (bestInst != NULL) {
+       switch (bestInst->node->type) {
+       case LN_MODEL:
+          N = bestInst->node->data.hmm->numStates;
+          break;
+       case LN_CON:
+       case LN_WORDEND:
+          N = 1;
+          break;
+       default:
+          abort ();
+          break;
+       }
+   
+       /*ts = NULL;*/
+       best = LZERO;
+       for (i = 0; i < N; ++i) {
+          tsi = &bestInst->ts[i];
+          if (tsi->n > 0 && tsi->score > best)
+             ts = tsi;
+       }
    }
+
    return (ts);
 }
 
@@ -126,7 +126,7 @@ Transcription *TraceBack(MemHeap *heap, DecoderInst *dec)
    LLink lab, nextlab;
    WordendHyp *weHyp;
    TokenSet *ts;
-   RelToken *bestTok;
+   RelToken *bestTok=NULL;
    LogFloat prevScore, score;
    RelTokScore bestDelta;
    Pron pron;
@@ -136,11 +136,11 @@ Transcription *TraceBack(MemHeap *heap, DecoderInst *dec)
    if (dec->net->end->inst && dec->net->end->inst->ts->n > 0)
       ts = dec->net->end->inst->ts;
    else {
-      HError (-9999, "no token survived to sent end!");
+      HError (-7820, "no token survived to sent end!");
 
       ts = BestTokSet (dec);
       if (!ts) {        /* return empty transcription */
-         HError (-9999, "best inst is dead as well!");
+         HError (-7820, "best inst is dead as well!");
          trans = CreateTranscription (heap);
          ll = CreateLabelList (heap, 0);
          AddLabelList (ll, trans);
@@ -168,6 +168,8 @@ Transcription *TraceBack(MemHeap *heap, DecoderInst *dec)
    trans = CreateTranscription (heap);
    ll = CreateLabelList (heap, 0);
 
+   if(bestTok==NULL)
+     HError(7820,"best token not found");
    /* going backwards from </s> to <s> */
    for (weHyp = bestTok->path; weHyp; weHyp = weHyp->prev) {
       lab = CreateLabel (heap, ll->maxAuxLab);
@@ -292,7 +294,6 @@ static void Paths2Lat (DecoderInst *dec, Lattice *lat, WordendHyp *path,
       if (trace & T_LAT)
          printf ("I=%d t=%.2f W=%d\n", n, path->frame*dec->frameDur, path->pron);
 
-      
       la = &lat->larcs[*na];
       ++(*na);
 
@@ -312,14 +313,15 @@ static void Paths2Lat (DecoderInst *dec, Lattice *lat, WordendHyp *path,
          - la->prlike * dec->pronScale;
       la->lmlike = (path->lm - dec->insPen) / dec->lmScale;
 
+
 #ifdef MODALIGN
       if (dec->modAlign) {
          int startFrame;
 
          startFrame = path->prev ? path->prev->frame : 0;
-
          la->lAlign = LAlignFromModpath (dec, lat->heap, path->modpath,
                                          startFrame, &la->nAlign);
+
 #if 0   /* debug trace */
          printf ("%d  ", *na - 1);
          PrintModPath (dec, path->modpath);
@@ -378,6 +380,7 @@ static void Paths2Lat (DecoderInst *dec, Lattice *lat, WordendHyp *path,
    }
 }
 
+
 /* LatTraceBack
 
      produce Lattice from the wordEnd hypotheses recoded in dec
@@ -389,7 +392,7 @@ Lattice *LatTraceBack (MemHeap *heap, DecoderInst *dec)
    WordendHyp *sentEndWE;
 
    if (!dec->net->end->inst)
-      HError (-9999, "LatTraceBack: end node not active");
+      HError (-7821, "LatTraceBack: end node not active");
    else
       printf ("found %d tokens in end state\n", dec->net->end->inst->ts->n);
 
@@ -397,14 +400,15 @@ Lattice *LatTraceBack (MemHeap *heap, DecoderInst *dec)
       sentEndWE = dec->net->end->inst->ts->relTok[0].path;
    else {
       if (buildLatSE)
-         HError (-9999, "no tokens in sentend -- falling back to BUILDLATSENTEND = F");
+         HError (-7821, "no tokens in sentend -- falling back to BUILDLATSENTEND = F");
+
       sentEndWE = BuildLattice (dec);
    }
 
    if (!sentEndWE) {
-      HError (-9999, "LatTraceBack: no active sil wordend nodes");
+      HError (-7821, "LatTraceBack: no active sil wordend nodes");
       if (forceLatOut) {
-         HError (-9999, "LatTraceBack: forcing lattice output");
+         HError (-7821, "LatTraceBack: forcing lattice output");
 #ifdef MODALIGN
          if (dec->modAlign) 
 /*             HError (-9999, "LatTraceBack: forced lattice output not supported with model-alignment"); */
@@ -450,6 +454,7 @@ Lattice *LatTraceBack (MemHeap *heap, DecoderInst *dec)
 #ifdef MODALIGN
    if (dec->modAlign)
       CheckLAlign (dec, lat);
+
 #endif
    return lat;
 }
@@ -472,23 +477,26 @@ LAlign *LAlignFromModpath (DecoderInst *dec, MemHeap *heap,
    for (m = modpath; m; m = m->prev)
       if (m->ln->type == LN_MODEL)
          ++n;
-   
+
    lalign = New (heap, n * sizeof(LAlign));
    *nLAlign = n;
-   
+
    for (m = modpath; m; m = m->prev) {
       if (m->ln->type == LN_MODEL) {
          startFrame = (m->prev ? m->prev->frame : wordStart);
          ml = FindMacroStruct (dec->hset, 'h', (Ptr) m->ln->data.hmm);
          if (!ml)
-            HError (9999, "LAlignFromModpath: model not found!");
+            HError (7822, "LAlignFromModpath: model not found!");
 
          assert (m->frame >= startFrame);
          --n;
          lalign[n].state = -1;
          lalign[n].like = 0.0;
          lalign[n].dur = (m->frame - startFrame) * dec->frameDur;
-         lalign[n].label = ml->id;
+         /* sxz20 */
+         if (m->ln->labid) assert(m->ln->labid->name);
+         lalign[n].label = (m->ln->labid)? m->ln->labid : ml->id;
+         /*lalign[n].label = ml->id;*/
       }
    }
    assert (n == 0);
@@ -537,7 +545,7 @@ LAlign *LAlignFromAltModpath (DecoderInst *dec, MemHeap *heap,
          startFrame = (m->prev ? m->prev->frame : wordStart);
          ml = FindMacroStruct (dec->hset, 'h', (Ptr) m->ln->data.hmm);
          if (!ml)
-            HError (9999, "LAlignFromModpath: model not found!");
+            HError (7822, "LAlignFromModpath: model not found!");
 
          assert (m->frame >= startFrame);
          --n;
@@ -545,7 +553,10 @@ LAlign *LAlignFromAltModpath (DecoderInst *dec, MemHeap *heap,
          lalign[n].state = -1;
          lalign[n].like = 0.0;
          lalign[n].dur = (m->frame - startFrame) * dec->frameDur;
-         lalign[n].label = ml->id;
+         /* sxz20 */
+         if (m->ln->labid) assert(m->ln->labid->name);
+         lalign[n].label = (m->ln->labid)? m->ln->labid : ml->id;
+         /*lalign[n].label = ml->id;*/
       }
       else if (m->ln->type == LN_WORDEND)
          nextM = modpath;
@@ -607,7 +618,7 @@ void CheckLAlign (DecoderInst *dec, Lattice *lat)
             FakeSEModelAlign(lat, la);
          }
          else {
-            HError (9999, "CheckLAlign: empty model alignment for arc %d", i);
+            HError (7823, "CheckLAlign: empty model alignment for arc %d", i);
          }
       }
 
@@ -662,7 +673,10 @@ AltWordendHyp *FakeSEpath (DecoderInst *dec, RelToken *tok, Boolean useLM)
    else
       lmScore = 0.0;
    if (lmScore > LSMALL) {  /* transition for END state possible? */
-      assert (!useLM || dest == (Ptr) 0xfffffffe);
+      /* cz277 - 64bit */
+      /*assert (!useLM || dest == (Ptr) 0xfffffffe);*/
+      assert (!useLM || dest == (Ptr) 0xfffffffffffffffe);
+
       lmScore += dec->insPen;
 
       alt = (AltWordendHyp *) New (&dec->altweHypHeap, sizeof (AltWordendHyp));
@@ -688,18 +702,21 @@ AltWordendHyp *FakeSEpath (DecoderInst *dec, RelToken *tok, Boolean useLM)
 WordendHyp *AltPathList2Path (DecoderInst *dec, AltWordendHyp *alt, PronId pron)
 {
    WordendHyp *path;
-   AltWordendHyp *bestAlt, *a;
+   AltWordendHyp *bestAlt=NULL, *a;
    TokScore bestAltScore = LZERO;
    AltWordendHyp **pAlt;
    int i;
 
    /* find best */
-   for (a = alt; a; a = a->next)
+   for (a = alt; a; a = a->next) {
       if (a->score > bestAltScore) {
          bestAltScore = a->score;
          bestAlt = a;
       }
-   
+   }
+   if(bestAlt==NULL)
+     HError(7823,"failed to find best alternative word end");
+
    /* create full WordendHyp for best */
    path = (WordendHyp *) New (&dec->weHypHeap, sizeof (WordendHyp));
    path->prev = bestAlt->prev;
@@ -783,8 +800,8 @@ WordendHyp *BuildLattice (DecoderInst *dec)
                }
             }
 #endif
-            
             alt = FakeSEpath (dec, tok, TRUE);
+
             if (alt) {
                alt->score += ts->score;
                alt->next = altPrev;
@@ -796,6 +813,9 @@ WordendHyp *BuildLattice (DecoderInst *dec)
          } /* for tok */
       }
    } /* for inst */
+
+   if (!alt)
+      alt = altPrev;  /* make sure we don't end up with a NULL alt when there is a non-NULL alternative */
 
    if (!alt)   /* no token in sil models at all */
       return NULL;
@@ -831,6 +851,8 @@ AltWordendHyp *BuildLatAltList (DecoderInst *dec, TokenSet *ts, Boolean useLM)
 #endif
       }
    }
+   if (!alt)
+      alt = altPrev;  /* make sure we don't end up with a NULL alt when there is a non-NULL alternative */
    return alt;
 }
 
@@ -863,12 +885,12 @@ WordendHyp *BuildForceLat (DecoderInst *dec)
 
    
    if (!alt) {  /* no valid LM transitions, try without */
-      HError (-9999, "BuildForceLat: no tokens survived with valid LM transitions, inserting LM 0.0 arcs.");
+      HError (-7820, "BuildForceLat: no tokens survived with valid LM transitions, inserting LM 0.0 arcs.");
       alt = BuildLatAltList (dec, ts, FALSE);
    }
 
    if (!alt) {   /* how can this happen? */
-      HError (-9999, "BuildForceLat: unable to force building lattice, giving up. THIS SHOULDN'T HAPPEN!");
+      HError (-7899, "BuildForceLat: unable to force building lattice, giving up. THIS SHOULDN'T HAPPEN!");
       return NULL;
    }
 
@@ -878,3 +900,7 @@ WordendHyp *BuildForceLat (DecoderInst *dec)
 #endif
    return path;
 }
+
+
+/* ------------------------ End of HLVRec-traceback.c ----------------------- */
+

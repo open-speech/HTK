@@ -3,36 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*              2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HTrain.h   HMM Training Support Routines      */
+/*         File: HTrain.h   HMM training support routines      */
 /* ----------------------------------------------------------- */
 
-/* !HVER!HTrain:   3.4.1 [CUED 12/03/09] */
+/* !HVER!HTrain:   3.5.0 [CUED 12/10/15] */
 
 #ifndef _HTRAIN_H_
 #define _HTRAIN_H_
@@ -41,7 +44,7 @@
 extern "C" {
 #endif
 
-enum _UPDSet{UPMEANS=1,UPVARS=2,UPTRANS=4,UPMIXES=8,UPXFORM=16,UPMAP=32,UPSEMIT=64};
+enum _UPDSet{UPMEANS=1,UPVARS=2,UPTRANS=4,UPMIXES=8,UPXFORM=16,UPMAP=32,UPSEMIT=64, UPTARGETPEN = 128, UPANNPARAM = 256};	/* cz277 - ANN */
 typedef enum _UPDSet UPDSet;
 
 /* Win32 modification */
@@ -52,6 +55,11 @@ typedef enum _UPDSet UPDSet;
 void InitTrain(void);
 /*
    Initialise the module
+*/
+
+Boolean LoadDumpAccBinary();
+/*
+  Use binary/text accumulators
 */
 
 /* ------------------ Generic Sequence Type --------------- */

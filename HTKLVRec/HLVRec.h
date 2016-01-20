@@ -3,30 +3,33 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Machine Intelligence Laboratory                        */
-/*      Department of Engineering                              */
-/*      University of Cambridge                                */
-/*      http://mi.eng.cam.ac.uk/                               */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2002-2003  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLVRec.h Decoding related data types for      */
-/*                        HTK LV Decoder                       */
+/*  File: HLVRec.h Decoding related data types for LV decoder  */
 /* ----------------------------------------------------------- */
+
+/* !HVER!HLVRec:   3.5.0 [CUED 12/10/15] */
+
 
 /*
 it might be worthwhile to make Tokens smaller, i.e. move as much info
@@ -61,7 +64,9 @@ typedef struct _ModendHyp ModendHyp;    /* records model level tracback */
 struct _ModendHyp {             /* stores info about one model(end) */
    ModendHyp *prev;             /* previous model info */
    LexNode *ln;                 /* lexnode that finished */
-   short frame;                 /* end frame number of this model */
+   /*short frame;*/                 /* end frame number of this model */
+   /* cz277 - from pcw */
+   int frame;
 };
 #endif
 
@@ -90,7 +95,9 @@ struct _Token {
 struct _WordendHyp {            /* stores info about one word(end) */
    WordendHyp *prev;            /* previous word info */
    PronId pron;                 /* pronunciation chosen */
-   short frame;                 /* end frame number of this word */
+   /*short frame;*/                 /* end frame number of this word */
+   /* cz277 - from pcw */
+   int frame;
    TokScore score;              /* total likelihood at end of word (time t) */
    LMTokScore lm;               /* LM likelihood of this word given history */
                                 /* don't need pron like, it's in pron->prob */
@@ -282,6 +289,10 @@ struct _LMCache {
 
 /**** decoder instance */
 
+/* cz277 - ANN */
+enum _DecodeKind {NORMALDK, HYBRIDDK, TANDEMDK};
+typedef enum _DecodeKind DecodeKind;
+
 typedef struct _DecoderInst DecoderInst;  /* contains all state information about one instance
                                              of the decoder 
                                              the aim is to share as much info as possible across
@@ -293,6 +304,7 @@ struct _DecoderInst {
                    info about current utterance (source, filename, length)?
                 */
    HMMSet *hset;
+ 
    FSLM *lm;
 
    MemHeap heap;                /* MSTACK for general allocation */
@@ -369,6 +381,11 @@ struct _DecoderInst {
    LabId monoPhone[100];           /* #### hard limit -- fix this */
    LogDouble *phonePost;
    int *phoneFreq;
+
+   /* cz277 - ANN */
+   DecodeKind decodeKind;
+   Vector **cacheVec;
+   int cacheVecIdx;
 };
 
 
@@ -390,8 +407,9 @@ void InitDecoderInst (DecoderInst *dec, LexNet *net, HTime sampRate, LogFloat be
                       LogFloat fastlmlaBeam);
 
 void CleanDecoderInst (DecoderInst *dec);
-void ProcessFrame (DecoderInst *dec, Observation **obsBlock, int nObs,
-                   AdaptXForm *xform);
+
+/* cz277 - ANN */
+void ProcessFrame (DecoderInst *dec, Observation **obsBlock, int nObs, AdaptXForm *xform, int cacheVecIdx);
 
 Transcription *TraceBack (MemHeap *heap, DecoderInst *dec);
 Lattice *LatTraceBack (MemHeap *heap, DecoderInst *dec);
@@ -408,8 +426,6 @@ void ReFormatTranscription(Transcription *trans,HTime frameDur,
 
 #endif  /* _HLVREC_H_ */
 
-/*  CC-mode style info for emacs
- Local Variables:
- c-file-style: "htk"
- End:
-*/
+
+/* ------------------------ End of HLVRec.h ----------------------- */
+

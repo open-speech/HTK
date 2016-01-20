@@ -3,37 +3,40 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*          2001-2002 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HShell.c:   Interface to the Shell            */
+/*            File: HShell.c   Interface to the shell          */
 /* ----------------------------------------------------------- */
 
-char *hshell_version = "!HVER!HShell:   3.4.1 [CUED 12/03/09]";
-char *hshell_vc_id = "$Id: HShell.c,v 1.1.1.1 2006/10/11 09:54:58 jal58 Exp $";
+char *hshell_version = "!HVER!HShell:   3.5.0 [CUED 12/10/15]";
+char *hshell_vc_id = "$Id: HShell.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 #include "HShell.h"
 
@@ -86,7 +89,7 @@ static int extFileUsed = 0;             /* total ext files in buffer */
 char * RegisterExtFileName(char *s)
 {
    char *eq,*rb,*lb,*co;
-   char buf[1024];
+   char buf[MAXSTRLEN];
    ExtFile *p;
 
    if (!extendedFileNames)
@@ -308,13 +311,36 @@ static Boolean ReadConfName(Source *src, char *s)
    if (c == EOF) return FALSE;
    for (i=0; i<MAXSTRLEN ; i++){
       if (c == EOF || isspace(c) || !isalnum(c)){
-         if (c==':' || c=='=') UnGetCh(c,src);
+         if (c==':' || c=='=' || c=='~' || c == '+') UnGetCh(c,src);	/* cz277 - 150811 */
          s[i] = '\0';
          return TRUE;
       }
       s[i] = toupper(c); c = GetCh(src);
    }     
    return FALSE;
+}
+
+/* RemoveConfEntry: return entry with given name and user */
+static void RemoveConfEntry(char *user, char *name)
+{
+   ConfigEntry *e, *pe;
+   char *s;
+   
+   pe = NULL;
+   for (e=confList; e!= NULL; e=e->next) {
+      if (strcmp(e->param.name,name)==0){
+         s = e->param.user;
+         if (s==NULL?user==NULL:(user!=NULL && strcmp(s,user)==0) ) {
+            /* found the element to remove */
+            /* check whether it is at the start of the list */
+            if (pe == NULL) 
+               confList=e->next;
+            else 
+               pe->next=e->next;
+         }
+      }
+      pe=e;
+   }
 }
 
 /* FindConfEntry: return entry with given name and user */
@@ -332,16 +358,27 @@ static ConfigEntry *FindConfEntry(char *user, char *name)
    return NULL;
 }
 
+/* cz277 - ANN */
 /* NumHead: returns TRUE if the first two chars of a string 
             are ('+'|'-') digit | digit */
 static Boolean NumHead(char *s)
 {
-   if (*s!='\0')
+   /*if (*s!='\0')
       if (isdigit((int) *s))
          return TRUE;
    if (((*s=='-') || (*s=='+')) && (isdigit((int) *(s+1))))
       return TRUE;
-   return FALSE;
+   return FALSE;*/
+    char *c;
+
+    c = s;
+    while (*c != '\0') {
+        if (!(isdigit((int) *c) || *c == '-' || *c == '+' || *c == '.'))
+            return FALSE;
+        ++c;
+    }
+
+    return TRUE;
 }
 
 /* ParseInclude: skip comments or return #include argument */
@@ -382,9 +419,12 @@ static ReturnStatus ReadConfigFile(char *fname)
    Source src;
    ConfigEntry *e;
    Boolean gotParam,hasUser;
-   char c,*s,buf[32],sbuf[MAXSTRLEN];
+   char c,*s,buf[MAXSTRLEN],sbuf[MAXSTRLEN];
    char user[MAXSTRLEN],name[MAXSTRLEN],value[MAXSTRLEN];
    static int recurse = 0;
+   /* cz277 - 150811 */
+   Boolean append = FALSE;
+   CPLink curParam;
 
    if (recurse++ > 15){ 
       HRError(5050,"ReadConfigFile: max #include depth reached (%s)",fname);
@@ -421,55 +461,80 @@ static ReturnStatus ReadConfigFile(char *fname)
          }
          while (isspace((int) (c=GetCh(&src))));  
       }
-      if (c != '='){
-         HRError(5050,"ReadConfigFile: = expected %s",
-                 SrcPosition(src,buf));
-         recurse--;
-         return(FAIL);
-      }
-      if (!ReadString(&src,value)){
-         HRError(5050,"ReadConfig: parameter value expected %s",
-                 SrcPosition(src,buf));
-         recurse--;
-         return(FAIL);
-      }
-      e = FindConfEntry(hasUser?user:NULL,name);
-      if (e==NULL){ /* new param */
-         e = (ConfigEntry *) malloc(sizeof(ConfigEntry));
-         e->next = confList; confList = e;
-         e->param.seen = FALSE;
-         ++numConfigParms;
-      }
-      if (hasUser){
-         e->param.user = (char *) malloc(strlen(user)+1);
-         strcpy(e->param.user,user);
-      }else
-         e->param.user = NULL;   
-      e->param.name = (char *) malloc(strlen(name)+1);
-      strcpy(e->param.name,name);
-      if (strcmp(value,"T")==0 || strcmp(value,"TRUE")==0) {
-         e->param.kind = BoolCKind; e->param.val.b = TRUE;
-      } else 
-         if (strcmp(value,"F")==0 || strcmp(value,"FALSE")==0) {
-            e->param.kind = BoolCKind; e->param.val.b = FALSE;
+ 
+      /* added option to remove config setting */
+      if (c == '~') {
+         RemoveConfEntry(hasUser?user:NULL,name);
+      } else {
+         /* cz277 - 150811 */
+         if (c == '+') {
+             append = TRUE;
+             while (isspace((int) (c=GetCh(&src))));
+         }
+
+         if (c != '='){
+            HRError(5050,"ReadConfigFile: = expected %s",
+                    SrcPosition(src,buf));
+            recurse--;
+            return(FAIL);
+         }
+         if (!ReadString(&src,value)){
+            HRError(5050,"ReadConfig: parameter value expected %s",
+                    SrcPosition(src,buf));
+            recurse--;
+            return(FAIL);
+         }
+         e = FindConfEntry(hasUser?user:NULL,name);
+         if (e==NULL){ /* new param */
+            e = (ConfigEntry *) malloc(sizeof(ConfigEntry));
+            e->next = confList; confList = e;
+            e->param.seen = FALSE;
+            ++numConfigParms;
+            /* cz277 - 150811 */
+            e->param.append = NULL;
+         }
+         if (hasUser){
+            e->param.user = (char *) malloc(strlen(user)+1);
+            strcpy(e->param.user,user);
+         }else
+            e->param.user = NULL;   
+         /* cz277 - 150811 */
+         curParam = &e->param; 
+         if (append) {
+             while (curParam->append != NULL)
+                 curParam = curParam->append;
+             /*curParam->append = (CPLink) New(&gcheap, sizeof(ConfParam));*/
+             curParam->append = (CPLink) malloc(sizeof(ConfParam));
+             curParam = curParam->append;
+             curParam->append = NULL;
+         }
+
+         curParam->name = (char *) malloc(strlen(name)+1);
+         strcpy(curParam->name,name);
+         if (strcmp(value,"T")==0 || strcmp(value,"TRUE")==0) {
+            curParam->kind = BoolCKind; curParam->val.b = TRUE;
          } else 
-            if (NumHead(value)){
-               x = strtod(value,&s);
-               if (s==NULL || *s == '\0'){
-                  if (strchr(value,'.') == NULL){
-                     e->param.kind = IntCKind; 
-                     e->param.val.i = strtol(value,NULL,0);
-                  }else{
-                     e->param.kind = FltCKind; 
-                     e->param.val.f = x;
+            if (strcmp(value,"F")==0 || strcmp(value,"FALSE")==0) {
+               curParam->kind = BoolCKind; curParam->val.b = FALSE;
+            } else 
+               if (NumHead(value)){
+                  x = strtod(value,&s);
+                  if (s==NULL || *s == '\0'){
+                     if (strchr(value,'.') == NULL){
+                        curParam->kind = IntCKind; 
+                        curParam->val.i = strtol(value,NULL,0);
+                     }else{
+                        curParam->kind = FltCKind; 
+                        curParam->val.f = x;
+                     }
                   }
+               } else {
+                  curParam->kind = StrCKind; 
+                  curParam->val.s = (char *) malloc(strlen(value)+1);
+                  strcpy(curParam->val.s,value);
                }
-            } else {
-               e->param.kind = StrCKind; 
-               e->param.val.s = (char *) malloc(strlen(value)+1);
-               strcpy(e->param.val.s,value);
-            }
-      /* skip comments and parse #include */
+         /* skip comments and parse #include */
+      }
       while (ParseComment(&src,name)!=NULL) {
          PathOf(name,sbuf);
          if (*sbuf=='\0') PathOf(fname,sbuf);
@@ -481,7 +546,10 @@ static ReturnStatus ReadConfigFile(char *fname)
       }
       hasUser=FALSE;
       gotParam = ReadConfName(&src,name);
+      /* cz277 - 150811 */
+      append = FALSE;
    }
+
    recurse--;
    return(SUCCESS);
 }
@@ -490,6 +558,8 @@ static ReturnStatus ReadConfigFile(char *fname)
 void PrintConfig(void)
 {
    ConfigEntry *e;
+   /* cz277 - 150811 */
+   CPLink curParam;
    
    printf("\n");
    if (numConfigParms==0)
@@ -507,6 +577,19 @@ void PrintConfig(void)
          case FltCKind:  printf("%16f",e->param.val.f); break;
          }
          printf("\n");
+         /* cz277 - 150811 */
+         curParam = e->param.append;
+         while (curParam != NULL) {
+             printf("%c %-14s +%-14s  ", (curParam->seen? ' ': '#'), curParam->user==NULL? "" : curParam->user, curParam->name);
+             switch (curParam->kind) {
+             case StrCKind:  printf("%16s", curParam->val.s); break;
+             case BoolCKind: printf("%16s", curParam->val.b? "TRUE": "FALSE"); break;
+             case IntCKind:  printf("%16d", curParam->val.i); break;
+             case FltCKind:  printf("%16f", curParam->val.f); break;
+             }
+             curParam = curParam->append;
+             printf("\n");
+         } 
       }
    }
    printf("\n");
@@ -550,18 +633,17 @@ int GetConfig(char *user, Boolean incGlob, ConfParam **list, int max)
 /* FindConfParm: return index of conf parameter with given name and kind*/
 static int FindConfParm(ConfParam **list,int size,char *name,ConfKind kind)
 {
-   int i;
+    int i;
    
-   for (i=0; i<size; i++)
-      if (strcmp(list[i]->name,name)==0){
-         if (kind != AnyCKind && list[i]->kind != kind && 
-             !(list[i]->kind==IntCKind && kind==FltCKind))
-            HError(5072,"FindConfParm: %s is %s but should be type %s",
-                   name,cfkmap[list[i]->kind],cfkmap[kind]);
-         list[i]->seen=TRUE;
-         return i;
-      }
-   return -1;
+    for (i = 0; i < size; i++) {
+        if (strcmp(list[i]->name, name) == 0) {
+            if (kind != AnyCKind && list[i]->kind != kind &&  !(list[i]->kind == IntCKind && kind == FltCKind))
+                HError(5072,"FindConfParm: %s is %s but should be type %s", name, cfkmap[list[i]->kind], cfkmap[kind]);
+            list[i]->seen = TRUE;
+            return i;
+        }
+    }
+    return -1;
 }
 
 /* EXPORT->HasConfParm: true if parameter exists with given name */
@@ -580,6 +662,17 @@ Boolean GetConfStr(ConfParam **list,int size,char *name,char *str)
       return TRUE;
    }
    return FALSE;
+}
+
+/* cz277 - ANN */
+Boolean GetConfAny(ConfParam **list, int size, char *name, ConfParam **item) 
+{
+    int i;
+    if ((i = FindConfParm(list, size, name, AnyCKind)) != -1) {
+        *item = list[i];
+        return TRUE;
+    }
+    return FALSE;
 }
 
 /* EXPORT->GetConfBool: return Boolean parameter with given name */
@@ -618,6 +711,61 @@ Boolean GetConfFlt(ConfParam **list,int size,char *name, double *fval)
    return FALSE;
 }
 
+/* cz277 - ANN */
+/*Boolean GetConfIntVecList(ConfParam **list, int size, char *name, IntVec *intVecList) {
+    ConfParam *cpVal;
+
+    return TRUE;
+}*/
+
+/* cz277 - ANN */
+/*Boolean GetConfVectorList(ConfParam **list, int size, char *name, Vector *vectorList) {
+    ConfParam *cpVal;
+    int i, j, nVec = 1;
+    char buf[MAXSTRLEN], *charPtr, *commPtr;
+
+    GetConfAny(list, size, name, &cpVal);
+    if (cpVal->kind == FltCKind) {
+        vectorList = New(&gcheap, sizeof(Vector) * (nVec + 1));
+        vectorList[0] = CreateVector(&gcheap, 1);
+        vectorList[0][1] = nVec;
+        vectorList[1] = CreateVector(&gcheap, 1);
+        vectorList[1][1] = cpVal->val.f;
+    }
+    else if (cpVal->kind == StrCKind) {
+        strcpy(buf, cpVal->val.s);
+        charPtr = strtok(buf, ";");
+        while (charPtr != NULL) {
+            ++nVec;
+            charPtr = strtok(NULL, ";");
+        }
+        vectorList = New(&gcheap, sizeof(Vector) * (nVec + 1));
+        vectorList[0] = CreateVector(&gcheap, 1);
+        charPtr = strtok(buf, ";");
+        for (i = 1, j = 0; i <= nVec; ++i) {
+            *charPtr = '\0';
+            commPtr = strtok(charPtr + 1, ",");
+            while (commPtr != NULL) {
+                ++j;
+                commPtr = strtok(NULL, ",");
+            }
+            vectorList[i] = CreateVector(&gcheap, j);
+            j = 1;
+            commPtr = strtok(charPtr + 1, ",");
+            while (commPtr != NULL) {
+                vectorList[i][j++] = (float) atof(commPtr);
+                commPtr = strtok(NULL, ",");
+            }
+            *charPtr = ';';
+            charPtr = strtok(NULL, ";");
+        }
+    }
+    else {
+        return FALSE;
+    }
+    return TRUE;
+}*/
+
 
 /* ------------------ Argument Processing -------------------- */
 
@@ -651,11 +799,16 @@ static char *defargs[2]={ "<Uninitialised>", "" };
 static char **arglist=defargs;/* actual arg list */
 static FILE *script = NULL;   /* script file if any */
 static int scriptcount = 0;   /* num words in script */
-static char scriptBuf[256];   /* buffer for current script arg */
+static char scriptBuf[MAXSTRLEN];   /* buffer for current script arg */
 static Boolean scriptBufLoaded = FALSE;
 static Boolean wasQuoted;     /* true if next arg was quoted */
 static ConfParam *cParm[MAXGLOBS];      /* config parameters */
 static int nParm = 0;
+/* cz277 - ANN */
+static FILE *scriptTr = NULL;   /* script file handler for train set cache */
+static int scriptTrCnt = 0;     /* number of words in the train script */
+static FILE *scriptCV = NULL;   /* script file handler for CV set cache */
+static int scriptCVCnt = 0;     /* number of words in the CV script */
 
 /* ScriptWord: return next word from script */
 static char * ScriptWord(void)
@@ -686,7 +839,54 @@ static char * ScriptWord(void)
    scriptBufLoaded = TRUE;
    return scriptBuf;
 }
-         
+
+/* cz277 - ANN */
+/* ScriptWord(void) for cache script */
+char *GetNextScpWord(FILE *script, char *scriptBuf)
+{
+    int ch, qch, i;
+    char *extBuf;
+
+    i = 0;
+    ch = ' ';
+    while (isspace(ch)) {
+        ch = fgetc(script);
+    }
+    if (ch == EOF) {
+        return NULL;
+    }
+    if (ch == '\'' || ch == '"') {
+        qch = ch;
+        ch = fgetc(script);
+        while (ch != qch && ch != EOF) {
+            scriptBuf[i++] = ch;
+            ch = fgetc(script);
+        }
+        if (ch == EOF) {
+            HError(5051, "GetNextScpWord: Closing quote missing in script file");
+        }
+    }
+    else {
+        do {
+            scriptBuf[i++] = ch;
+            ch = fgetc(script);
+        } while (!isspace(ch) && ch != EOF);
+    }
+    scriptBuf[i] = '\0';
+    if (extendedFileNames) {
+        extBuf = RegisterExtFileName(scriptBuf);
+        strcpy(scriptBuf, extBuf);
+    }
+    return scriptBuf;
+}
+
+/* cz277 - ANN */
+/* Get train set script file handler along with its length */
+FILE *GetTrainScript(int *scriptCnt) {
+    *scriptCnt = scriptTrCnt;
+    return scriptTr;
+}
+
 /* GetNextArg: from either command line or script file */
 static char * GetNextArg(Boolean step)
 {
@@ -862,15 +1062,36 @@ static char *CheckFn(char *fn);
 
 ReturnStatus SetScriptFile(char *fn)
 {
-   CheckFn(fn);
-   if ((script = fopen(fn,"r")) == NULL){  /* Don't care if text/binary */
-      HRError(5010,"SetScriptFile: Cannot open script file %s",fn);
-      return(FAIL);
-   }
-   while (ScriptWord() != NULL) ++scriptcount;
-   rewind(script);
-   scriptBufLoaded = FALSE;
-   return(SUCCESS);
+    CheckFn(fn);
+    /* cz277 - ANN */
+    if (((script = fopen(fn, "r")) == NULL) || ((scriptTr = fopen(fn, "r")) == NULL)) {  /* Don't care if text/binary */
+        HRError(5010, "SetScriptFile: Cannot open script file %s", fn);
+        return (FAIL);
+    }
+    while (ScriptWord() != NULL) 
+        ++scriptcount;
+    /* cz277 - ANN */
+    scriptTrCnt = scriptcount;
+
+    rewind(script);
+    scriptBufLoaded = FALSE;
+    return (SUCCESS);
+}
+
+/* cz277 - ANN */
+ReturnStatus SetScriptCVFile(char *fn) {
+    char buf[MAXSTRLEN];
+
+    CheckFn(fn);
+    if ((scriptCV = fopen(fn, "r")) == NULL) {
+        HRError(5010, "SetScriptCVFile: Cannot open script file %s for CV set", fn);
+        return FAIL;
+    }
+    while (GetNextScpWord(scriptCV, buf) != NULL) {
+        ++scriptCVCnt;
+    }
+    rewind(scriptCV);
+    return SUCCESS;
 }
 
 /* -------------------- Input Files/Pipes -------------------- */
@@ -905,7 +1126,7 @@ static Boolean FilterSet(IOFilter filter, char *s)
 void SubstFName(char *fname, char *s)
 {
    char *p;
-   char buf[1028];
+   char buf[MAXSTRLEN];
 
    while ((p=strchr(s,'$')) != NULL){
       *p = '\0'; ++p;
@@ -1486,8 +1707,11 @@ Boolean KeyPressed(int tWait)
       fflush(stdout);
       ioctl(0,FIONREAD,&numchars); 
       if ( numchars > 0){
-         read(0, c, 1);
+	if(read(0, c, 1)<0) {
+	  HError(-5013,"Failed to read next character");
+	}else{
          rtn=TRUE;
+	}
       }
    }
 #endif
@@ -1725,7 +1949,7 @@ char * PathOf(char *fn, char *s)
 /* EXPORT->ExtnOf: extension part of fn */
 char * ExtnOf(char *fn, char *s)
 {
-   char *t,buf[100];
+   char *t,buf[MAXSTRLEN];
    
    NameOf(fn,buf);
    t = strrchr(buf,'.');
@@ -1900,87 +2124,108 @@ char *RetrieveCommandLine(void)
    copied after processing -A/-B/-C/-S/-V.  */
 ReturnStatus InitShell(int argc, char *argv[], char *ver, char *sccs)
 {
-   char *fn;
-   int i,j;
-   Boolean b;
+    char *fn;
+    int i,j;
+    Boolean b;
 
-   argcount = 1; arglist = (char **) malloc(argc*sizeof(char *));
-   arglist[0] = argv[0];
-   Register(ver,sccs);
-   Register(hshell_version,hshell_vc_id);
-   /* read default configuration parameter file, if any */
-   if ((fn=getenv("HCONFIG")) != NULL){
-      if(ReadConfigFile(fn)<SUCCESS){
-         HRError(5020,"InitShell: ReadConfigFile failed on file %s", fn);
-         return(FAIL);
-      }
-   }
-   SaveCommandLine(argc, argv);
+    argcount = 1; 
+    arglist = (char **) malloc(argc * sizeof(char *));
+    arglist[0] = argv[0];
+    Register(ver, sccs);
+    Register(hshell_version, hshell_vc_id);
+    /* read default configuration parameter file, if any */
+    if ((fn = getenv("HCONFIG")) != NULL) {
+        if (ReadConfigFile(fn) < SUCCESS) {
+            HRError(5020, "InitShell: ReadConfigFile failed on file %s", fn);
+            return (FAIL);
+        }
+    }
+    SaveCommandLine(argc, argv);
    
 #ifdef WIN32
-   _fmode = _O_BINARY;
+    _fmode = _O_BINARY;
 #endif   
-   vaxOrder = IsVAXOrder();
+    vaxOrder = IsVAXOrder();
 
-   /* copy arg list and process -C and/or -S options */
-   for (i=1; i<argc; i++){
-      if (strcmp(argv[i],"-A") == 0){
-         for (j=0; j<argc; j++)
-            printf("%s ",argv[j]);
-         printf("\n"); fflush(stdout);
-         infoPrinted = TRUE;
-      } else
-         if (strcmp(argv[i],"-C") == 0){
-            if (++i >= argc){ 
-               HRError(5020,"InitShell: Config file name expected");
-               return(FAIL);
+    /* copy arg list and process -C and/or -S options */
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-A") == 0) {
+            for (j = 0; j < argc; j++) {
+                printf("%s ", argv[j]);
             }
-            if(ReadConfigFile(argv[i])<SUCCESS){
-               HRError(5020,"InitShell: ReadConfigFile failed on file %s", argv[i]);
-               return(FAIL);
+            printf("\n"); 
+            fflush(stdout);
+            infoPrinted = TRUE;
+        } 
+        else if (strcmp(argv[i], "-C") == 0) {
+            if (++i >= argc) { 
+                HRError(5020, "InitShell: Config file name expected");
+                return (FAIL);
             }
-         } else
-            if (strcmp(argv[i],"-S") == 0){
-               if (++i >= argc){ 
-                  HRError(5020,"InitShell: Script file name expected");
-                  return(FAIL);
-               }
-               if(SetScriptFile(argv[i])<SUCCESS){
-                  HRError(5020,"InitShell: SetScriptFile failed on file %s", argv[i]);
-                  return(FAIL);
-               }
-            } else
-               if (strcmp(argv[i],"-V") == 0){
-                  printVersionInfo = TRUE;
-                  infoPrinted = TRUE;
-               } else
-                  if (strcmp(argv[i],"-D") == 0){
-                     showConfig = TRUE;
-                     infoPrinted = TRUE;
-                  } else
-                     arglist[argcount++] = argv[i];
-   }
-   if (showConfig)
-      PrintConfig();
-   /* process this module's config params */
-   nParm = GetConfig("HSHELL", TRUE, cParm, MAXGLOBS);
-   if (nParm>0) {
-      if (GetConfInt(cParm,nParm,"TRACE",&i)) trace = i;
-      if (GetConfBool(cParm,nParm,"NONUMESCAPES",&b)) noNumEscapes = b;
-      if (GetConfBool(cParm,nParm,"ABORTONERR",&b)) abortOnError = b;
-      if (GetConfBool(cParm,nParm,"NATURALREADORDER",&b)) natReadOrder = b;
-      if (GetConfBool(cParm,nParm,"NATURALWRITEORDER",&b)) natWriteOrder = b;
-      if (GetConfBool(cParm,nParm,"EXTENDFILENAMES",&b)) extendedFileNames = b;
-      if (GetConfInt(cParm,nParm,"MAXTRYOPEN",&i)) {
-         maxTry = i;
-         if (maxTry<1 || maxTry>3){
-            HRError(5073,"InitShell: MAXTRYOPEN out of range (%d)",maxTry);
-            maxTry=1;
-         }
-      }
-   }
+            if (ReadConfigFile(argv[i]) < SUCCESS) {
+                HRError(5020, "InitShell: ReadConfigFile failed on file %s", argv[i]);
+                return (FAIL);
+            }
+        }
+        else if (strcmp(argv[i], "-S") == 0) {
+            if (++i >= argc) { 
+                HRError(5020, "InitShell: Script file name expected");
+                return (FAIL);
+            }
+            if (SetScriptFile(argv[i]) < SUCCESS) {
+                HRError(5020,"InitShell: SetScriptFile failed on file %s", argv[i]);
+                return (FAIL);
+            }
+        } 
+        /* cz277 - ANN */
+        /*else if (strcmp(argv[i], "-SCV") == 0) {
+            if (++i >= argc) {
+                HRError(5020, "InitShell: Script file name for CV set expected");
+                return FAIL;
+            }if (SetScriptCVFile(argv[i]) < SUCCESS) {
+                HRError(5020, "InitShell: SetScriptCVFile failed on file %s", argv[i]);
+                return FAIL;
+            }
+        }*/
+        else if (strcmp(argv[i], "-V") == 0) {
+            printVersionInfo = TRUE;
+            infoPrinted = TRUE;
+        } 
+        else if (strcmp(argv[i], "-D") == 0) {
+            showConfig = TRUE;
+            infoPrinted = TRUE;
+        } 
+        else {
+            arglist[argcount++] = argv[i];
+        }
+    }
+    if (showConfig) {
+        PrintConfig();
+    }
+    /* process this module's config params */
+    nParm = GetConfig("HSHELL", TRUE, cParm, MAXGLOBS);
+    if (nParm > 0) {
+        if (GetConfInt(cParm, nParm, "TRACE", &i)) 
+            trace = i;
+        if (GetConfBool(cParm, nParm, "NONUMESCAPES", &b)) 
+            noNumEscapes = b;
+        if (GetConfBool(cParm, nParm, "ABORTONERR", &b)) 
+            abortOnError = b;
+        if (GetConfBool(cParm, nParm, "NATURALREADORDER", &b)) 
+            natReadOrder = b;
+        if (GetConfBool(cParm, nParm, "NATURALWRITEORDER", &b)) 
+            natWriteOrder = b;
+        if (GetConfBool(cParm, nParm, "EXTENDFILENAMES", &b)) 
+            extendedFileNames = b;
+        if (GetConfInt(cParm, nParm, "MAXTRYOPEN", &i)) {
+            maxTry = i;
+            if (maxTry < 1 || maxTry > 3){
+                HRError(5073, "InitShell: MAXTRYOPEN out of range (%d)", maxTry);
+                maxTry = 1;
+            }
+        }
+    }
 
-   
    return(SUCCESS);
 }
 
@@ -2028,6 +2273,39 @@ void PrintStdOpts(char *opt)
    printf(" -V      Print version information            off\n");
    if (strchr(opt,'X'))
       printf(" -X ext  Set input label (or net) file ext    lab\n");
+}
+
+/* cz277 - ANN */
+void SetupDir(char *targetDir) {
+    if (access(targetDir, 0)) {
+        #ifdef WIN32
+            _mkdir(targetDir);
+        #else
+            mkdir(targetDir, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+        #endif
+    }
+}
+
+char *CatDirs(char *baseDir, char *extDir, char *newDir) {
+    int len;
+
+    if (baseDir != NULL) {
+        strcpy(newDir, baseDir);
+        len = strlen(newDir);
+        if (len > 0 && newDir[len - 1] != PATHCHAR) {
+            newDir[len] = PATHCHAR;
+            newDir[len + 1] = '\0';
+        }
+    }
+    if (extDir != NULL) {
+        strcat(newDir, extDir);
+        len = strlen(newDir);
+        if (len > 0 && newDir[len - 1] != PATHCHAR) {
+            newDir[len] = PATHCHAR;
+            newDir[len + 1] = '\0';
+        }
+    }
+    return newDir;
 }
 
 /* -------------------------- End of HShell.c ----------------------------- */

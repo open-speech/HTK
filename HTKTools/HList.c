@@ -3,37 +3,40 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*              2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*      File: HList.c: List a Speech File or Audio Source      */
+/*       File: HList.c  List a speech file or audio source     */
 /* ----------------------------------------------------------- */
 
-char *hlist_version = "!HVER!HList:   3.4.1 [CUED 12/03/09]";
-char *hlist_vc_id = "$Id: HList.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $";
+char *hlist_version = "!HVER!HList:   3.5.0 [CUED 12/10/15]";
+char *hlist_vc_id = "$Id: HList.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 #include "HShell.h"
 #include "HMem.h"
@@ -44,6 +47,7 @@ char *hlist_vc_id = "$Id: HList.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $";
 #include "HVQ.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 
 
@@ -290,12 +294,13 @@ Boolean IsWave(char *srcFile)
 {
    FILE *f;
    long nSamp,sampP, hdrS;
-   short sampS,kind;
+   /*short sampS,kind;*/
+   short kind;
+   unsigned short sampS;	/* cz277 - cbu */
    Boolean isPipe,bSwap,isWave;
    char buf[MAXSTRLEN];
    ParmKind tgtPK=ANON;
    FileFormat srcFF=HTK;
-   Boolean isEXF;               /* srcFile is extended file */
    char actfname[MAXFNAMELEN];  /* actual filename */
    long stIndex, enIndex;       /* start and end indices */
    
@@ -307,7 +312,7 @@ Boolean IsWave(char *srcFile)
    if (tgtPK == ANON){
       if ((srcFF == HTK || srcFF == ESIG) && srcFile != NULL){
          strncpy (actfname, srcFile, MAXFNAMELEN);
-         isEXF = GetFileNameExt (srcFile, actfname, &stIndex, &enIndex);
+         GetFileNameExt (srcFile, actfname, &stIndex, &enIndex);
          
          if ((f = FOpen (actfname, WaveFilter, &isPipe)) == NULL)
             HError(1110,"IsWave: cannot open File %s",srcFile);

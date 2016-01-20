@@ -3,33 +3,36 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/* main authors: Valtcho Valtchev, Steve Young,                */
-/*               Julian Odell, Gareth Moore                    */
+/* main authors:                                               */
+/*           Valtcho Valtchev, Steve Young,                    */
+/*           Julian Odell, Gareth Moore                        */
+/*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*                                                             */
-/*          1994-2002 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            1994-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*      File: LCMap:  Class Map Routines                       */
+/*                File: LCMap  Class map routines              */
 /* ----------------------------------------------------------- */
 
-char *lcmap_version = "!HVER!LCMap:   3.4.1 [CUED 12/03/09]";
+char *lcmap_version = "!HVER!LCMap:   3.5.0 [CUED 12/10/15]";
 char *lcmap_vc_id = "$Id: LCMap.c,v 1.1.1.1 2006/10/11 09:54:43 jal58 Exp $";
 
 #include "HShell.h"

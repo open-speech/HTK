@@ -7,23 +7,23 @@
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* author:                                                     */
+/*           Rod Johnson                                       */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
+/*       File: esig_edr.c ED1 and ED2 portable binary I/O      */
+/* ----------------------------------------------------------- */
 
-
-/*
- * Example programs for Esignal public external file format.
- * EDR1 and EDR2 portable binary I/O.
- *
- * Author:  Rod Johnson
- */
+/* !HVER!esig_edr:   3.5.0 [CUED 12/10/15] */
 
 
 #include "esignal.h"
@@ -306,7 +306,7 @@ ReadEdrRecord(FieldSpec **fields,
 {
    long    i;
    long    nopt;
-   Uchar   flags;
+   Uchar   flags=0;
 
    if (file == NULL || fields == NULL)
       {
@@ -1189,7 +1189,7 @@ EdrReadLong(long    *data,
 
                      if ((hi & 0x80000000) == 0)        /* non-negative */
                         {
-                           if (hi > lmaxhi || hi == lmaxhi && lo > lmaxlo)
+			  if (hi > lmaxhi || (hi == lmaxhi && lo > lmaxlo))
                               {
                                  data[n] = LONG_MAX;
                                  /* CLIPPING */
@@ -1201,7 +1201,7 @@ EdrReadLong(long    *data,
                         {
                            hi |= sgnext;
 
-                           if (hi < lminhi || hi == lminhi && lo < lminlo)
+                           if (hi < lminhi || (hi == lminhi && lo < lminlo))
                               {
                                  data[n] = LONG_MIN;
                                  /* CLIPPING */
@@ -1338,7 +1338,7 @@ EdrReadUlong(Ulong *data,
                         ulmaxhi = ULONG_MAX >> 32,
                         ulmaxlo = ULONG_MAX & 0xffffffffUL;
 
-                     if (hi > ulmaxhi || hi == ulmaxhi && lo > ulmaxlo)
+                     if (hi > ulmaxhi || (hi == ulmaxhi && lo > ulmaxlo))
                         {
                            data[n] = ULONG_MAX;
                            /* CLIPPING */
@@ -2687,4 +2687,5 @@ EdrWriteWchar(Wchar     *data,
    return n;
 }
 
+/* ------------------------ End of esig_edr.c ------------------------- */
 

@@ -3,37 +3,40 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*          2002-2004 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HHEd:  HMM Source Definition Editor           */
+/*           File: HHEd  HMM source definition editor          */
 /* ----------------------------------------------------------- */
 
-char *hhed_version = "!HVER!HHEd:   3.4.1 [CUED 12/03/09]";
-char *hhed_vc_id = "$Id: HHEd.c,v 1.2 2006/12/07 11:09:08 mjfg Exp $";
+char *hhed_version = "!HVER!HHEd:   3.5.0 [CUED 12/10/15]";
+char *hhed_vc_id = "$Id: HHEd.c,v 1.3 2015/10/12 12:07:24 cz277 Exp $";
 
 /*
    This program is used to read in a set of HMM definitions
@@ -51,10 +54,13 @@ char *hhed_vc_id = "$Id: HHEd.c,v 1.2 2006/12/07 11:09:08 mjfg Exp $";
 #include "HVQ.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h"
 #include "HTrain.h"
 #include "HAdapt.h"
+/* cz277 - aug */
+/*#include "HNCache.h"*/
 
 #define FLOAT_MAX 1E10      /* Limit for float arguments */
 #define BIG_FLOAT 1E20      /* Limit for float arguments */
@@ -87,6 +93,9 @@ char *hhed_vc_id = "$Id: HHEd.c,v 1.2 2006/12/07 11:09:08 mjfg Exp $";
 #define T_BID        0x0007 /* Basic, intermediate or detailed tracing */
 #define T_MD         0x10000 /* Trace mix down detail merge */
 
+/* cz277 - aug */
+#define MAXAUGFEAS   5
+
 static MemHeap questHeap;   /* Heap holds all questions */
 static MemHeap hmmHeap;     /* Heap holds all hmm related info */
 static MemHeap tmpHeap;     /* Temporary (duration of command or less) heap */
@@ -103,6 +112,8 @@ static char * mmfFn  = NULL;     /* output MMF file, if any */
 static int  cmdTrace    = 0;     /* trace level from command line */
 static int  trace    = 0;        /* current trace level */
 
+static char *nmfFn = NULL;	 /* cz277 - ANN */
+
 /* Global Data Structures */
 
 static HMMSet hSet;        /* current HMM set */
@@ -110,6 +121,9 @@ static HMMSet *hset;       /* current HMM set */
 static int fidx;           /* current macro file id */
 static int maxStates;      /* max number of states in current HMM set */
 static int maxMixes;       /* max number of mixes in current HMM set */
+/* cz277 - ANN */
+static HMMSet *auxSet = NULL;	/* the HMMSet used for auxiliary purpose */
+static char *auxFn = NULL;	/* the file path of the auxiliry HMMSet */
 
 static Source source;      /* the current input file */
 
@@ -161,20 +175,34 @@ void SetConfParms(void)
 void Summary(void)
 {
    printf("\nHHEd Command Summary\n\n");
+   printf("AF macro feamixDef   - Add Feature mixture macro defined by feamixDef\n");
+   printf("AM macro matrixDef   - Add Matrix macro defined by matrixDef\n");
    printf("AT i j prob itemlist - Add Transition from i to j in given mats\n");
+   printf("AV macro vectorDef   - Add Vector macro defined by vectorDef\n");
    printf("AU hmmlist           - Add Unseen triphones in given hmmlist to\n");
    printf("                       currently loaded HMM list using previously\n");
    printf("                       built decision trees.\n");
+   printf("CA macro actfunDef   - Change the Activation function of layer macro to actfunDef\n");
+   printf("CD macro o i         - Change the output/input Dims of layer macro and its component to o/i");
+   printf("CF lmacro fmacro ... - Change the Feature mixture of layer lmacro to fmacro\n");
+   printf("CH mmf lst macro ... - Connect ANN model macro defined in mmf and lst to current HMM set");
    printf("CL hmmList           - CLone hmms to give new hmmList\n");
    printf("CO newHmmList        - COmpact identical HMM's by sharing same phys model\n");
+   printf("CP mmf lst ...       - CoPy parameters of a macro in mmf to a macro in current model set\n");
+   printf("DL macro             - DeLete an ANN layer macro from all ANN models\n");
    printf("DP s n id ...        - Duplicate the hmm set n times using id to differentiate\n");
    printf("                       the new hmms and macros.  Only macros the type of which\n");
    printf("                       appears in s will be duplicated, others will be shared.\n");
+   printf("EF macro ...         - Extend the Feature mixture macro or of layer macro with a new element\n");
+   printf("                       if macro is a layer, then its feature mixture will be cloned first.\n");
+   printf("EL macro             - Erase (re-initialise) an ANN Layer\n");
+   printf("                       different random value generation formulas used for different layers.\n");
    printf("FA f                 - Set variance floor to average within state variance * f\n");
    printf("FV vFloorfile        - Load variance floor from file\n");
    printf("FC                   - Convert diagonal variances to full covariances\n");
    printf("HK hsetkind          - change current set to hsetkind\n");
    printf("JO size floor        - set size and min mix weight for a JOin\n");
+   printf("IL nmacro pos lmacro - Insert an ANN Layer lmacro at pos of ANN model nmacro\n");
    printf("LS statsfile         - load named statsfile\n");
    printf("LT filename          - Load Questions and Trees from filename\n");
    printf("MD n itemlist        - MixDown command, change mixtures in itemlist to n\n");
@@ -199,9 +227,11 @@ void Summary(void)
    printf("RT i j itemlist      - Rem Transition from i to j in given mats\n");
    printf("SH                   - show the current HMM set (for debugging)\n");
    printf("SK sk                - Set sample kind of all models to sk\n");
+   printf("SM macro <VALUES>... - Set each value of the ANN matrix macro to the input ones\n");
    printf("SS n                 - Split into n data Streams\n");
    printf("ST filename          - Save Questions and Trees to filename\n");
    printf("SU n w1 .. wn        - Split into user defined stream widths\n");
+   printf("SV macro <VALUES>... - Set each value of the ANN vector macro to the input ones\n");
    printf("SW s n               - Set width of stream s to n\n");
    printf("TB f macro itemlist  - Tree build using QS questions and likelihood\n");
    printf("                       based clustering criterion.\n");
@@ -218,6 +248,7 @@ void ReportUsage(void)
    printf("\nUSAGE: HHEd [options] editF hmmList\n\n");
    printf(" Option                                       Default\n\n");
    printf(" -d s    dir to find hmm definitions          current\n");
+   printf(" -n mmf  Save all ANNs macro file mmf s       as source\n");
    printf(" -o s    extension for new hmm files          as source\n");
    printf(" -w mmf  Save all HMMs to macro file mmf s    as source\n");
    printf(" -x s    extension for hmm files              none\n");
@@ -259,6 +290,11 @@ int main(int argc, char *argv[])
          if (NextArg()!=STRINGARG)
             HError(2619,"HHEd: Input HMM definition directory expected");
          hmmDir = GetStrArg(); break;  
+      case 'n':
+         if (NextArg() != STRINGARG)
+            HError(2619, "HHEd: Output ANN def file name expected");
+         nmfFn = GetStrArg();
+         break;
       case 'o':
          if (NextArg()!=STRINGARG)
             HError(2619,"HHEd: Output HMM file extension expected");
@@ -308,7 +344,7 @@ int main(int argc, char *argv[])
 
    Initialise(GetStrArg());
 
-   if (hset->logWt == TRUE) HError(999,"HHEd requires linear weights");
+   if (hset->logWt == TRUE) HError(2690,"HHEd requires linear weights");
    DoEdit(editFn);
    Exit(0);
    return (0);          /* never reached -- make compiler happy */
@@ -473,7 +509,7 @@ typedef enum { baseNorm=0, baseLeft, baseRight, baseMono } baseType;
    baseMono (monophone); baseRight (right biphone); baseLeft (left biphone) */
 HLink FindBaseModel(HMMSet *hset,LabId id,baseType type)
 {
-   char baseName[255],buf[255],*p;
+   char baseName[255],buf[255],*p,*p2;
    LabId baseId;
    MLink ml;
    
@@ -490,8 +526,39 @@ HLink FindBaseModel(HMMSet *hset,LabId id,baseType type)
          strcpy(baseName,buf);
       }
    }
-   if ((baseId = GetLabId(baseName,FALSE))==NULL)
-      HError(2635,"FindBaseModel: No Base Model %s for %s",baseName,id->name);
+   if ((baseId = GetLabId(baseName,FALSE))==NULL) {
+      /* problem could be due to mappings ... try no context/no tone */
+      strcpy(buf,baseName);
+      if ((p = strrchr(buf,'^')) != NULL) {
+         *p = '\0';
+         baseId = GetLabId(buf,FALSE);
+         if (baseId == NULL) {
+            strcpy(buf,baseName);            
+            if ((p2 = strrchr(buf,';')) != NULL) {
+               /* either tone by itself or position by itself */
+               /* try position first */
+               *p2 = '\0';
+               baseId = GetLabId(buf,FALSE);
+               if (baseId== NULL) {
+                  /* then try tone */
+                  strcpy(buf,baseName);            
+                  while (*p2 != '\0') {
+                     *p = *p2;
+                     p++; p2++;
+                  }
+                  *p = '\0';
+                  baseId = GetLabId(buf,FALSE);
+               }
+            }
+         }
+      } else if ((p = strrchr(buf,';')) != NULL) {
+         *p = '\0';
+         baseId = GetLabId(buf,FALSE);
+      }
+      if (baseId == NULL)
+         HError(2635,"FindBaseModel: No Base Model %s for %s",baseName,id->name);
+      strcpy(baseName,buf);
+   }
    ml = FindMacroName(hset,'l',baseId);
    if (ml==NULL)
       HError(2635,"FindBaseModel: Cannot Find HMM %s in Current List",baseName);
@@ -717,6 +784,7 @@ void PurgeMacros(HMMSet *hset)
             SetMacroUse(q,n);
          }
       }
+
    /* Delete unused macros in next pass */
    for (h=0; h<MACHASHSIZE; h++)
       for (q=hset->mtab[h]; q!=NULL; q=q->next) {
@@ -727,6 +795,7 @@ void PurgeMacros(HMMSet *hset)
             DeleteMacro(hset,q);
          }
       }
+
    /* Finally unmark all macros */
    for (h=0; h<MACHASHSIZE; h++)
       for (q=hset->mtab[h]; q!=NULL; q=q->next) {
@@ -737,6 +806,7 @@ void PurgeMacros(HMMSet *hset)
             SetMacroUse(q,n);
          }
       }
+
 }
 
 /* -------------------- Vector/Matrix Resizing Operations -------------------- */
@@ -897,7 +967,7 @@ TriMat ChopTriMat(TriMat mat, int i, int j, int k)
 /* SplitStreams: split streams of given HMM as per swidth info */
 void SplitStreams(HMMSet *hset,StateInfo *si,Boolean simple,Boolean first)
 {
-   int j,s,S,m,M,width,V,next;
+   int j,s,S,m,M,width,next;
    StreamElem *ste,*oldste;
    MixtureElem *me,*oldme;
    MixPDF *mp, *oldmp;
@@ -905,7 +975,7 @@ void SplitStreams(HMMSet *hset,StateInfo *si,Boolean simple,Boolean first)
    int epos[4];
    int eposIdx;
    
-   S = hset->swidth[0]; V = hset->vecSize;
+   S = hset->swidth[0];
    hasN = HasNulle(hset->pkind);
    oldste = si->pdf+1;
    ste = (StreamElem *)New(hset->hmem,S*sizeof(StreamElem));
@@ -1322,11 +1392,11 @@ void SplitMix(MixtureElem *mi,MixtureElem *m01,MixtureElem *m02,int vSize)
    float x;
    TriMat mat=NULL;
    
-   splitcount = (int) mi->mpdf->hook + 1;
+   splitcount = (int) (long int)mi->mpdf->hook + 1;
    m01->mpdf = CloneMixPDF(hset,mi->mpdf,FALSE); 
    m02->mpdf = CloneMixPDF(hset,mi->mpdf,FALSE);
    m01->weight = m02->weight = mi->weight/2.0;
-   m01->mpdf->hook = m02->mpdf->hook = (void *)splitcount;
+   m01->mpdf->hook = m02->mpdf->hook = (void *)(long int)splitcount;
    if (mi->mpdf->ckind==FULLC || mi->mpdf->ckind==LLTC) {
       mat = CreateTriMat(&tmpHeap,vSize);
       CovInvert(mi->mpdf->cov.inv,mat);
@@ -1574,12 +1644,12 @@ void UntieMix(ILink ilist)
    ILink i;
    MixtureElem *me;
    MixPDF *mp;
-   int nu,vSize;
+   int nu;
    
    for (i=ilist; i!=NULL; i=i->next) {
       me = (MixtureElem *)i->item;
       if (me->weight > MINMIX) {
-         mp = me->mpdf; vSize = VectorSize(mp->mean);
+         mp = me->mpdf;
          nu = mp->nUse; 
          mp->nUse = 0;
          if (nu==1)
@@ -2013,7 +2083,7 @@ void Clustering(ILink ilist, int *numReq, float threshold,
    CLink p;
    ILink l;
    float ming,min;
-   int i,j,k,n,numItems;
+   int i,j,k,numItems;
    char buf[40];
 
    if (badGC) {
@@ -2039,7 +2109,6 @@ void Clustering(ILink ilist, int *numReq, float threshold,
       SetGDist(cvec,idist,gdist,numClust); /* recompute gdist */
       ming = MinGDist(gdist,&i,&j,numClust);
    }
-   n = numClust;
    if (occStatsLoaded) {
       if (trace & T_IND) {
          printf(" Via %d items before removing outliers\n",numClust);
@@ -2117,16 +2186,16 @@ int HeaviestMix(char *hname, MixtureElem *me, int M)
    
    gThresh = meanGC - 4.0*stdGC;
    maxm = 1;  mp = me[1].mpdf;
-   max = me[1].weight - (int)mp->hook;
-   if ((int)mp->hook < 5000 && mp->gConst < gThresh) {
+   max = me[1].weight - (long int)mp->hook;
+   if ((long int)mp->hook < 5000 && mp->gConst < gThresh) {
       max -= 5000.0; mp->hook = (void *)5000;
       HError(-2637,"HeaviestMix: mix 1 in %s has v.small gConst [%f]",
              hname,mp->gConst);
    }
    for (m=2; m<=M; m++) {   
       mp = me[m].mpdf;
-      w = me[m].weight - (int)mp->hook;
-      if ((int)mp->hook < 5000 && mp->gConst < gThresh) {
+      w = me[m].weight - (long int)mp->hook;
+      if ((long int)mp->hook < 5000 && mp->gConst < gThresh) {
          w -= 5000.0; mp->hook = (void *)5000;
          HError(-2637,"HeaviestMix: mix %d in %s has v.small gConst [%f]",
                 m,hname,mp->gConst);
@@ -2138,8 +2207,8 @@ int HeaviestMix(char *hname, MixtureElem *me, int M)
    if (me[maxm].weight<=MINMIX)
       HError(2697,"HeaviestMix:  heaviest mix is defunct!");
    if (trace & T_DET) {
-      printf("               : Split %d (weight=%.3f, count=%d, score=%.3f)\n",
-             maxm, me[maxm].weight, (int)me[maxm].mpdf->hook, max);
+      printf("               : Split %d (weight=%.3f, count=%ld, score=%.3f)\n",
+             maxm, me[maxm].weight, (long int)me[maxm].mpdf->hook, max);
       fflush(stdout);
    }
    return maxm;
@@ -2464,12 +2533,12 @@ Tree *CreateTree(ILink ilist,LabId baseId,int state)
       hmm = ilist->owner;
       n=hmm->numStates;
       for (i=ilist; i!=NULL; i=i->next) {
-         hmm = i->owner; strcpy(buf,HMMPhysName(hset,hmm)); TriStrip(buf);
+         hmm = i->owner; strcpy(buf,HMMPhysName(hset,hmm)); FTriStrip(buf);
          MapTreeName(buf);
          id = GetLabId(buf,FALSE);
          if (tree->baseId != id)
-            HError(-2663,"CreateTree: different base phone %s in item list",
-                   buf);
+            HError(-2663,"CreateTree: different base phone %s in item list for %s",
+                   buf,tree->baseId->name);
          if (state>0) {
             if (hmm->svec+state != (StateElem *)i->item)
                HError(2663,"CreateTree: attempt to cluster different states");
@@ -2960,8 +3029,8 @@ void TieLeafNodes(Tree *tree, char *macRoot)
    macRoot is the root prefix of the name to use in the tie  */
 void BuildTree(ILink ilist,float threshold, char *macRoot)
 {
-   int i,j,l,N,snum,state,numItems;
-   char buf[256];
+   int i,j,l,snum,state,numItems;
+   char buf[MAXSTRLEN];
    HMMDef *hmm;
    CLink clHead,cl;
    ILink p;
@@ -2980,14 +3049,13 @@ void BuildTree(ILink ilist,float threshold, char *macRoot)
 
    /* Check object consistency */
    hmm = ilist->owner;          /* any HMM will do */
-   N = hmm->numStates;
    for(p=ilist;p!=NULL;p=p->next) 
       ChkTreeObject(p);
 
    /* Create a new tree in tree list */
    /* Find base name and state if any */
    hmm = ilist->owner;
-   strcpy(buf,HMMPhysName(hset,hmm)); TriStrip(buf);
+   strcpy(buf,HMMPhysName(hset,hmm)); FTriStrip(buf);
    MapTreeName(buf);
    labid = GetLabId(buf,TRUE);
 
@@ -3123,17 +3191,24 @@ Ptr AssignStructure(LabId id, int state)
    MLink m;
    
    /* First find Tree to use */
-   strcpy(buf,id->name); TriStrip(buf);
-   MapTreeName(buf);
+   strcpy(buf,id->name); FTriStrip(buf);
+   MapTreeName(buf); 
    tid = GetLabId(buf,FALSE);
    for (tree=treeList;tree!=NULL;tree=tree->next) {
       if (tree->baseId == tid && tree->state == state) break;
    }
    if (tree==NULL && state<0) return(NULL);
-   if (tree==NULL)
-      HError(2662,"AssignStructure: cannot find tree for %s state %d",
-             id->name,state);
-      
+   if (tree==NULL) {
+      if (useModelName) {
+         HError(2662,"AssignStructure: cannot find tree for %s state %d",
+                id->name,state);
+      } else {
+         /* not using model name - must be a global tree - match state */
+         for (tree=treeList;tree!=NULL;tree=tree->next) {
+            if (tree->state == state) break;
+         }
+      }
+   }      
    /* Then move down tree until state is found */
    node = tree->root;
    if (trace & T_DET) {
@@ -3164,15 +3239,25 @@ HLink FindProtoModel(LabId model)
    MLink q;
 
    strcpy(phone,model->name);
-   TriStrip(phone);
+   FTriStrip(phone);
    for (h=0; h<MACHASHSIZE; h++)
       for (q=hset->mtab[h]; q!=NULL; q=q->next) 
          if (q->type=='h') {
             strcpy(buf,q->id->name);
-            TriStrip(buf);
+            FTriStrip(buf);
             if (strcmp(phone,buf)==0) return ((HLink) q->structure);
          }
-   HError(2662,"FindProtoModel: no proto for %s in hSet",model->name);
+   if (useModelName) {
+      HError(2662,"FindProtoModel: no proto for %s in hSet",model->name);
+   } else {
+      for (h=0; h<MACHASHSIZE; h++)
+         for (q=hset->mtab[h]; q!=NULL; q=q->next) 
+            if (q->type=='h') {
+               printf("%s\n",q->id->name);
+               fflush(stdout);
+               return ((HLink) q->structure);      
+            }
+   }
    return NULL;
 }
 
@@ -3433,7 +3518,7 @@ Tree *LoadTree(char *name,Source *src)
 void LoadTreesCommand(void)
 {
    Source src;
-   char qname[256],buf[1024],info[256];
+   char qname[256],buf[4096],info[256];
    char fn[256];
   
    ChkedAlpha("LT trees files name",fn);        /* get name of trees file */
@@ -3546,6 +3631,118 @@ void CloneCommand(void)
    SwapLists(hset,tmpSet);
 }
 
+/* -------------------- CM - Concatenate Command ---------------------- */
+
+/* ConcatenateCommand: Concatenate hmms to synthesize a new hmm */
+void ConcatenateCommand(void)
+{
+   int i = 0, j = 0, k = 0, n = 0, ns = 0, d = 0;
+   char buf[255], baset[255];
+   char **buf2 = NULL;
+   LabId Id = NULL, tId = NULL;
+   StateElem *t = NULL;
+   MLink macroName = NULL;
+   HLink *src = NULL, tgt = NULL;
+
+   ChkedAlpha("target HMM name", buf);
+   n = ChkedInt("number of HMMs to concantenate", 1, 16);
+   buf2 = (char **)New(&gstack, (n+1) * sizeof(char *));
+   /* list of source HMMs */
+   src = (HLink *)New(&gstack, (n+1) * sizeof(HLink));
+   for (i=1; i<=n; i++) {
+      buf2[i] = (char *)New(&gstack, 256 * sizeof(char));
+      ChkedAlpha("source HMM name", buf2[i]);
+      Id = GetLabId(buf2[i], FALSE);
+      macroName = FindMacroName(hset, 'l', Id);
+      if(macroName == NULL) {
+         HError(2674,"ConcatenateCommand: Unknown label %s", Id->name);
+      }
+      src[i] = (HLink) macroName->structure;
+      ns += src[i]->numStates;
+   }
+   /* total number states of new HMM */
+   ns = ns - n*2 + 2;
+
+   if (trace & T_BID) {
+      fprintf(stdout, "\nCM synthesizing %d state HMM %s using %d HMMs: ", ns, buf, n);
+      for (i=1; i<=n; i++) {
+         fprintf(stdout, "%s ", buf2[i]);
+      }
+      fprintf(stdout, "\n");
+      fflush(stdout);
+   }
+
+   Id = GetLabId(buf, TRUE);
+   strcpy(baset, Id->name);
+   TriStrip(baset);
+   strcat(baset, "_t");
+   tgt = (HLink) New(hset->hmem, sizeof(HMMDef));
+   tgt->owner = hset;
+
+   tgt->numStates = ns;
+   tgt->dur = src[1]->dur;
+   t = (StateElem *)New(hset->hmem, (tgt->numStates - 2) * sizeof(StateElem));
+   tgt->svec = t-2;
+   /* state vector of new HMM */
+   for (i=1; i<=n; i++) {
+      for (j=2; j<src[i]->numStates; j++) {
+         t->info =  src[i]->svec[j].info;
+         t++;
+      }
+   }
+
+   /* block diagnoanal structure transition matrix of new HMM */
+   tId = GetLabId(baset, FALSE);
+   if (tId == NULL) {
+      tId = GetLabId(baset, TRUE);
+   }
+   macroName = FindMacroName(hset, 't', tId);
+   /* create new transition matrix if necessary */
+   if (macroName == NULL) {
+      tgt->transP = CreateSMatrix(hset->hmem, ns, ns);
+      for (i=1; i<=ns; i++) {
+         for (j=1; j<=ns; j++) {
+            tgt->transP[i][j] = LZERO;
+         }
+      }
+      d = 0;
+      for (i=1; i<=n; i++) {
+         if (i == 1) {
+            for (j=1; j<=src[i]->numStates; j++) {
+               for (k=1; k<=src[i]->numStates; k++) {
+                  tgt->transP[j][k] = src[i]->transP[j][k];
+               }
+            }
+            d += (src[i]->numStates-1);
+         }
+         else {
+            for (j=2; j<=src[i]->numStates; j++) {
+               for (k=2; k<=src[i]->numStates; k++) {
+                  tgt->transP[j-1+d][k-1+d] = src[i]->transP[j][k];
+               }
+            }
+            d += (src[i]->numStates-2);
+         }
+      }
+      NewMacro(hset, fidx, 't', tId, tgt->transP);
+   }
+   /* use found ones */
+   else {
+      tgt->transP = (SMatrix) macroName->structure;
+   }
+   IncUse(tgt->transP);
+
+   tgt->hook = NULL; tgt->nUse = 1;
+   NewMacro(hset, fidx, 'h', Id, tgt);
+
+   if (trace & T_BID) {
+      ShowMacros(tgt);
+   }
+
+   Dispose(&gstack, buf2);
+}
+
+
 /* -------------------- DP - Duplicate Command ---------------------- */
 
 SVector DupSVector(SVector v)
@@ -3597,7 +3794,6 @@ STriMat DupSTriMat(STriMat m)
 MixPDF *DupMixPDF(MixPDF *s, Boolean frc)
 {
    MixPDF *t;                   /* the target */
-   int vSize;
    
    if (s->nUse>0 && !frc) {     /* shared struct so just return ptr to it */
       if ((t=(MixPDF *) s->hook)==NULL)
@@ -3605,7 +3801,6 @@ MixPDF *DupMixPDF(MixPDF *s, Boolean frc)
       ++t->nUse;
       return t;
    }
-   vSize = VectorSize(s->mean);
    t = (MixPDF*) New(&hmmHeap,sizeof(MixPDF));
    t->nUse = 0; t->hook = NULL;
    t->ckind=s->ckind; t->gConst = s->gConst;
@@ -4391,16 +4586,16 @@ void CompactCommand(void)
          if (q->type=='l') {
             hmm=(HLink) q->structure;
             if (hmm->hook!=NULL && hmm->hook!=hmm) {
-               NewMacro(hset,fidx,'L',q->id,hmm->hook);
+               NewMacro(hset,fidx,'1',q->id,hmm->hook);	/* cz277 - ANN */
                DeleteMacro(hset,q);
             }
          }
    
    for (h=0; h<MACHASHSIZE; h++)
       for (q=hset->mtab[h]; q!=NULL; q=q->next) 
-         if (q->type=='L') {
+         if (q->type=='1') {	/* cz277 - ANN */
             hset->numLogHMM++;hset->numMacros--;
-            q->type='l';
+            q->type='l';	/* cz277 - ANN */
          }
    ResetHooks(hset,"h");
    
@@ -4592,44 +4787,48 @@ void SetStreamWidthCommand(void)
       fflush(stdout);
    }
    if (hset->swidth[s]==n) return;
-   NewHMMScan(hset,&hss);
-   if (!(hss.isCont || (hss.hset->hsKind == TIEDHS))) {
-         HError(2640,"SetStreamWidthCommand: Can only resize continuous and tied systems");      
+
+   /* cz277 - ANN */
+   if (hset->hsKind != HYBRIDHS) {
+       NewHMMScan(hset,&hss);
+       if (!(hss.isCont || (hss.hset->hsKind == TIEDHS))) {	
+           HError(2640,"SetStreamWidthCommand: Can only resize continuous and tied systems");      
+       }
+       while(GoNextMix(&hss,FALSE)) {
+           if (hss.s!=s) continue;
+           mp = hss.me->mpdf;
+           mp->mean=ResizeSVector(hset,mp->mean,n,'u',0.0);
+           switch(mp->ckind) {
+           case DIAGC:
+               mp->cov.var=ResizeSVector(hset,mp->cov.var,n,'v',1.0);
+               break;
+           case FULLC:
+               mp->cov.inv=ResizeSTriMat(hset,mp->cov.inv,n,'i',1.0);
+               break;
+           default: 
+               HError(2640,"SetStreamWidthCommand: Can only resize DIAGC or FULLC");
+           }
+           if (trace & (T_SIZ | T_DET)) {
+               if (nedit==0) printf(" For model.state["),hmm=NULL;
+               if (hmm!=hss.hmm)
+                   printf("]\n  %12s.state",hss.mac->id->name),c='[',hmm=hss.hmm;
+               printf("%c%d",c,hss.i);c=',';
+               fflush(stdout);
+           }
+           nedit++;
+       }
+       if (trace & (T_SIZ | T_DET))
+           printf("]\n"),fflush(stdout);
+       EndHMMScan(&hss);
+       /* Now varFloor */
+       SetVFloor(hset,vf,0.0);
+       if (FindMacroStruct(hset,'v',vf[s])!=NULL) {
+           if (trace & T_BID)
+               printf(" Resizing varFloor\n");
+           ResizeSVector(hset,vf[s],n,'v',0.0);
+       }
+       badGC = TRUE;
    }
-   while(GoNextMix(&hss,FALSE)) {
-      if (hss.s!=s) continue;
-      mp = hss.me->mpdf;
-      mp->mean=ResizeSVector(hset,mp->mean,n,'u',0.0);
-      switch(mp->ckind) {
-      case DIAGC:
-         mp->cov.var=ResizeSVector(hset,mp->cov.var,n,'v',1.0);
-         break;
-      case FULLC:
-         mp->cov.inv=ResizeSTriMat(hset,mp->cov.inv,n,'i',1.0);
-         break;
-      default: 
-         HError(2640,"SetStreamWidthCommand: Can only resize DIAGC or FULLC");
-      }
-      if (trace & (T_SIZ | T_DET)) {
-         if (nedit==0) printf(" For model.state["),hmm=NULL;
-         if (hmm!=hss.hmm)
-            printf("]\n  %12s.state",hss.mac->id->name),c='[',hmm=hss.hmm;
-         printf("%c%d",c,hss.i);c=',';
-         fflush(stdout);
-      }
-      nedit++;
-   }
-   if (trace & (T_SIZ | T_DET))
-      printf("]\n"),fflush(stdout);
-   EndHMMScan(&hss);
-   /* Now varFloor */
-   SetVFloor(hset,vf,0.0);
-   if (FindMacroStruct(hset,'v',vf[s])!=NULL) {
-      if (trace & T_BID)
-         printf(" Resizing varFloor\n");
-      ResizeSVector(hset,vf[s],n,'v',0.0);
-   }
-   badGC = TRUE;
    hset->swidth[s]=n;
 
    size=0;
@@ -5266,7 +5465,7 @@ void FloorVectorCommand(void)
          buf[strlen(mac)]='\0';
          if (strcmp(mac,buf)!=0) /* not a varFloor */
             continue;
-         assert(SMAX<10); s=h-'0';
+         /*assert(SMAX<10);*/ s=h-'0';
          if(s<1||s>S)
             HError(2613,"FloorVectorCommand: undefined stream %d in HMM set",s);
          mac[strlen(buf)]=h;
@@ -5551,17 +5750,1517 @@ void ProjectCommand(void)
 
    xform = hset->semiTied;
    if ((xform == NULL) || (hset->projSize == 0))
-      HError(999,"Can not only project with semitied XForm and PROJSIZE>0");
+      HError(2691,"Can not only project with semitied XForm and PROJSIZE>0");
 
    /* check that this is a reasonable command to run */
    if (xform->bclass->numClasses != 1)
-      HError(999,"Can only store as input XForm with global transform");
+      HError(2691,"Can only store as input XForm with global transform");
    if (hset->swidth[0] != 1) 
-      HError(999,"Can only store as input XForm with single stream");
+      HError(2691,"Can only store as input XForm with single stream");
    if (hset->xf != NULL)
-      HError(999,"Can not store as input XForm if HMMSet already has an input XForm");
+      HError(2691,"Can not store as input XForm if HMMSet already has an input XForm");
 
    UpdateProjectModels(hset,newDir);
+}
+
+/* ----------------------- IL/PL/EL - Add/Pop/Erase an ANN Layer --------------------- */
+
+
+static NVecBundle *AddOneNVecBundle(char *invoker, char *kwd, HMMSet *curset, Boolean existmacro) {
+    LabId id;
+    MLink m;
+    char buf[MAXSTRLEN];
+    int intVal;
+    NVecBundle *bundle;
+
+    if (kwd == NULL)
+        ChkedAlpha("Next keyword", buf);  
+    else
+        strcpy(buf, kwd);
+    if (strcmp(buf, "~V") == 0) {
+        ChkedAlpha("NVecBundle macro name expected", buf);
+        id = GetLabId(buf, FALSE);
+        if (id != NULL && (m = FindMacroName(curset, 'V', id)) != NULL) {
+            if (existmacro == TRUE)
+                return (NVecBundle *) m->structure;
+            else
+                HError(2676, "%s: Macro named ~V \"%s\" already exists", invoker, id->name);
+        }
+        if (id == NULL)
+            id = GetLabId(buf, TRUE);
+        ChkedAlpha("<VECTOR> key word", buf);
+    }
+    else {	/* anonymous macro */
+        id = GetNextANNMacroName(invoker, curset, 'V');
+        if (trace & T_BAS)
+            HError(-2675, "%s: Anonymous NVecBundle macro created, auto-name %s assigned", invoker, id->name);
+    }
+    /* read the rest things as usual */
+    if (strcmp("<VECTOR>", buf) != 0) 
+        HError(2650, "%s: <VECTOR> keyword expected, but %s was read in", invoker, buf);
+    intVal = ChkedInt("Vector size expected", 1, INT_MAX);
+    bundle = FetchNVecBundle(curset, id->name);
+    bundle->kind = SIBK;
+    bundle->variables = CreateNVector(curset->hmem, intVal);
+    ClearNVector(bundle->variables);
+    /* register the new macro */
+    NewMacro(curset, fidx, 'V', id, bundle);
+    /* saves the model */
+    saveHMMSet = TRUE;
+
+    return bundle;
+}   
+
+void SetOneNVecBundle(HMMSet *hset) {
+   NVecBundle *bundle;
+   int intVal, i, j;
+   float floatVal=FLOAT_MAX;
+   char buf[MAXSTRLEN];
+
+   bundle = AddOneNVecBundle("SetOneNVecBundle", NULL, hset, TRUE);
+   ChkedAlpha("Next keyword", buf);
+   if (strcmp("<VALUES>", buf) != 0) {
+       intVal = ChkedInt("Number of values", 1, bundle->variables->vecLen);
+       for (i = 0, j = 0; i < bundle->variables->vecLen; ++i) {
+           if (j < intVal)
+               floatVal = ChkedFloat("initial value", -FLOAT_MAX, FLOAT_MAX);
+           bundle->variables->vecElems[i] = floatVal;
+#ifdef CUDA
+           SyncNVectorHost2Dev(bundle->variables);
+#endif
+       }
+   }
+   /* saves the model */
+   saveHMMSet = TRUE;
+}
+
+static void ChangeDimOneNVecBundle(char *invoker, NVecBundle *bundle, int nlen) {
+    NVector *vector;
+
+    if (nlen != bundle->variables->vecLen) {
+        if (bundle->nUse > 1)
+            HError(2640, "%s: Changing dimension of shared NVecBundle is not allowed by v3.5");
+        vector = bundle->variables;
+        bundle->variables = CreateNVector(hset->hmem, nlen);
+        ClearNVector(bundle->variables);
+        CopyPartialNVector2NVector(vector, bundle->variables);
+        /*if (trace & T_INT)
+            InformByNVecBundleTrace(invoker, hset, bundle);*/
+        /* saves the model */
+        saveHMMSet = TRUE;
+    }
+}
+
+/*void ChangeDimOneMacroNVecBundle(HMMSet *hset) {
+    MLink m;
+    NVecBundle *bundle;
+    int nlen;
+
+    nlen = ChkedInt("New vector length", 1, INT_MAX);
+    bundle = AddOneNVecBundle("ChangeDimOneNVecBundle", NULL, hset, TRUE);
+    ChangeDimOneNVecBundle("ChangeDimOneMacroNVecBundle", bundle, nlen);
+}*/
+
+/*static void InformByNMatBundleTrace(char *invoker, HMMSet *hset, NMatBundle *bundle) {
+    MLink m;
+    BTLink trace;
+    LELink layerElem;
+
+    trace = (BTLink) bundle->hook;
+    while (trace != NULL) {
+        m = FindMacroStruct(hset, 'L', trace->layerElem);
+        if (m == NULL)
+            HError(9999, "%s: Fail to find the macro associated linked to the bundle");
+        layerElem = (LELink) layerElem->structure;
+        if (layerElem->nodeNum != bundle->variables->rowNum || layerElem->inputDim != bundle->variables->colNum)
+            printf("%s: ~L \"%s\" probably need to be modified as well\n", m->id->name);
+        trace = trace->nextTrace;
+    }
+}*/
+
+static NMatBundle *AddOneNMatBundle(char *invoker, char *kwd, HMMSet *curset, Boolean existmacro) {
+    LabId id;
+    MLink m = NULL;
+    char buf[MAXSTRLEN];
+    int intVal[2];
+    NMatBundle *bundle;
+
+    if (kwd == NULL)
+        ChkedAlpha("Next keyword", buf);
+    else
+        strcpy(buf, kwd);
+    if (strcmp(buf, "~M") == 0) {
+        ChkedAlpha("NMatBundle macro name expected", buf);
+        id = GetLabId(buf, FALSE);
+        if (id != NULL && (m = FindMacroName(curset, 'M', id)) != NULL) {
+            if (existmacro == TRUE)
+                return (NMatBundle *) m->structure;
+            else
+                HError(2676, "%s: Macro named ~M \"%s\" already exists", invoker, id->name);
+        }
+        if (id == NULL)
+            id = GetLabId(buf, TRUE);
+        ChkedAlpha("<MATRIX> key word", buf);
+    }
+    else {      /* anonymous macro */
+        id = GetNextANNMacroName(invoker, curset, 'M');
+        if (trace & T_BAS)
+            HError(-2675, "%s: Anonymous NMatBundle macro created, auto-name %s assigned", invoker, id->name);
+    }
+    /* read the rest things as usual */
+    if (strcmp("<MATRIX>", buf) != 0)
+        HError(2650, "%s: <MATRIX> keyword expected, but %s was read in", invoker, buf);
+    intVal[0] = ChkedInt("Matrix row number expected", 1, INT_MAX);
+    intVal[1] = ChkedInt("Matrix column number expected", 1, INT_MAX);
+    bundle = FetchNMatBundle(curset, id->name);
+    bundle->kind = SIBK;
+    bundle->variables = CreateNMatrix(curset->hmem, intVal[0], intVal[1]);
+    ClearNMatrix(bundle->variables, intVal[0]);
+    /* register the new macro */
+    NewMacro(curset, fidx, 'M', id, bundle);
+    /* saves the model */
+    saveHMMSet = TRUE;
+
+    return bundle;
+}
+
+void SetOneNMatBundle(HMMSet *hset) {
+   NMatBundle *bundle;
+   int intVal, i, j, n;
+   float floatVal=FLOAT_MAX;
+   char buf[MAXSTRLEN];
+
+   bundle = AddOneNMatBundle("SetOneNMatBundle", NULL, hset, TRUE);
+   ChkedAlpha("Next keyword", buf);
+   if (strcmp("<VALUES>", buf) != 0) {
+       n = bundle->variables->rowNum * bundle->variables->colNum;
+       intVal = ChkedInt("Number of values", 1, n);
+       for (i = 0, j = 0; i < n; ++i) {
+           if (j < intVal)
+               floatVal = ChkedFloat("initial value", -FLOAT_MAX, FLOAT_MAX);
+           bundle->variables->matElems[i] = floatVal;
+#ifdef CUDA
+           SyncNMatrixHost2Dev(bundle->variables);
+#endif
+       }
+   }
+   /* saves the model */
+   saveHMMSet = TRUE;
+}
+
+static void ChangeDimOneNMatBundle(char *invoker, NMatBundle *bundle, int nrows, int ncols) {
+    NMatrix *matrix;
+
+    if (nrows != bundle->variables->rowNum || ncols != bundle->variables->colNum) {
+        if (bundle->nUse > 1)
+            HError(2640, "%s: Changing dimensions of shared NMatBundle is not allowed by v3.5", invoker);
+        matrix = bundle->variables;
+        bundle->variables = CreateNMatrix(hset->hmem, nrows, ncols);
+        ClearNMatrix(bundle->variables, nrows);
+        CopyPartialNMatrix2NMatrix(matrix, bundle->variables);
+        /*if (trace & T_INT)
+            InformByNMatBundleTrace(invoker, hset, bundle);*/
+        /* saves the model */
+        saveHMMSet = TRUE;
+    }
+}
+
+/*void ChangeDimOneNMatBundle(HMMSet *hset) {
+    MLink m;
+    NMatBundle *bundle;
+    int nrows, ncols;
+    NMatrix matrix;
+
+    nrows = ChkedInt("New matrix row number", 0, INT_MAX);
+    ncols = ChkedInt("New matrix column number", 0, INT_MAX);
+    bundle = AddOneNMatBundle("ChangeDimOneNMatBundle", NULL, hset, TRUE);
+    if (nrows == 0)
+        nrows = bundle->variables->rowNum;
+    if (ncols == 0)
+        ncols = bundle->variables->colNum;
+    ChangeDimOneNMatBundle("ChangeDimOneNMatBundle", bundle, nrows, ncols);
+}*/
+
+
+/* cz277 - 1007 */
+static ADLink GetANNDefByMacName(char *invoker, char *kwd, HMMSet *curset) {
+    LabId id;
+    MLink m;
+    ADLink annDef=NULL;
+    char buf[MAXSTRLEN];
+
+    if (kwd == NULL) 
+        ChkedAlpha("Next keyword", buf);
+    else 
+        strcpy(buf, kwd);
+    if (strcmp(buf, "~N") == 0) 
+        ChkedAlpha("Target ANN macro name", buf);
+    id = GetLabId(buf, FALSE);
+    if (id != NULL && (m = FindMacroName(curset, 'N', id)) != NULL) 
+        annDef = (ADLink) m->structure;
+    else 
+        HError(2635, "%s: Cannot find target ANN model", invoker);
+
+    return annDef;
+}
+
+/* owner and pos could be NULL */
+static LELink GetLayerElemByMacName(char *invoker, char *kwd, HMMSet *curset, ADLink *owner, int *pos) {
+    LELink layerElem=NULL;
+    int i=-1;
+    ADLink annDef=NULL;
+    LabId id;
+    MLink m;
+    char buf[MAXSTRLEN];
+
+    if (kwd == NULL) 
+        ChkedAlpha("Target layer macro type", buf);
+    else 
+        strcpy(buf, kwd);
+    if (strcmp(buf, "~L") == 0) {
+        ChkedAlpha("ANN layer macro name", buf);
+        id = GetLabId(buf, FALSE);
+        if (id != NULL && (m = FindMacroName(curset, 'L', id)) != NULL) 
+            layerElem = (LELink) m->structure;
+        else 
+            HError(2635, "%s: Cannot find the target ANN layer", invoker);
+        annDef = layerElem->ownerHead->annDef;	/* at the moment, not layer tying  */
+        for (i = 0; i < annDef->layerNum; ++i) 
+            if (annDef->layerList[i] == layerElem)
+                break;
+    }
+    else 
+        HError(2632, "%s: Unsupported target ANN layer macro type", invoker);
+    if (owner != NULL){
+        if(annDef==NULL) HError(2632,"%s: ANN definition not set",invoker);
+        *owner = annDef;
+    }
+    if (pos != NULL){
+        if(i<0) HError(2632,"%s: position not set",invoker);
+        *pos = i;
+    }
+    if(!layerElem) HError(2632,"%s: layer element not set",invoker);
+
+    return layerElem;
+}
+
+/* cz277 - 1007 */
+static FELink ParseNextFeaElem(char *invoker, char *kwd, int *feaIdx, int *feaDim) {
+    char buf[MAXSTRLEN];
+    FELink feaElem;
+    int i, streamIdx=-1, intVal;
+
+    /* <FEATURE> */
+    if (kwd == NULL) 
+        ChkedAlpha("Next keyword", buf);
+    else 
+        strcpy(buf, kwd);
+    if (strcmp(buf, "<FEATURE>") != 0) 
+        HError(2650, "%s: <FEATURE> keyword expected", invoker);
+    feaElem = (FELink) New(hset->hmem, sizeof(FeaElem)); 
+    feaElem->nUse = 0;
+    feaElem->dimOff = 0;
+    intVal = ChkedInt("Feature element index", -1, INT_MAX);
+    if (feaIdx != NULL)
+        *feaIdx = intVal;
+    feaElem->feaDim = ChkedInt("Feature element dimension", 1, INT_MAX);
+    if (feaDim != NULL)
+        *feaDim = feaElem->feaDim; 
+    /* <SOURCE> */
+    ChkedAlpha("Next keyword", buf);
+    if (strcmp(buf, "<SOURCE>") == 0) {
+        ChkedAlpha("Feature element source type", buf);
+        if (strcmp(buf, "<AUGFEATURE>") == 0) {
+            feaElem->inputKind = AUGFEAIK;
+            feaElem->feaSrc = NULL;
+            feaElem->augFeaIdx = ChkedInt("Augmented feature source index", 1, MAXAUGFEAS);
+            streamIdx = 1;
+        }
+        else if (strcmp(buf, "~L") == 0) {
+            feaElem->inputKind = ANNFEAIK;
+            feaElem->feaSrc = GetLayerElemByMacName(invoker, buf, hset, NULL, NULL);
+            ++feaElem->feaSrc->nDrv;
+        }
+        else if (strcmp(buf, "<STREAM>") == 0) {
+            feaElem->inputKind = INPFEAIK;
+            feaElem->feaSrc = NULL;
+            streamIdx = ChkedInt("Feature stream index", 1, hset->swidth[0]);
+        }
+        else {  /* PARMKIND */
+            if (hset->pkind != Str2ParmKind(buf)) 
+                HError(2632, "%s: Input parmkind different from the input parmKind to the model", invoker);
+            feaElem->inputKind = INPFEAIK;
+            feaElem->feaSrc = NULL;
+            streamIdx = 1;
+        }
+        ChkedAlpha("Next keyword", buf);
+    }
+    else 
+        HError(2650, "%s: <SOURCE> keyword expected", invoker);
+    if (strcmp(buf, "<DIMRANGE>") == 0) { 
+        feaElem->dimOff = ChkedInt("Start dimension", 1, INT_MAX) - 1;
+        intVal = ChkedInt("End dimension", 2, INT_MAX);
+        if (feaElem->feaDim != intVal - feaElem->dimOff) 
+            HError(2677, "%s: Inconsistent feature element dimension range", invoker);
+        ChkedAlpha("Next keyword", buf);
+    }
+    if (strcmp(buf, "<CONTEXTSHIFT>") == 0) {
+        intVal = ChkedInt("Context feature expansion vector size", 1, INT_MAX);
+        feaElem->ctxMap = CreateIntVec(hset->hmem, intVal);
+        for (i = 1; i <= intVal; ++i) 
+           feaElem->ctxMap[i] = ChkedInt("A context shift", -INT_MAX, INT_MAX);
+    }
+    else 
+        HError(2650, "%s: <CONTEXTSHIFT> keyword expected", invoker);
+    /* set extDim and srcDim fields*/
+    feaElem->extDim = feaElem->feaDim * IntVecSize(feaElem->ctxMap);
+    if (feaElem->inputKind == ANNFEAIK) 
+        feaElem->srcDim = feaElem->feaSrc->nodeNum;
+    else 
+        feaElem->srcDim = feaElem->extDim;
+    /* add this feature element to hset->nInp, if needed */
+    if (feaElem->inputKind == INPFEAIK || feaElem->inputKind == AUGFEAIK) {
+        if(streamIdx<0) HError(2678,"%s: stream index not set",invoker);
+        for (i = 0; i < hset->nInp[streamIdx]; ++i) 
+            if (CmpFeaElem(hset->inpElem[streamIdx][i], feaElem))
+                break;
+        if (i == hset->nInp[streamIdx]) {
+            if (i >= MAXINPUSE) 
+                HError(2678, "%s: Maximum number of input feature usage reached, increase MAXINPUSE", invoker);
+            hset->inpElem[streamIdx][hset->nInp[streamIdx]++] = feaElem;
+        }
+    }
+
+    return feaElem;
+}
+
+/* cz277 - 1007 */
+FeaMix *AddOneFeaMix(char *invoker, char *kwd, Boolean existmacro) {
+    char buf[MAXSTRLEN];
+    LabId id;
+    FeaMix *feaMix;
+    int i, feaIdx, feaDim;
+    MLink m = NULL;
+
+    if (kwd == NULL) 
+        ChkedAlpha("Next keyword", buf);
+    else 
+        strcpy(buf, kwd);
+    if (strcmp(buf, "~F") == 0) {
+        ChkedAlpha("Macro name", buf);
+        id = GetLabId(buf, FALSE);
+        if (id != NULL && (m = FindMacroName(hset, 'F', id)) != NULL) {
+            if (existmacro == TRUE) 
+                return (FeaMix *) m->structure;
+            else
+                HError(2676, "%s: Feature mixture macro name %s occupied", invoker, id->name);
+        }
+        if (id == NULL)
+            id = GetLabId(buf, TRUE);
+        ChkedAlpha("Next keyword", buf);
+    }
+    else {
+        id = GetNextANNMacroName(invoker, hset, 'F');
+        if (trace & T_BAS)
+            HError(-2675, "%s: Anonymous feature mixture macro created, auto-name %s assigned\n", invoker, id->name);
+    }
+    feaMix = (FeaMix *) New(hset->hmem, sizeof(FeaMix));
+    if (strcmp(buf, "<NUMFEATURES>") == 0) {
+        feaMix->elemNum = ChkedInt("The elements in this feature mixture", 1, INT_MAX);
+        feaMix->mixDim = ChkedInt("The dimension of this feature mixture", 1, INT_MAX);
+        feaMix->feaList = (FELink *) New(hset->hmem, sizeof(FELink) * feaMix->elemNum);
+        for (i = 0; i < feaMix->elemNum; ++i) 
+            feaMix->feaList[i] = ParseNextFeaElem(invoker, NULL, &feaIdx, &feaDim);
+    }
+    else if (strcmp(buf, "<FEATURE>") == 0) {
+        feaMix->elemNum = 1;
+        feaMix->feaList = (FELink *) New(hset->hmem, sizeof(FELink) * 1);
+        feaMix->feaList[0] = ParseNextFeaElem(invoker, buf, &feaIdx, &feaDim);
+        feaMix->mixDim = feaMix->feaList[0]->extDim;
+    }
+    else 
+        HError(2650, "%s: Incorrect keyword for input feature", invoker);
+    /* reset owner num */
+    feaMix->ownerNum = 0;
+    /* add a new macro */
+    if (m == NULL) 
+        NewMacro(hset, fidx, 'F', id, feaMix);
+    else 
+        m->structure = (Ptr) feaMix;
+    /* saves the model */
+    saveHMMSet = TRUE;
+
+    return feaMix;
+}
+
+/* cz277 - pact */
+static void InitActParmVecs(HMMSet *hset, LELink layerElem) {
+    int i, intVal;
+    NVecBundle *hyper = NULL;
+    char buf[MAXSTRLEN];
+
+    switch (layerElem->actfunKind) {
+    case AFFINEAF:       
+    case HERMITEAF:
+    case LHUCRELUAF:     
+    case PRELUAF:        
+    case PARMRELUAF:     
+    case LHUCSIGMOIDAF: 
+    case PSIGMOIDAF:   
+    case PARMSIGMOIDAF:
+    case LHUCSOFTRELUAF: 
+    case PSOFTRELUAF:   
+    case PARMSOFTRELUAF: 
+        ChkedAlpha("Next keyword", buf);
+        break;
+    default:
+        return;
+    }
+    if (strcmp(buf, "<HYPERPARAMETER>") == 0) 
+        hyper = AddOneNVecBundle("InitActParmVecs", NULL, hset, TRUE);
+    layerElem->actfunParmNum = 0;
+    if (strcmp(buf, "<NUMPARAMETERS>") == 0) {
+        layerElem->actfunParmNum = ChkedInt("Number of parameter vectors", 1, INT_MAX);
+        ChkedAlpha("Next keyword", buf);
+    } 
+    else if (strcmp(buf, "<PARAMETER>") == 0) 
+        layerElem->actfunParmNum = 1;
+    else
+        HError(2650, "InitActParmVecs: Unexpected keyword %s", buf);
+    layerElem->actfunVecs = (NVecBundle **) New(hset->hmem, (layerElem->actfunParmNum + 1) * sizeof(NVecBundle *)); 
+    memset(layerElem->actfunVecs, 0, (layerElem->actfunParmNum + 1) * sizeof(NVecBundle *));
+    layerElem->actfunVecs[0] = hyper;
+    for (i = 1; i <= layerElem->actfunParmNum; ++i) { 
+        if (i != 1) {
+            ChkedAlpha("Next keyword", buf);
+            if (strcmp("<PARAMETER>", buf) != 0)
+                HError(2650, "<PARAMETER> expected");
+        }
+        intVal = ChkedInt("Parameter vector index", 1, layerElem->actfunParmNum + 1);
+        layerElem->actfunVecs[intVal] = AddOneNVecBundle("InitActParmVecs", NULL, hset, TRUE);
+        ++layerElem->actfunVecs[intVal]->nUse;
+    }
+    CheckActFunParameters(layerElem);
+    /* setup the tracing list */
+    if (layerElem->actfunVecs != NULL) {
+        for (i = 0; i<= layerElem->actfunParmNum; ++i) {
+            layerElem->actfunVecs[i]->kind = SIBK;
+            CreateBundleTrace(hset->hmem, layerElem, (BTLink *) &layerElem->actfunVecs[i]->hook);
+        }
+    }
+}
+
+/* IL */
+void InsertOneANNLayer(void) {
+    int i, j, layerPos, layerNum;
+    ADLink annDef;
+    LELink layerElem;
+    LELink *layerList;
+    char buf[MAXSTRLEN];
+    LabId id;
+    
+    /* get the target ANN model */
+    ChkedAlpha("Target ANN macro type", buf);
+    if (strcmp(buf, "~N") != 0) 
+        HError(2650, "InsertOneANNLayer: ~N macro type expected");
+    ChkedAlpha("Target ANN macro name", buf);
+    annDef = GetANNDefByMacName("InsertOneANNLayer", buf, hset);
+    /* get target layer position */
+    /* -1, add on the top */
+    layerPos = ChkedInt("New layer insert position", -1 * annDef->layerNum, annDef->layerNum + 2);
+    if (layerPos >= 0 && layerPos < 2)
+        HError(2677, "InsertOneANNLayer: Illegal insert layer position");
+    else if (layerPos >= 2)
+        layerPos -= 2;
+    else
+        layerPos = annDef->layerNum + 1 + layerPos;
+    /* get the layer element macro name */
+    ChkedAlpha("Next keyword", buf); 
+    if (strcmp(buf, "~L") == 0) {
+        ChkedAlpha("~L macro name", buf); 
+        id = GetLabId(buf, FALSE);
+        /*if (id != NULL || (m = FindMacroName(hset, 'L', id)) != NULL)*/
+        if (id != NULL)
+            HError(2676, "InsertOneANNLayer: Layer element macro name %s occupied", buf);
+        id = GetLabId(buf, TRUE);
+        /* get the layer kind */
+        ChkedAlpha("next keyword", buf);
+    } 
+    else {
+        id = GetNextANNMacroName("InsertOneANNLayer", hset, 'L');
+        if (trace & T_BAS)
+            HError(-2675, "InsertOneANNLayer: Anonymous layer element macro created, auto-name %s assigned\n", id->name);
+    }
+    if (strcmp(buf, "<BEGINLAYER>") != 0)
+        HError(2650, "InsertOneANNLayer: <BEGINLAYER> expected");
+    ChkedAlpha("next keyword", buf);
+    if (strcmp(buf, "<LAYERKIND>") != 0)
+        HError(2650, "InsertOneANNLayer: <LAYERKIND> expected");
+    ChkedAlpha("layer kind string", buf);
+    layerElem = GenBlankLayer(hset->hmem);
+    layerElem->layerKind = Str2LayerKind(buf);
+    ChkedAlpha("Next key word", buf);
+    if (strcmp("<INPUTFEATURE>", buf) != 0)
+        HError(2650, "<INPUTFEATURE> expected");
+    layerElem->feaMix = AddOneFeaMix("InsertOneANNLayer", NULL, TRUE); 
+    layerElem->feaMix->ownerList[layerElem->feaMix->ownerNum++] = layerElem;
+    ++layerElem->feaMix->nUse;
+    for (i = 0; i < layerElem->feaMix->elemNum; ++i) {
+        ++layerElem->feaMix->feaList[i]->nUse;
+       if (layerElem->feaMix->feaList[i]->inputKind == ANNFEAIK)
+            ++layerElem->feaMix->feaList[i]->feaSrc->nDrv;
+    }
+    switch (layerElem->layerKind) {
+    case ACTIVATIONONLYLAK: HError(2640, "InsertOneANNLayer: Not implemented yet!"); break;
+    case CONVOLUTIONLAK: HError(2640, "InsertOneANNLayer: Not implemented yet!"); break;
+    case PERCEPTRONLAK: 
+        ChkedAlpha("Next keyword", buf);
+        if (strcmp("<WEIGHT>", buf) != 0)
+            HError(2650, "InsertOneANNLayer: <WEIGHT> expected");
+        layerElem->wghtMat = AddOneNMatBundle("InsertOneANNLayer", NULL, hset, TRUE);
+        ++layerElem->wghtMat->nUse; 
+        layerElem->nodeNum = layerElem->wghtMat->variables->rowNum;
+        layerElem->inputDim = layerElem->wghtMat->variables->colNum;
+        if (layerElem->inputDim != layerElem->feaMix->mixDim)
+            HError(2677, "InsertOneANNLayer: Feature mixture and weight matrix dimension inconsistent");
+        CreateBundleTrace(hset->hmem, layerElem, (BTLink *) &layerElem->wghtMat->hook);
+        ChkedAlpha("Next keyword", buf);
+        if (strcmp("<BIAS>", buf) != 0)
+            HError(2650, "InsertOneANNLayer: <BIAS> expected");
+        layerElem->biasVec = AddOneNVecBundle("InsertOneANNLayer", NULL, hset, TRUE);
+        ++layerElem->biasVec->nUse;
+        if (layerElem->nodeNum != layerElem->biasVec->variables->vecLen)
+            HError(2677, "InsertOneANNLayer: Weight matrix and bias vector dimension inconsistent");
+        CreateBundleTrace(hset->hmem, layerElem, (BTLink *) &layerElem->biasVec->hook);
+        ChkedAlpha("Next keyword", buf);
+        if (strcmp("<ACTIVATION>", buf) != 0)
+            HError(2650, "InsertOneANNLayer: <ACTIVATION> expected");
+        ChkedAlpha("Activation kind string", buf);
+        layerElem->actfunKind = Str2ActFunKind(buf);
+        InitActParmVecs(hset, layerElem);
+        break;
+    case SUBSAMPLINGLAK: HError(2640, "InsertOneANNLayer: Not implemented yet!"); break;
+    default:
+        HError(2691, "InsertOneANNLayer: Unknown layer kind");
+    } 
+    ++layerElem->nUse;
+    NewMacro(hset, fidx, 'L', id, layerElem);
+    layerElem->ownerHead = hset->annSet->defsHead;
+    layerElem->ownerTail = hset->annSet->defsHead;
+    ++layerElem->ownerCnt;
+    /* insert the new layer */
+    layerNum = annDef->layerNum + 1;
+    layerList = (LELink *) New(hset->hmem, layerNum * sizeof(LELink));
+    for (i = 0, j = 0; i < layerNum; ++i) {
+        if (i == layerPos) 
+            layerList[i] = layerElem;
+        else 
+            layerList[i] = annDef->layerList[j++];
+    }
+    annDef->layerList = layerList;
+    annDef->layerNum = layerNum;
+    /* <ENDLAYER> */
+    ChkedAlpha("Next keyword", buf);
+    if (strcmp("<ENDLAYER>", buf) != 0)
+        HError(2650, "InsertOneANNLayer: <ENDLAYER> expected"); 
+    /* saves the model */
+    saveHMMSet = TRUE;
+}
+
+/* cz277 - 1007 */
+/* seed uses to be the position of layerElem */
+static void ChangeOneLayerDims(char *invoker, LELink layerElem, int seed, int nodeNum, int inputDim) {
+    int i;
+    MLink m;
+   
+    if (inputDim != layerElem->feaMix->mixDim) {
+        m = FindMacroStruct(hset, 'F', layerElem->feaMix);
+        if (m == NULL)
+            HError(2675, "%s: Anonymous feature mixture not allowed", invoker);
+        if (trace & T_BAS)
+            printf("%s: ~F \"%s\" dimension for weights may need to change\n", invoker, m->id->name);
+    }
+    switch (layerElem->layerKind) {
+    case ACTIVATIONONLYLAK: HError(2640, "%s: Not implemented yet!", invoker); break;
+    case CONVOLUTIONLAK: HError(2640, "%s: Not implemented yet!", invoker); break;
+    case PERCEPTRONLAK:
+        ChangeDimOneNMatBundle(invoker, layerElem->wghtMat, nodeNum, inputDim);
+        ChangeDimOneNVecBundle(invoker, layerElem->biasVec, nodeNum);
+        switch (layerElem->actfunKind) {
+        case AFFINEAF:
+        case HERMITEAF:
+        case LHUCRELUAF:
+        case PRELUAF:
+        case PARMRELUAF:
+        case LHUCSIGMOIDAF:
+        case PSIGMOIDAF:
+        case PARMSIGMOIDAF:
+        case LHUCSOFTRELUAF:
+        case PSOFTRELUAF:
+        case PARMSOFTRELUAF:
+            for (i = 1; i <= layerElem->actfunParmNum; ++i) 
+                ChangeDimOneNVecBundle(invoker, layerElem->actfunVecs[i], nodeNum);
+        default:
+            break;
+        }
+        break;
+    case SUBSAMPLINGLAK: HError(2640, "%s: Not implemented yet!", invoker); break;
+    default:
+        HError(2691, "%s: Unknown layer kind", invoker); break;
+    }
+    layerElem->nodeNum = nodeNum;
+    layerElem->inputDim = inputDim;
+}
+
+/* cz277 - 1007 */
+/* CF */
+void ChangeOneANNLayerInput(void) {
+    char buf[MAXSTRLEN];
+    FeaMix *feaMix;
+    LELink layerElem=NULL;
+    int i, j;
+
+    /* original feature mixture */
+    ChkedAlpha("Target layer macro type", buf);
+    if (strcmp(buf, "~L") == 0) 
+        layerElem = GetLayerElemByMacName("ChangeOneANNLayerInput", buf, hset, NULL, NULL);
+    else 
+        HError(2650, "ChangeOneANNLayerInput: Unsupported target ANN layer macro");
+    /* deuse the old feature mixture */
+    for (i = 0, j = 0; j < layerElem->feaMix->ownerNum; ++i, ++j) {
+        if (layerElem->feaMix->ownerList[i] == layerElem)
+            ++j;
+        if (i != j)
+            layerElem->feaMix->ownerList[i] = layerElem->feaMix->ownerList[j];
+    }
+    --layerElem->feaMix->ownerNum;
+    for (i = 0; i < layerElem->feaMix->elemNum; ++i) {
+        --layerElem->feaMix->feaList[i]->nUse;
+        if (layerElem->feaMix->feaList[i]->inputKind == ANNFEAIK)
+            --layerElem->feaMix->feaList[i]->feaSrc->nDrv;
+    }
+    --layerElem->feaMix->nUse;
+    /* new feature mixture */
+    feaMix = AddOneFeaMix("ChangeOneANNLayerInput", NULL, TRUE);
+    for (i = 0; i < feaMix->elemNum; ++i) 
+        if (feaMix->feaList[i]->inputKind == ANNFEAIK)
+            ++feaMix->feaList[i]->feaSrc->nDrv;
+    /*ChkedAlpha("Next keyword", buf);
+    if (strcmp(buf, "~F") == 0) {
+        feaMix = AddOneFeaMix("ChangeOneANNLayerInput", buf, TRUE);
+        ChkedAlpha("Feature mixture macro name", buf);
+        id = GetLabId(buf, FALSE);
+        if (id != NULL && (m = FindMacroName(hset, 'F', id)) != NULL) 
+            feaMix = (FeaMix *) m->structure;
+        else 
+            HError(9999, "ChangeOneANNLayerInput: Unexisted feature mixture macro");
+        for (i = 0; i < feaMix->elemNum; ++i) 
+            if (feaMix->feaList[i]->inputKind == ANNFEAIK)
+                ++feaMix->feaList[i]->feaSrc->nDrv;;
+    }
+    else 
+        feaMix = AddOneFeaMix("ChangeOneANNLayerInput", buf, TRUE);*/
+    /* use the new feature mixture */
+    feaMix->ownerList[layerElem->feaMix->ownerNum++] = layerElem;
+    ++feaMix->nUse;
+    for (i = 0; i < feaMix->elemNum; ++i) 
+        ++feaMix->feaList[i]->nUse;
+        /*if (feaMix->feaList[i]->inputKind == ANNFEAIK)
+            --feaMix->feaList[i]->feaSrc->nDrv;*/
+    layerElem->feaMix = feaMix;
+}
+
+/* CD */
+void ChangeOneANNLayerDims(void) {
+    int nodeNum, inputDim, layerPos;
+    LELink layerElem;
+
+    layerElem = GetLayerElemByMacName("ChangeOneANNLayerDims", NULL, hset, NULL, &layerPos);
+    /* get the new nodeNum */
+    nodeNum = ChkedInt("Node number of the new layer", 0, INT_MAX);
+    if (nodeNum == 0)
+        nodeNum = layerElem->nodeNum;
+    /* get the new inputDim */
+    inputDim = ChkedInt("Input dimension of the new layer", 0, INT_MAX);
+    if (inputDim == 0)
+        inputDim = layerElem->inputDim;
+    /* change the dimensions */
+    ChangeOneLayerDims("ChangeOneANNLayerDims", layerElem, layerPos, nodeNum, inputDim);
+}
+
+/* EL */
+void EraseOneANNLayer(void) {
+    int layerPos;
+    LELink layerElem=NULL;
+    float randScale = 1.0;
+    char buf[MAXSTRLEN];
+
+    /* original feature mixture */
+    ChkedAlpha("Target layer macro type", buf);
+    if (strcmp(buf, "~L") == 0) 
+        layerElem = GetLayerElemByMacName("EraseOneANNLayer", buf, hset, NULL, &layerPos);
+    else 
+        HError(2650, "EraseOneANNLayer: Unsupported target ANN layer macro");
+    /* take action */
+    /*actfunKind = layerElem->actfunKind;*/
+    RandANNLayer(layerElem, layerPos, randScale);
+    /*layerElem->actfunKind = actfunKind;*/
+    /* saves the model */
+    saveHMMSet = TRUE;
+}
+
+/* DL */
+/* The other feature mixtures referencing this layer are not removed */
+void DeleteOneANNLayer(void) {
+    LELink layerElem;
+    FeaMix *feaMix;
+    ADLink annDef;
+    int i, layerPos;
+
+    layerElem = GetLayerElemByMacName("DeleteOneANNLayer", NULL, hset, &annDef, &layerPos);
+    /* remove feature mixture */
+    if (layerElem->feaMix != NULL) {
+        feaMix = layerElem->feaMix;
+        /* decrease nUse */
+        for (i = 0; i < feaMix->elemNum; ++i)
+            --feaMix->feaList[i]->nUse;
+        --feaMix->nUse;
+        /* decrease nDrv */
+        for (i = 0; i < feaMix->elemNum; ++i) 
+            if (feaMix->feaList[i]->inputKind == ANNFEAIK)
+                --feaMix->feaList[i]->feaSrc->nDrv;
+        /* remove this owner */
+        --feaMix->ownerNum;
+        for (i = layerPos; i < feaMix->ownerNum; ++i) 
+            feaMix->ownerList[i] = feaMix->ownerList[i + 1];
+    }
+    /* remove the rest */
+    switch (layerElem->layerKind) {
+    case ACTIVATIONONLYLAK: HError(2640, "DeleteOneANNLayer: Not implemented yet"); break;
+    case CONVOLUTIONLAK: HError(2640, "DeleteOneANNLayer: Not implemented yet"); break;
+    case PERCEPTRONLAK:
+        CancelBundleTrace(hset->hmem, layerElem, (BTLink *) &layerElem->wghtMat->hook);
+        --layerElem->wghtMat->nUse;
+        CancelBundleTrace(hset->hmem, layerElem, (BTLink *) &layerElem->biasVec->hook);
+        --layerElem->biasVec->nUse; 
+        if (layerElem->actfunVecs != NULL) {
+            for (i = 0; i <= layerElem->actfunParmNum; ++i) { 
+                if (layerElem->actfunVecs[i] != NULL) {
+                    CancelBundleTrace(hset->hmem, layerElem, (BTLink *) &layerElem->actfunVecs[i]->hook);
+                    --layerElem->actfunVecs[i]->nUse;
+                }
+            }
+        }
+        break;
+    case SUBSAMPLINGLAK: HError(2640, "DeleteOneANNLayer: Not implemented yet"); break;
+    default:
+        break;
+    }
+    /* remove the layer itself */
+    layerElem->nUse = 0;
+    /* remove this layer */
+    --annDef->layerNum;
+    for (i = layerPos; i < annDef->layerNum; ++i) 
+        annDef->layerList[i] = annDef->layerList[i + 1];
+    /* saves the model */
+    saveHMMSet = TRUE;
+}
+
+/* CA */
+void ChangeOneANNLayerActFun(void) {
+    LELink layerElem;
+    char buf[MAXSTRLEN];
+
+    layerElem = GetLayerElemByMacName("ChangeANNOneLayerActFun", NULL, hset, NULL, NULL);
+    ChkedAlpha("Next keyword", buf);
+    if (strcmp(buf, "<ACTIVATION>") == 0) {
+        ChkedAlpha("New hidden activation function", buf);
+        layerElem->actfunKind = Str2ActFunKind(buf);
+        /* cz277 - pact */
+        InitActParmVecs(hset, layerElem);
+    }
+    else 
+        HError(2650, "ChangeOneANNLayerActFun: <ACTIVATION> keyword expected");
+   
+    /* saves the model */
+    saveHMMSet = TRUE;
+}
+
+static FeaMix *CloneOneFeaMix(FeaMix *srcMix) {
+    FeaMix *dstMix;
+    FELink srcElem, dstElem;
+    int i, j, n;
+
+    dstMix = (FeaMix *) New(hset->hmem, sizeof(FeaMix));
+    memcpy(dstMix, srcMix, sizeof(FeaMix));
+    dstMix->feaList = (FELink *) New(hset->hmem, sizeof(FELink) * srcMix->elemNum);
+    for (i = 0; i < srcMix->elemNum; ++i) {
+        dstMix->feaList[i] = (FELink) New(hset->hmem, sizeof(FeaElem));
+        srcElem = srcMix->feaList[i];
+        dstElem = dstMix->feaList[i];
+        memcpy(dstElem, srcElem, sizeof(FeaElem));
+        /* cz277 - many */
+        n = IntVecSize(dstElem->ctxPool);
+        for (j = 1; j <= n; ++j) 
+            dstElem->feaMats[j] = CreateNMatrix(hset->hmem, srcElem->feaMats[j]->rowNum, srcElem->feaMats[j]->colNum);
+        if (dstElem->hisMat != NULL) 
+            dstElem->hisMat = CreateNMatrix(hset->hmem, GetNBatchSamples(), dstElem->hisLen * dstElem->feaDim);
+    }
+    /* cz277 - many */
+    /*dstMix->mixMat = CreateNMatrix(hset->hmem, GetNBatchSamples(), dstMix->mixDim);*/
+    n = IntVecSize(dstMix->ctxPool);
+    for (i = 1; i <= n; ++i) 
+        dstMix->mixMats[i] = CreateNMatrix(hset->hmem, GetNBatchSamples(), dstMix->mixDim);
+
+    return dstMix;
+}
+
+/* EF */
+void ExtendOneFeaMix(void) {
+    FeaMix *feaMix=NULL;
+    FELink incElem, *feaList;
+    LELink layerElem;
+    LabId id;
+    int i, j, incIdx, incDim, elemNum, layerPos = -1, seed;
+    char buf[MAXSTRLEN]; 
+    MLink m;
+
+    ChkedAlpha("Target macro type", buf);
+    if (strcmp(buf, "~L") == 0) {
+        layerElem = GetLayerElemByMacName("ExtendOneFeaMix", buf, hset, NULL, &layerPos);
+        /* if needed, clone layerElem->feaMix and update its owners and nUse */
+        if (layerElem->feaMix->nUse > 1) {	/* if shared */
+            feaMix = CloneOneFeaMix(layerElem->feaMix); 
+            --layerElem->feaMix->ownerNum;
+            for (i = 0, j = 0; i < layerElem->feaMix->ownerNum; ++i, ++j) {
+                if (layerElem->feaMix->ownerList[i] == layerElem)
+                    ++j;
+                if (i != j)
+                    layerElem->feaMix->ownerList[i] = layerElem->feaMix->ownerList[j];
+            }
+            --layerElem->feaMix->nUse;
+            for (i = 0; i < layerElem->feaMix->elemNum; ++i) 
+                --layerElem->feaMix->feaList[i]->nUse;
+            /* update feaMix's owners and nUse */
+            feaMix->ownerNum = 1;
+            feaMix->ownerList[0] = layerElem;
+            feaMix->nUse = 1;
+            for (i = 0; i < feaMix->elemNum; ++i) 
+                feaMix->feaList[i]->nUse = 1;
+            /* add it as a new macro */
+            id = GetNextANNMacroName("ExtendOneFeaMix", hset, 'F');
+            NewMacro(hset, fidx, 'F', id, feaMix);
+            layerElem->feaMix = feaMix;
+        }
+        else 
+            feaMix = layerElem->feaMix;
+    }
+    else if (strcmp(buf, "~F") == 0) {
+        ChkedAlpha("Feature mixture macro name", buf);
+        id = GetLabId(buf, FALSE);
+        if (id != NULL && (m = FindMacroName(hset, 'F', id)) != NULL) 
+            feaMix = (FeaMix *) m->structure;
+        else 
+            HError(2679, "ExtendOneFeaMix: Unexisted feature mixture macro");
+    }
+    else 
+        HError(2650, "ExtendOneFeaMix: Unsupported target ANN layer macro");
+    /* from now on, operate the feaMix pointer */
+    incElem = ParseNextFeaElem("ExtendOneFeaMix", NULL, &incIdx, &incDim);
+    if (incIdx > 0 && incIdx <= feaMix->elemNum) 
+        HError(2677, "ExtendOneFeaMix: Unacceptable new feature element index, please use -1 instead");
+    /* append the new feature element */
+    elemNum = feaMix->elemNum;
+    ++feaMix->elemNum;
+    feaList = feaMix->feaList;
+    feaMix->feaList = (FELink *) New(hset->hmem, sizeof(FELink) * feaMix->elemNum);
+    for (i = 0; i < elemNum; ++i) 
+        feaMix->feaList[i] = feaList[i];
+    feaMix->feaList[i] = incElem;
+    feaMix->mixDim += incElem->extDim;
+    /* modify the relevant layers */
+    for (i = 0; i < feaMix->ownerNum; ++i) {
+        layerElem = feaMix->ownerList[i];
+        /* the random seed (layerPos) is inconsistent, but this should not matter */
+        if (layerPos < 0)
+            seed = i;
+        else
+            seed = layerPos;
+        ChangeOneLayerDims("ChangeOneANNLayerDims", layerElem, seed, layerElem->nodeNum, feaMix->mixDim);
+    }
+    /* saves the model */
+    saveHMMSet = TRUE;
+}
+
+
+
+/* CP */
+void CopyANNParameters(void) {
+    char mmfPath[MAXSTRLEN], lstPath[MAXSTRLEN], buf[MAXSTRLEN], xformPath[MAXSTRLEN], macroname[MAXSTRLEN];
+    char srctype, dsttype;
+    int i, actfunParmNum;
+    InputXForm *auxinp = NULL;
+    MLink srcmacro, dstmacro;
+    LabId srclabid, dstlabid;
+    /*ANNUpdtKind updtFlag = WEIGHTUK | BIASUK | ACTFUNUK;*/
+    int ACTFUNUK = 0x4, BIASUK = 0x2, WEIGHTUK = 0x1;
+    int updtFlag = ACTFUNUK | BIASUK | WEIGHTUK;
+
+    ChkedAlpha("Next keyword", buf);
+    /* load the auxiliary model set */
+    if (strcmp(buf, "<HMMSET>") == 0) {
+        ChkedAlpha("Auxiliary MMF file path", mmfPath);
+        ChkedAlpha("Auxiliary HMM list file path", lstPath);
+        if (auxFn == NULL || strcmp(auxFn, mmfPath) != 0) {
+            if (auxFn != NULL)
+                ResetHMMSet(auxSet);
+            auxFn = CopyString(&gcheap, mmfPath); 
+            auxSet = (HMMSet *) New(&hmmHeap, sizeof(HMMSet));
+            CreateHMMSet(auxSet, &hmmHeap, TRUE);
+            AddMMF(auxSet, mmfPath);
+            if (MakeHMMSet(auxSet, lstPath) < SUCCESS)
+                HError(2600, "CopyANNParameters: MakeHMMSet failed");
+            if (LoadHMMSet(auxSet, NULL, NULL) < SUCCESS)
+                HError(2600, "CopyANNParameters: LoadHMMSet failed");
+        }
+    }
+    else if (strcmp(buf, "<INPUTXFORM>") == 0) {
+        ChkedAlpha("Auxiliary transform file path", xformPath);
+        auxinp = LoadInputXForm(NULL, NameOf(xformPath, macroname), xformPath);
+        if (auxinp == NULL)
+            HError(2600, "CopyANNParameters: Load auxiliary input xform failed");
+    }
+    else
+        HError(2650, "CopyANNParameters: Unsupported keyword");
+    /* get the update flag */
+    ChkedAlpha("Next keyword", buf);
+    if (strcmp(buf, "<UPDATEFLAG>") == 0) {
+        ChkedAlpha("Update flag", buf);
+        updtFlag = 0;
+        for (i = 0; i < strlen(buf); ++i) {
+            switch (buf[i]) {
+            case 'a': updtFlag |= ACTFUNUK; break;
+            case 'b': updtFlag |= BIASUK;   break;
+            case 'w': updtFlag |= WEIGHTUK; break;
+            default:
+                HError(2650, "CopyANNParameters: Unsupported flag %c for copying", buf[i]);
+            }
+        }
+        ChkedAlpha("Next keyword", buf);
+    }
+    /* get the source macro entity */
+    /*ChkedAlpha("Next keyword", buf);*/
+    if (strcmp(buf, "<SOURCEMACRO>") != 0)
+        HError(2650, "CopyANNParameters: <SOURCEMACRO> expected");
+    ChkedAlpha("Macro type", buf);
+    if (buf[0] != '~' || strlen(buf) != 2)
+        HError(2650, "CopyANNParameters: ~? macro type expected");
+    srctype = buf[1];
+    ChkedAlpha("Macro name", buf);
+    srclabid = GetLabId(buf, FALSE);
+    if (srclabid == NULL || (srcmacro = FindMacroName(auxSet, srctype, srclabid)) == NULL)
+        HError(2679, "CopyANNParameters: Cannot find the source macro ~%c \"%s\"", srctype, srclabid->name);
+    /* get the target macro entity */
+    ChkedAlpha("Next keyword", buf);
+    if (strcmp(buf, "<TARGETMACRO>") != 0)
+        HError(2650, "CopyANNParameters: <TARGETMACRO> expected");
+    ChkedAlpha("Macro type", buf);
+    if (buf[0] != '~' || strlen(buf) != 2)
+        HError(2650, "CopyANNParameters: ~? macro type expected");
+    dsttype = buf[1];
+    ChkedAlpha("Macro name", buf);
+    dstlabid = GetLabId(buf, FALSE);
+    if (dstlabid == NULL || (dstmacro = FindMacroName(hset, dsttype, dstlabid)) == NULL)
+        HError(2679, "CopyANNParameters: Cannot find the source macro ~%c \"%s\"", dsttype, dstlabid->name);
+    /* safety check */
+    switch (srctype) {
+    case 'V':
+    case 'M':
+    case 'L':
+        if (auxinp != NULL || auxSet == NULL)
+            HError(2615, "CopyANNParameters: Source macro ~%c needs source HMMSet", srctype);
+        break;
+    case 'j':
+        if (auxinp == NULL)
+            HError(2615, "CopyANNParameters: Source macro ~%c needs input xform", srctype);
+        break;
+    default:
+        HError(2691, "CopyANNParameters: Unsupported source macro type");
+    }  
+    /* do the copying */
+    switch (dsttype) {
+    case 'V':
+        switch (srctype) {
+        case 'V':
+            if ((updtFlag & ACTFUNUK) || (updtFlag & BIASUK))
+                CopyPartialNVector2NVector(((NVecBundle *) srcmacro->structure)->variables, ((NVecBundle *) dstmacro->structure)->variables);
+            break;
+        case 'j':
+            if (updtFlag & BIASUK) {
+                if (auxinp->xform->bias == NULL)
+                    HError(2615, "CopyANNParameters: source ~j bias expected to copy to ~V"); 
+                CopyVector2NVector(auxinp->xform->bias, ((NVecBundle *) dstmacro->structure)->variables);
+            }
+            break;
+        default:
+            HError(2680, "CopyANNParameters: Cannot copy ~%c macro to ~V", srctype);
+        }
+        break;
+    case 'M':
+        switch (srctype) {
+        case 'M':
+            if (updtFlag & WEIGHTUK)
+                CopyPartialNMatrix2NMatrix(((NMatBundle *) srcmacro->structure)->variables, ((NMatBundle *) dstmacro->structure)->variables);
+            break;
+        case 'j':
+            if (updtFlag & WEIGHTUK)
+                CopyMatrix2NMatrix(auxinp->xform->xform[1], ((NMatBundle *) dstmacro->structure)->variables);
+            break;
+        default:
+            HError(2680, "CopyANNParameters: Cannot copy ~%c macro to ~V", srctype);
+        } 
+        break;
+    case 'L':
+        switch (srctype) {
+        case 'V':
+            if (updtFlag & BIASUK)
+                CopyPartialNVector2NVector(((NVecBundle *) srcmacro->structure)->variables, ((LELink) dstmacro->structure)->biasVec->variables);
+            break;
+        case 'M':
+            if (updtFlag & WEIGHTUK)
+                CopyPartialNMatrix2NMatrix(((NMatBundle *) srcmacro->structure)->variables, ((LELink) dstmacro->structure)->wghtMat->variables);
+            break;
+        case 'L':
+            if ((updtFlag & BIASUK) != 0 && ((LELink) srcmacro->structure)->biasVec != NULL && ((LELink) dstmacro->structure)->biasVec != NULL)
+                CopyPartialNVector2NVector(((LELink) srcmacro->structure)->biasVec->variables, ((LELink) dstmacro->structure)->biasVec->variables);
+            if ((updtFlag & WEIGHTUK) != 0 && ((LELink) srcmacro->structure)->wghtMat != NULL && ((LELink) dstmacro->structure)->wghtMat != NULL)
+                CopyPartialNMatrix2NMatrix(((LELink) srcmacro->structure)->wghtMat->variables, ((LELink) dstmacro->structure)->wghtMat->variables);
+            if ((updtFlag & ACTFUNUK) != 0 && ((LELink) srcmacro->structure)->actfunVecs != NULL && ((LELink) dstmacro->structure)->actfunVecs != NULL) {
+                actfunParmNum = ((LELink) dstmacro->structure)->actfunParmNum;
+                if (actfunParmNum < ((LELink) srcmacro->structure)->actfunParmNum)
+                    actfunParmNum = ((LELink) srcmacro->structure)->actfunParmNum;
+                for (i = 0 ; i <= actfunParmNum; ++i)
+                    if (((LELink) srcmacro->structure)->actfunVecs[i] != NULL && ((LELink) dstmacro->structure)->actfunVecs[i] != NULL)
+                        CopyPartialNVector2NVector(((LELink) srcmacro->structure)->actfunVecs[i]->variables, ((LELink) dstmacro->structure)->actfunVecs[i]->variables);  
+            }
+            break;
+        case 'j':
+            if (updtFlag & BIASUK)
+                CopyVector2NVector(auxinp->xform->bias, ((LELink) dstmacro->structure)->biasVec->variables);
+            if (updtFlag & WEIGHTUK)
+                CopyMatrix2NMatrix(auxinp->xform->xform[1], ((LELink) dstmacro->structure)->wghtMat->variables);
+            break;
+        default:
+            HError(2680, "CopyANNParameters: Cannot copy ~%c macro to ~V", srctype);
+        } 
+        break;
+    default:
+        HError(2640, "CopyANNParameters: Unsupported target ANN parameters for copying"); 
+    }
+
+    /* saves the model */
+    saveHMMSet = TRUE;
+}
+
+/*void CopyANNLayerParms(void) {
+    char mmfPath[MAXSTRLEN], lstPath[MAXSTRLEN], buf[MAXSTRLEN], xformPath[MAXSTRLEN], macroname[MAXSTRLEN];
+    LELink srcLayer, dstLayer;
+    int i, j, k, opCnt;
+    HMMSet *auxset = NULL; 
+    InputXForm *auxinp = NULL;
+
+    opCnt = ChkedInt("Operation count", 1, INT_MAX);
+    ChkedAlpha("Next keyword", buf);
+    if (strcmp(buf, "<HMMSET>") == 0) {
+        ChkedAlpha("Auxiliary MMF file path", mmfPath);
+        ChkedAlpha("Auxiliary HMM list file path", lstPath);
+        auxset = (HMMSet *) New(&hmmHeap, sizeof(HMMSet));
+        CreateHMMSet(auxset, &hmmHeap, TRUE);
+        AddMMF(auxset, mmfPath);
+        if (MakeHMMSet(auxset, lstPath) < SUCCESS)
+            HError(9999, "CopyANNLayerParms: MakeHMMSet failed");
+        if (LoadHMMSet(auxset, NULL, NULL) < SUCCESS)
+            HError(9999, "CopyANNLayerParms: LoadHMMSet failed");
+        ChkedAlpha("Next keyword", buf);
+    }
+    else if (strcmp(buf, "<INPUTXFORM>") == 0) {
+        ChkedAlpha("Auxiliary transform file path", xformPath);
+        auxinp = LoadInputXForm(NULL, NameOf(xformPath, macroname), xformPath);
+        if (auxinp == NULL)
+            HError(9999, "CopyANNLayerParms: Load auxiliary input xform failed");
+        ChkedAlpha("Next keyword", buf);
+    }
+    else 
+        auxset = hset;
+    for (i = 0; i < opCnt; ++i) {
+        if (i != 0)
+            ChkedAlpha("Next keyword", buf);
+        if (strcmp(buf, "<COPY>") == 0 && auxset != NULL) {
+            srcLayer = GetLayerElemByMacName("CopyANNLayerParms", NULL, auxset, NULL, NULL);
+            dstLayer = GetLayerElemByMacName("CopyANNLayerParms", NULL, hset, NULL, NULL);
+            ChkedAlpha("Next keyword", buf);
+            if (srcLayer != dstLayer) {
+                for (j = 0; j < strlen(buf); ++j) {
+                    switch (buf[j]) {
+                    case 'a':
+                        if (srcLayer->actfunVecs != NULL && dstLayer->actfunVecs != NULL) 
+                            if (srcLayer->actfunKind == dstLayer->actfunKind) 
+                                for (k = 0; k <= srcLayer->actfunParmNum; ++k)
+                                    CopyPartialNVector2NVector(srcLayer->actfunVecs[k]->variables, dstLayer->actfunVecs[k]->variables);
+                        break;
+                    case 'b':
+                        if (srcLayer->inputDim != dstLayer->inputDim) 
+                            HError(-1, "CopyANNLayerParms: Unequal bias vector lenghts");
+                        CopyPartialNVector2NVector(srcLayer->biasVec->variables, dstLayer->biasVec->variables);
+                        break;
+                    case 'w':
+                        if (srcLayer->nodeNum != dstLayer->nodeNum || srcLayer->inputDim != dstLayer->inputDim)
+                            HError(-1, "CopyANNLayerParms: Unequal weight matrix dimensions");
+                        CopyPartialNMatrix2NMatrix(srcLayer->wghtMat->variables, dstLayer->wghtMat->variables);
+                        break;
+                    default:
+                        HError(9999, "CopyANNLayerParms: Unknown update flag %c", buf[j]); 
+                    }
+                }
+            }
+        }
+        else if (strcmp(buf, "<COPY>") == 0 && auxinp != NULL) {
+            ChkedAlpha("Input transform macro type", buf);
+            if (strcmp(buf, "~j") != 0)
+                HError(9999, "CopyANNLayerParms: The input transform macro ~j expected");
+            ChkedAlpha("Input transform macro name", buf);
+            if (strcmp(buf, macroname) != 0)
+                HError(9999, "CopyANNLayerParms: The input transform macro name unmatched");
+            dstLayer = GetLayerElemByMacName("CopyANNLayerParms", NULL, hset, NULL, NULL);
+            ChkedAlpha("Next keyword", buf);
+            for (j = 0; j < strlen(buf); ++j) {
+                switch (buf[j]) {
+                case 'b':
+                    if (auxinp->xform->bias != NULL) {
+                        if (VectorSize(auxinp->xform->bias) != dstLayer->inputDim)
+                            HError(-1, "CopyANNLayerParms: Unequal bias vector lenghts");
+                        CopyVector2NVector(auxinp->xform->bias, dstLayer->biasVec->variables);
+                    }
+                    break;
+                case 'w':
+                    if (NumRows(auxinp->xform->xform[1]) != dstLayer->nodeNum || NumCols(auxinp->xform->xform[1]) != dstLayer->inputDim)
+                        HError(-1, "CopyANNLayerParms: Unequal weight matrix dimensions");
+                    CopyMatrix2NMatrix(auxinp->xform->xform[1], dstLayer->wghtMat->variables);
+                    break;
+                default:
+                    HError(9999, "CopyANNLayerParms: Unsupported update flag %c for input transform", buf[j]);
+                }
+            }
+        }
+        else 
+            HError(9999, "CopyANNLayerParms: <COPY> keyword expected");
+    }    
+    if (auxset != NULL && hset != auxset) 
+        ResetHMMSet(auxset);
+
+    saveHMMSet = TRUE;
+}*/
+
+/* cz277 - ANN */
+/* SL */
+void ShowANNLayerStats(void) {
+    int i, len, layerPos;
+    LELink layerElem=NULL;
+    char buf[MAXSTRLEN];
+    double mean, stddev, absmax, l1norm, l2norm, absval;
+
+    /* original feature mixture */
+    ChkedAlpha("Target layer macro type", buf);
+    if (strcmp(buf, "~N") == 0 || strcmp(buf, "~L") == 0) {
+        layerElem = GetLayerElemByMacName("ShowANNLayerStats", buf, hset, NULL, &layerPos);
+    }
+    else {
+        HError(2650, "ShowANNLayerStats: Unsupported target ANN layer macro");
+    }
+    /* compute for weights */
+    len = layerElem->nodeNum * layerElem->inputDim;
+    absmax = 0.0;
+    mean = 0.0;
+    stddev = 0.0;
+    l1norm = 0.0;
+    l2norm = 0.0;
+    for (i = 0; i < len; ++i) {
+        absval = fabs(layerElem->wghtMat->variables->matElems[i]);
+        if (absval > absmax) 
+            absmax = absval;
+        mean += layerElem->wghtMat->variables->matElems[i];
+        l1norm += absval;
+        l2norm += pow(layerElem->wghtMat->variables->matElems[i], 2.0);
+    }
+    mean /= len;
+    l1norm /= layerElem->nodeNum;
+    l2norm /= layerElem->nodeNum;
+    for (i = 0; i < len; ++i) {
+        stddev += pow(layerElem->wghtMat->variables->matElems[i] - mean, 2.0);
+    }
+    stddev = sqrt(stddev / len);
+    /* output */
+    printf("\tWeights:\n");
+    printf("\t\tinput dim = %d, output dim = %d, param num = %d\n", layerElem->inputDim, layerElem->nodeNum, len);
+    printf("\t\tmean = %e, std dev = %e, max abs = %e\n", mean, stddev, absmax);
+    printf("\t\tl1 norm / output node = %e, l2 norm / output node = %e\n", l1norm, l2norm);
+    /*printf("\n");*/
+    /* compute for biases */
+    len = layerElem->nodeNum;
+    absmax = 0.0;
+    mean = 0.0;
+    stddev = 0.0;
+    l1norm = 0.0;
+    l2norm = 0.0;
+    for (i = 0; i < len; ++i) {
+        absval = fabs(layerElem->biasVec->variables->vecElems[i]);
+        if (absval > absmax)
+            absmax = absval;
+        mean += layerElem->biasVec->variables->vecElems[i];
+        l1norm += absval;
+        l2norm += pow(layerElem->biasVec->variables->vecElems[i], 2.0);
+    }
+    mean /= len;
+    l1norm /= layerElem->nodeNum;
+    l2norm /= layerElem->nodeNum;
+    for (i = 0; i < len; ++i) {
+        stddev += pow(layerElem->biasVec->variables->vecElems[i] - mean, 2.0);
+    }
+    stddev = sqrt(stddev / len);
+    /* output */
+    printf("\tbiases:\n");
+    printf("\t\toutput dim = %d, param num = %d\n", layerElem->nodeNum, len);
+    printf("\t\tmean = %e, std dev = %e, max abs = %e\n", mean, stddev, absmax);
+    printf("\t\tl1 norm / output node = %e, l2 norm / output node = %e\n", l1norm, l2norm);
+    printf("\n");
+
+    /* saves the model */
+    saveHMMSet = FALSE;
+}
+
+
+/* ----------------------- RS - Replace an HMM state  --------------------- */
+
+/*void ReplaceHMMState(void) {
+    char buf[MAXSTRLEN], hbuf[MAXSTRLEN];
+    int tIdx, sIdx = -1, i, j;
+    LabId hmmId, stateId;
+    HMMScanState hss;
+    MLink macDef;
+    HLink hlink;
+    StateInfo *si;
+    StreamElem se;
+    LELink layerElem;
+
+    if (hset->hsKind == ANNHS) 
+        HError(2615, "ReplaceHMMState: No HMMs in the model file");
+    // get target HMM structure 
+    ChkedAlpha("Target HMM name", buf);
+    if (strcmp(buf, "~h") == 0)
+        ChkedAlpha("Target HMM name", buf);
+    hmmId = GetLabId(buf, FALSE); 
+    if (hmmId == NULL) 
+        HError(2635, "ReplaceHMMState: Failed to find model for label \"%s\"", buf);
+    if ((macDef = FindMacroName(hset, 'l', hmmId)) == NULL) 
+        HError(2635, "ReplaceHMMState: Unknown HMM name %s", buf);
+    hlink = (HLink) macDef->structure;
+    tIdx = ChkedInt("Target state index", 2, hlink->numStates - 1);
+    // get source state structure 
+    ChkedAlpha("Source state name", buf);
+    if (strcmp(buf, "~s") == 0)
+        ChkedAlpha("Source state name", buf);
+    stateId = GetLabId(buf, FALSE);
+    if (stateId == NULL) {
+        ExtractState(buf, hbuf, &sIdx);
+        stateId = GetLabId(hbuf, FALSE);
+        if ((macDef = FindMacroName(hset, 'l', stateId)) == NULL) 
+            HError(2635, "ReplaceHMMState: Unknown HMM name %s", hbuf);
+        si = ((HLink) macDef->structure)->svec[sIdx].info;
+    }
+    else {
+        if ((macDef = FindMacroName(hset, 's', stateId)) == NULL) 
+            HError(2635, "ReplaceHMMState: Unknown state name %s", buf);
+        si = (StateInfo *) macDef->structure;
+    }
+    // change the use count
+    --hlink->svec[tIdx].info->nUse;
+    if (hlink->svec[tIdx].info->nUse == 0) 
+        DeleteMacroStruct(hset, 's', hlink->svec[tIdx].info);
+    ++si->nUse;
+    // replace target state
+    hlink->svec[tIdx].info = si;
+    // remove the redundant targets and reset the target indexes 
+    if (hset->hsKind == HYBRIDHS) {
+        for (i = 1; i <= hset->swidth[0]; ++i) {
+            se = si->pdf[i];
+            tIdx = se.targetIdx - 1;
+            layerElem = se.targetSrc;
+            if (tIdx < layerElem->nodeNum - 1) {
+                for (j = tIdx + 1; j < layerElem->nodeNum; ++j) {
+                    CopyNSegment(layerElem->wghtMat->variables, j * layerElem->inputDim, layerElem->inputDim, layerElem->wghtMat->variables, (j - 1) * layerElem->inputDim);
+                    CopyNVectorSegment(layerElem->biasVec->variables, j, 1, layerElem->biasVec->variables, j - 1);
+                }
+                --layerElem->nodeNum;
+            }
+            NewHMMScan(hset, &hss);
+            while(GoNextState(&hss, FALSE)) {
+                if (hss.si->pdf[i].targetIdx > tIdx + 1) {
+                    --hss.si->pdf[i].targetIdx;
+                    hss.si->pdf[i].targetIdx *= -1;
+                }
+            }
+            EndHMMScan(&hss);
+            NewHMMScan(hset, &hss);
+            while(GoNextState(&hss, FALSE)) 
+                if (hss.si->pdf[i].targetIdx < 0) 
+                    hss.si->pdf[i].targetIdx *= -1;
+        }
+    }
+
+    // saves the model 
+    saveHMMSet = TRUE;
+}*/
+
+/* ----------------------- CH - Convert GMM-HMMs to an initial ANN-HMMs --------------------- */
+
+static void BorrowOneANNMacro(char *invoker, char type, Ptr structure, HMMSet *srcset, HMMSet *dstset) {
+    MLink m;
+    LabId id;
+
+    m = FindMacroStruct(dstset, type, structure);
+    if (m == NULL) {
+        m = FindMacroStruct(srcset, type, structure);
+        if (m != NULL) {
+            id = m->id;
+            if (FindMacroName(dstset, type, id) != NULL)
+                m = NULL;
+        }
+        if (m == NULL)
+            id = GetNextANNMacroName(invoker, dstset, type);
+        NewMacro(dstset, fidx, type, id, structure);
+    }
+}
+
+void ConnectANNtoHMMs(void) {
+    char buf[MAXSTRLEN], mmfPath[MAXSTRLEN], lstPath[MAXSTRLEN];
+    HMMScanState hss;
+    HMMSet *auxset;
+    LELink layerElem;
+    MLink m;
+    AILink annInfo, curInfo;
+    ADLink annDef;
+    int i, j, h, targetCnt, streamIdx = 1;
+    LabId id;
+
+    if (hset->hsKind == ANNHS) 
+        HError(2615, "ConnectANNtoHMMs: No HMMs found in the model set");
+
+    /* load the ANN model */
+    ChkedAlpha("Auxiliary MMF file path", mmfPath);
+    ChkedAlpha("Auxiliary HMM list file path", lstPath);
+    auxset = (HMMSet *) New(&hmmHeap, sizeof(HMMSet));
+    CreateHMMSet(auxset, &hmmHeap, TRUE);
+    AddMMF(auxset, mmfPath);
+    if (MakeHMMSet(auxset, lstPath) < SUCCESS)
+        HError(2600, "ConnectANNtoHMMs: MakeHMMSet failed");
+    if (LoadHMMSet(auxset, NULL, NULL) < SUCCESS)
+        HError(2600, "ConnectANNtoHMMs: LoadHMMSet failed");
+    /* fetch the ANN model */
+    ChkedAlpha("ANN macro type", buf);
+    if (strcmp(buf, "~N") == 0)
+        ChkedAlpha("ANN macro name", buf);
+    annDef = GetANNDefByMacName("ConnectANNtoHMMs", buf, auxset);
+    /* import each of its component to hset */
+    m = FindMacroStruct(hset, 'N', annDef);
+    if (m == NULL) {
+        m = FindMacroStruct(auxset, 'N', annDef);
+        if (m != NULL) {
+            id = m->id;
+            if (FindMacroName(hset, 'N', id) != NULL)
+                m = NULL;
+        }
+        if (m == NULL) 
+            id = GetNextANNMacroName("ConnectANNtoHMMs", hset, 'N');
+        NewMacro(hset, fidx, 'N', id, annDef);
+    }
+    /*annDef->nUse |= 1;*/
+    if (hset->annSet == NULL) 
+        InitANNSet(hset);
+    annInfo = (AILink) New(hset->hmem, sizeof(ANNInfo));
+    annInfo->annDef = annDef;
+    annInfo->index = hset->annSet->annNum++;
+    annInfo->fidx = fidx;
+    curInfo = hset->annSet->defsTail;
+    if (curInfo == NULL) 
+        hset->annSet->defsHead = annInfo;
+    else {
+        curInfo->next = annInfo;
+        annInfo->prev = curInfo;
+    }
+    annInfo->prev = curInfo;
+    annInfo->next = NULL;
+    hset->annSet->defsTail = annInfo;
+    for (i = 0; i < annDef->layerNum; ++i) {
+        layerElem = annDef->layerList[i];
+        BorrowOneANNMacro("ConnectANNtoHMMs", 'L', layerElem, auxset, hset);
+        if (layerElem->feaMix != NULL)
+            BorrowOneANNMacro("ConnectANNtoHMMs", 'F', layerElem->feaMix, auxset, hset);
+        if (layerElem->wghtMat != NULL)
+            BorrowOneANNMacro("ConnectANNtoHMMs", 'M', layerElem->wghtMat, auxset, hset);
+        if (layerElem->biasVec != NULL)
+            BorrowOneANNMacro("ConnectANNtoHMMs", 'V', layerElem->biasVec, auxset, hset);
+        if (layerElem->actfunVecs != NULL)
+            for (j = 0; j <= layerElem->actfunParmNum; ++i) 
+                if (layerElem->actfunVecs[j] != NULL)
+                    BorrowOneANNMacro("ConnectANNtoHMMs", 'V', layerElem->actfunVecs[j], auxset, hset);
+    } 
+    /* to do Tandem or Hybrid */
+    ChkedAlpha("Next keyword", buf);
+    if (strcmp(buf, "<STREAM>") == 0) {
+        streamIdx = ChkedInt("Target stream index", 1, hset->swidth[0]);
+        ChkedAlpha("Next keyword", buf);
+    }
+    if (strcmp(buf, "<HYBRID>") == 0) {
+        hset->hsKind = HYBRIDHS;
+        NewHMMScan(hset, &hss);
+        while(GoNextState(&hss, FALSE)) 
+            if (hss.si->pdf[streamIdx].targetIdx >= 0) 
+                hss.si->pdf[streamIdx].targetIdx = -1;
+        EndHMMScan(&hss);
+        targetCnt = 0;
+        layerElem = annDef->layerList[annDef->layerNum - 1];
+        NewHMMScan(hset, &hss);
+        while(GoNextState(&hss, FALSE)) {
+            if (hss.si->pdf[streamIdx].targetIdx < 0) {
+                hss.si->pdf[streamIdx].densKind = ANNDK;
+                hss.si->pdf[streamIdx].targetSrc = layerElem;
+                hss.si->pdf[streamIdx].targetIdx = ++targetCnt;
+                hss.si->pdf[streamIdx].targetPen = 0.0;
+                ++hss.si->pdf[streamIdx].targetSrc->nUse;
+                hss.si->pdf[streamIdx].nMix = 1;
+            }
+        }
+        EndHMMScan(&hss);
+        if (targetCnt != layerElem->nodeNum) {
+            if (trace & T_BAS)
+                HError(-2681, "ConnectANNtoHMMs: Change target number to %d to match HMM state number", targetCnt);
+            ChangeOneLayerDims("ChangeOneANNLayerDims", layerElem, annDef->layerNum - 1, targetCnt, layerElem->inputDim);
+        }
+        /* remove redundant macros */
+        for (h = 0; h < MACHASHSIZE; ++h)
+            for (m = hset->mtab[h]; m != NULL; m = m->next)
+                if (m->type == 'v')
+                    DeleteMacro(hset, m);
+    }
+    else if (strcmp(buf, "<TANDEM>") == 0) 
+        HError(2640, "ConnectANNtoHMMs: Tandem system connection function not implemented yet");
+    else 
+        HError(2650, "ConnectANNtoHMMs: Unknown connection method, <HYBRID> or <TANDEM> expected");
+    
+    /* note, should not reset the auxset here*/
+    /* saves the model */
+    saveHMMSet = TRUE;
+
 }
 
 /* -----Regression Class Clustering Tree Building Routines -------------- */
@@ -6340,7 +8039,6 @@ void Initialise(char *hmmListFn)
    CreateHeap(&questHeap,"Question Heap",MSTAK,1,1.0,8000,16000);
    CreateHeap(&tmpHeap,"Temporary Heap",MSTAK,1,1.0,40000,400000);
 
-
    if(MakeHMMSet(&hSet,hmmListFn)<SUCCESS)
       HError(2628,"Initialise: MakeHMMSet failed");
    if (noAlias) ZapAliases(); 
@@ -6362,21 +8060,23 @@ void Initialise(char *hmmListFn)
 /* -------------------- Top Level of Editing ---------------- */
 
 
-static int  nCmds = 40;
+static int nCmds = 56;	/* cz277 */
 
 static char *cmdmap[] = {"AT","RT","SS","CL","CO","JO","MU","TI","UF","NC",
                          "TC","UT","MT","SH","SU","SW","SK",
                          "RC",
                          "RO","RM","RN","RP",
                          "LS","QS","TB","TR","AU","GQ","MD","ST","LT",
-                         "MM","DP","HK","FC","FA","FV","XF","PS","PR","" };
+                         "MM","DP","HK","FC","FA","FV","XF","PS","PR", 
+                         "AV", "SV", "AM", "SM", "AF", "IL", "CF", "CD", "EL", "CA", "EF", "CP", "DL", "CM", "CH", "SL", "" };
 
 typedef enum           { AT=1, RT , SS , CL , CO , JO , MU , TI , UF , NC ,
                          TC , UT , MT , SH , SU , SW , SK ,
                          RC ,
                          RO , RM , RN , RP ,
                          LS , QS , TB , TR , AU , GQ , MD , ST , LT ,
-                         MM , DP , HK , FC , FA , FV, XF, PS, PR }
+                         MM , DP , HK , FC , FA , FV, XF, PS, PR, 
+                         AV , SV , AM , SM , AF , IL, CF, CD, EL, CA, EF, CP, DL, CM, CH, SL }
 cmdNum;
 
 /* CmdIndex: return index 1..N of given command */
@@ -6384,8 +8084,10 @@ int CmdIndex(char *s)
 {
    int i;
    
-   for (i=1; i<=nCmds; i++)
-      if (strcmp(cmdmap[i-1],s) == 0) return i;
+   for (i=1; i<=nCmds; i++) {
+      if (strcmp(cmdmap[i-1],s) == 0) 
+         return i;
+   }
    return 0;
 }
 
@@ -6416,6 +8118,7 @@ void DoEdit(char * editFn)
       case RT: EditTransMat(FALSE); break;
       case SS: SplitStreamCommand(FALSE); break;
       case CL: CloneCommand(); break;
+      case CM: ConcatenateCommand(); break;
       case CO: CompactCommand(); break;
       case JO: JoinSizeCommand(); break;
       case MU: MixUpCommand(); break;
@@ -6451,6 +8154,22 @@ void DoEdit(char * editFn)
       case FV: FloorVectorCommand(); break;
       case PS: PowerSizeCommand(); break;
       case PR: ProjectCommand(); break;
+      case AV: AddOneNVecBundle("AddOneNVecBundle", NULL, hset, FALSE); break;
+      case SV: SetOneNVecBundle(hset); break;
+      case AM: AddOneNMatBundle("AddOneNMatBundle", NULL, hset, FALSE); break;
+      case SM: SetOneNMatBundle(hset); break;
+      case AF: AddOneFeaMix("AddOneFeaMix", NULL, FALSE); break;   	
+      case IL: InsertOneANNLayer(); break;			/* done */
+      case CF: ChangeOneANNLayerInput(); break;			/* done */
+      case CD: ChangeOneANNLayerDims(); break;			/* done */
+      case EL: EraseOneANNLayer(); break;			/* done */
+      case DL: DeleteOneANNLayer(); break;			/* done */
+      case CA: ChangeOneANNLayerActFun(); break;		/* done */ 
+      case EF: ExtendOneFeaMix(); break;			/* done */
+      case CP: CopyANNParameters(); break;			/* done */
+      /*case RS: ReplaceHMMState(); break;*/			/* not tested yet */
+      case CH: ConnectANNtoHMMs(); break;
+      case SL: ShowANNLayerStats(); break;			/* done */
       default: 
          HError(2650,"DoEdit: Command %s not recognised",cmds);
       }
@@ -6459,32 +8178,52 @@ void DoEdit(char * editFn)
       prevCommand = thisCommand;
    }
    CloseSource(&source);
-   
+
    if (saveHMMSet) {
       /* Save the Edited HMM Files */
       if (trace & T_BID) {
          printf("\nSaving new HMM files ...\n");
          fflush(stdout);
       }
+      /*FixAllGConsts(hset); 
+      badGC=FALSE;
+      PurgeMacros(hset);*/
+      /* cz277 - ANN */
+      if (hset->annSet != NULL) {
+          CheckANNConsistency(hset);
+          FindANNCycles(hset);
+          ResetDrvContext(hset);
+          SetDrvContext(hset);
+          InitXYBatch(hset);
+      }
       FixAllGConsts(hset);         /* in case any bad gConsts around */
       badGC=FALSE;
       PurgeMacros(hset);
       if (mmfFn!=NULL)
          SaveInOneFile(hset,mmfFn);
-      if(SaveHMMSet(&hSet,newDir,newExt,NULL,inBinary)<SUCCESS)
-         HError(2611,"DoEdit: SaveHMMSet failed");
+      if (nmfFn != NULL) {
+          if (SaveANNDefs(hset, nmfFn, inBinary) < SUCCESS) 
+              HError(9999, "DoEdit: SaveANNDefs failed");
+      }
+      /* cz277 - 1007 */
+      if (newDir != NULL || mmfFn != NULL) {
+          if (SaveHMMSet(&hSet, newDir, newExt, NULL, inBinary) < SUCCESS)
+              HError(2611, "DoEdit: SaveHMMSet failed");
+      }
    }
+   /* reset auxSet when exit */
+   if (auxSet != NULL && hset != auxSet)
+       ResetHMMSet(auxSet);
 
    if (trace & T_BID) {
       printf("Edit Complete\n");
       fflush(stdout);
    }
+
 }
 
 
 /* ----------------------------------------------------------- */
 /*                        END:  HHEd.c                         */
 /* ----------------------------------------------------------- */
-
-
 

@@ -1,0 +1,75 @@
+#!/bin/bash
+############################################################
+# Step 2: Multiple Mixture Monophones
+############################################################
+
+source environment
+# 2.1  Mixture splitting
+
+# The models created in Step 1 will be converted to multiple mixture
+# models by iterative "mixture splitting" and re-training.
+# Mixture-splitting is performed by HHEd by taking an output
+# distribution with M output components, choosing the components with
+# the largest mixture weights and making two mixtures where there was
+# one before by perturbing the mean values of the split mixture
+# components. This can be done on a state-by-state basis but here all
+# states will be mixture split.
+
+# A script interface to HHEd called hedit takes a script of HHEd
+# commands and applies them. First two-mixture models will be created,
+# with the initial models in $RMWORK/R2/ml/hmm10 formed by
+# mixture-splitting the models in $RMWORK/R1/ml/hmm4.
+
+# First create the directory to hold the multiple mixture monophones
+# and link all the files and directories to the new directory.
+
+mkdir -p $RMWORK/R2/ml
+cd $RMWORK/R2/ml
+ln -s $RMWORK/R1/ml/* .
+
+# Now store the HHEd commands required in a file called edfile4.10 in
+# $RMWORK/R2/ml. This file need contain only the line
+
+cat<<EOD > $RMWORK/R2/ml/edfile4.10
+MU 2 {*.state[2-4].mix}
+EOD
+
+# This command this will split into 2 mixtures all the states of all
+# models in the HMMLIST defined in the HTE file. Now invoke hedit by
+
+cd $RMWORK/R2/ml
+hedit 4 10
+
+# This creates 2 mixture initial hmms in $RMWORK/R2/ml/hmm10.
+
+
+# 2.2  Retraining and testing the two-mixture models
+
+# Run four iterations of  HERest to re-train the models
+
+cd $RMWORK/R2/ml
+hbuild 11 14
+
+# and then test them with HVite (again recognition settings may need
+# adjusting)
+cd $RMWORK/R2/ml
+htestrm HTE wp feb89 hmm14
+
+# and run other tests as required.
+
+
+# 2.3  Iterative mixture-splitting
+
+# The mixture splitting and re-training can be done repeatedly and it
+# is suggested that after the 2 mixture models are trained in order 3
+# mixture, 5 mixture 7 mixture, 10 mixture and 15 mixture models are
+# trained.  Each cycle requires forming a file containing the
+# appropriate HHEd MU command, running hedit, running hbuild and then
+# testing the models with htestrm.
+
+# Note that it is quite possible to go straight from 1 mixture models
+# to 5 mixture models. However usually better performance results from
+# a given number of mixture components if the model complexity is
+# increased in stages.
+
+echo step 2 completed

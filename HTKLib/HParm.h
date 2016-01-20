@@ -3,36 +3,39 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*              2001  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HParm.h:   Speech Parameter Input/Output      */
+/*         File: HParm.h   Speech Parameter Input/Output       */
 /* ----------------------------------------------------------- */
 
-/* !HVER!HParm:   3.4.1 [CUED 12/03/09] */
+/* !HVER!HParm:   3.5.0 [CUED 12/10/15] */
 
 #ifndef _HPARM_H_
 #define _HPARM_H_
@@ -40,6 +43,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#include "HWave.h"  /* cz277 - ANN */
+#include "HAudio.h" /* cz277 - ANN */
 
 enum _BaseParmKind{
       WAVEFORM,            /* Raw speech waveform (handled by HWave) */
@@ -51,7 +57,8 @@ enum _BaseParmKind{
       USER,                            /* Arbitrary user specified data */
       DISCRETE,                        /* Discrete VQ symbols (shorts) */
       PLP,                             /* Standard PLP coefficients */
-      ANON};
+      ANON,
+      ANN};
       
 typedef short ParmKind;          /* BaseParmKind + Qualifiers */
                                  
@@ -207,6 +214,9 @@ ParmBuf OpenBuffer(MemHeap *x, char *fn, int maxObs, FileFormat ff,
    will perform measurement if it is needed by config).
 */
 
+/* cz277 - aug */
+Vector GetAugFeaVector(ParmBuf parmBuf, int feaIdx);
+
 PBStatus BufferStatus(ParmBuf pbuf);
 /* 
    Return current status of buffer.
@@ -313,6 +323,9 @@ ParmBuf EmptyBuffer(MemHeap *x, int size, Observation o, BufferInfo info);
    parameters.  The latter will typically be copied from a
    buffer created by an OpenBuffer call.
 */
+
+/* cz277 - ANN */
+/*void CopyParmBufInfo(ParmBuf srcPBuf, ParmBuf dstPBuf);*/
 
 ReturnStatus SaveBuffer(ParmBuf pbuf, char *fname, FileFormat ff);
 /*

@@ -3,37 +3,40 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*              2001  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HWave.c:   Speech Wave File Input/Output      */
+/*         File: HWave.c   Speech wave file input/output       */
 /* ----------------------------------------------------------- */
 
-char *hwave_version = "!HVER!HWave:   3.4.1 [CUED 12/03/09]";
-char *hwave_vc_id = "$Id: HWave.c,v 1.1.1.1 2006/10/11 09:54:59 jal58 Exp $";
+char *hwave_version = "!HVER!HWave:   3.5.0 [CUED 12/10/15]";
+char *hwave_vc_id = "$Id: HWave.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 #include "HShell.h"
 #include "HMem.h"
@@ -994,8 +997,8 @@ static long GetAIFFHeaderInfo(FILE *f, Wave w, InputAction *ia)
    int fn = sizeof fchunk;
    long sndStart = 0;    /* start of sound chunk */
    long fPtr;
-   CommonChunk1 ch1, commchunk1;
-   CommonChunk2 ch2, commchunk2;   
+   CommonChunk1 ch1;
+   CommonChunk2 ch2, commchunk2 = {.nSamples=0,.sampSize=0};   
    int cn1 = 10; /* sizeof(long) + sizeof(long) + sizeof(short); */
    int cn2 = 6;  /* sizeof(long) + sizeof(short); */   
    Boolean hasCC=FALSE, hasSC=FALSE;
@@ -1032,7 +1035,7 @@ static long GetAIFFHeaderInfo(FILE *f, Wave w, InputAction *ia)
          return -1;
       }
       if (ch1.id == ccid){  /* common chunk found */
-         hasCC=TRUE; commchunk1=ch1;commchunk2=ch2;
+         hasCC=TRUE; commchunk2=ch2;
       }
       if (ch1.id == scid){  /* sound chunk found */
          hasSC=TRUE; sndStart=fPtr;
@@ -1059,14 +1062,23 @@ static long GetWAVHeaderInfo(FILE *f, Wave w, InputAction *ia)
    if (MustSwap(VAXSO))
       *ia = (InputAction) (*ia | DoBSWAP);
    
-   fread(magic, 4, 1, f);
+   if(fread(magic, 4, 1, f)!=1){
+     HRError(6251,"Failed to read magic number");
+     return -1;
+   }
    if (strncmp("RIFF", magic, 4)){
       HRError(6251,"Input file is not in RIFF format");
       return -1;
    }
    
-   fread(&lng, 4, 1, f);
-   fread(magic, 4, 1, f);
+   if(fread(&lng, 4, 1, f)!=1){
+     HRError(6251,"Failed to read 1 object");
+     return -1;
+   }
+   if(fread(magic, 4, 1, f)!=1){
+     HRError(6251,"Failed to read magic number");
+     return -1;
+   }
    if (strncmp("WAVE", magic, 4)){
       HRError(6251,"Input file is not in WAVE format");
       return -1;
@@ -1078,13 +1090,22 @@ static long GetWAVHeaderInfo(FILE *f, Wave w, InputAction *ia)
          HRError(6251,"No data portion in WAVE file");
          return -1;
       }
-      fread(magic, 4, 1, f);
-      fread(&len, 4, 1, f);
+      if(fread(magic, 4, 1, f)!=1){
+	HRError(6251,"Failed to read magic number");
+	return -1;
+      }
+      if(fread(&len, 4, 1, f)!=1){
+	HRError(6251,"Failed to read length");
+	return -1;
+      }
       if (*ia & DoBSWAP) SwapInt32(&len);
       /* Check for data chunk */
       if (strncmp("data", magic, 4)==0) break;
       if (strncmp("fmt ", magic, 4)==0) {
-         fread(&type, 2, 1, f);
+	if(fread(&type, 2, 1, f)!=1){
+	  HRError(6251,"Failed to read type");
+	  return -1;
+	}
          if (*ia & DoBSWAP) SwapShort(&type);
          if (type != WAVE_FORMAT_PCM && type!=WAVE_FORMAT_MULAW && type!=WAVE_FORMAT_ALAW){
             HRError(6251,"Only standard PCM, mu-law & a-law supported");
@@ -1094,7 +1115,10 @@ static long GetWAVHeaderInfo(FILE *f, Wave w, InputAction *ia)
             *ia = (InputAction) (*ia | (DoMULAW|DoCVT));
          else if(type==WAVE_FORMAT_ALAW)
             *ia = (InputAction) (*ia | (DoALAW|DoCVT));
-         fread(&chans, 2, 1, f);                /* Number of Channels */
+         if(fread(&chans, 2, 1, f)!=1){              /* Number of Channels */
+	   HRError(6251,"Failed to read num channels");
+	   return -1;
+	 }
          if (*ia & DoBSWAP) SwapShort(&chans);
          if (chans!=1 && chans!=2){
             HRError(6251,"Neither mono nor stereo!");
@@ -1102,12 +1126,24 @@ static long GetWAVHeaderInfo(FILE *f, Wave w, InputAction *ia)
          }
          if(chans==2)
             *ia = (InputAction) (*ia | (DoSTEREO|DoCVT));
-         fread(&lng, 4, 1, f);                /* Sample Rate */
+         if(fread(&lng, 4, 1, f)!=1){             /* Sample Rate */
+	   HRError(6251,"Failed to read sample rate");
+	   return -1;
+	 }
          if (*ia & DoBSWAP) SwapInt32(&lng);
          w->sampPeriod = 1.0E7 / (float)lng;
-         fread(&lng, 4, 1, f);                  /* Average bytes/second */
-         fread(&sht, 2, 1, f);                  /* Block align */
-         fread(&sampSize, 2, 1, f);             /* Data size */
+         if(fread(&lng, 4, 1, f)!=1){              /* Average bytes/second */
+	   HRError(6251,"Failed to read avg bytes/sec");
+	   return -1;
+	 }
+         if(fread(&sht, 2, 1, f)!=1){           /* Block align */
+	   HRError(6251,"Failed to read block align");
+	   return -1;
+	 }
+         if(fread(&sampSize, 2, 1, f)!=1){      /* Data size */
+	   HRError(6251,"Failed to read data size");
+	   return -1;
+	 }
          if (*ia & DoBSWAP) SwapShort(&sampSize);
          if (sampSize != 16 && sampSize!=8){
             HRError(6251,"Only 8/16 bit audio supported");
@@ -1122,7 +1158,12 @@ static long GetWAVHeaderInfo(FILE *f, Wave w, InputAction *ia)
          len -= 16;
       }
       /* Skip chunk */
-      for (; len>0; len--) fread(&c,1,1,f);
+      for (; len>0; len--) {
+	if(fread(&c,1,1,f)!=1){
+	  HRError(6251,"Failed to read skipped object");
+	  return -1;
+	}
+      }
    }
    numBytes=len;
    w->nSamples = numBytes / (sampSize/8);
@@ -1206,7 +1247,7 @@ void RetrieveESIGFieldList(HFieldList *fList)
 
 /* EXPORT->ReadEsignalHeader: Get header from Esignal file; return FALSE
    in case of failure. */
-Boolean ReadEsignalHeader(FILE *f, long *nSamp, long *sampP, short *sampS,
+Boolean ReadEsignalHeader(FILE *f, long *nSamp, long *sampP, unsigned short *sampS,
                           short *kind, Boolean *bSwap, long *hdrS,
                           Boolean isPipe)
 {
@@ -1302,7 +1343,8 @@ static long GetESIGHeaderInfo(FILE *f, Wave w, InputAction *ia)
 {
    int             nsamp;
    long            nSamp, sampP;
-   short           sampSize, kind;
+   unsigned short  sampSize;
+   short  kind;
    long            hdrS;
    Boolean         bSwap;
 
@@ -1339,7 +1381,7 @@ static long GetESIGHeaderInfo(FILE *f, Wave w, InputAction *ia)
 void PutESIGHeaderInfo(FILE *f, Wave w)
 {
    FieldSpec *field, *field1;
-   FieldList inList, outList=NULL;
+   FieldList inList=NULL, outList=NULL;
    int len, i;
 
    /* Create header items first */
@@ -1400,16 +1442,18 @@ void PutESIGHeaderInfo(FILE *f, Wave w)
 typedef struct {              /* HTK File Header */
    int32 nSamples;
    int32 sampPeriod;
-   short sampSize;
+   /*short sampSize;*/
+   unsigned short sampSize;	/* cz277 - cbu */
    short sampKind;
 } HTKhdr;
 
 /* EXPORT ReadHTKHeader: get header from HTK file, return false not HTK */
-Boolean ReadHTKHeader(FILE *f, long *nSamp, long *sampP, short *sampS, 
+Boolean ReadHTKHeader(FILE *f, long *nSamp, long *sampP, unsigned short *sampS, 	/* cz277 - cbu */
                       short *kind, Boolean *bSwap)
 {
    HTKhdr hdr;
    int n = sizeof hdr;
+   short s;
    
    if (fread(&hdr, 1, n, f) != n)
       return FALSE;
@@ -1421,12 +1465,17 @@ Boolean ReadHTKHeader(FILE *f, long *nSamp, long *sampP, short *sampS,
    if (*bSwap){
       SwapInt32(&hdr.nSamples); 
       SwapInt32(&hdr.sampPeriod);
-      SwapShort(&hdr.sampSize);
+      s=hdr.sampSize;
+      SwapShort(&s);
+      hdr.sampSize=(unsigned short)s;
       SwapShort(&hdr.sampKind); 
    }
-   if (hdr.sampSize <= 0 || hdr.sampSize > 5000 || hdr.nSamples <= 0 ||
-       hdr.sampPeriod <= 0 || hdr.sampPeriod > 1000000)
-      return FALSE;
+   /*if (hdr.sampSize <= 0 || hdr.sampSize > 5000 || hdr.nSamples <= 0 ||
+       hdr.sampPeriod <= 0 || hdr.sampPeriod > 1000000) {*/
+   /* cz277 - cbu */
+   if (hdr.sampSize == 0 || hdr.nSamples <= 0 || hdr.sampPeriod <= 0 || hdr.sampPeriod > 1000000) {
+       return FALSE;
+   }
    *nSamp = hdr.nSamples; *sampP = hdr.sampPeriod; 
    *sampS = hdr.sampSize; *kind = hdr.sampKind;
    return TRUE;
@@ -1436,7 +1485,10 @@ Boolean ReadHTKHeader(FILE *f, long *nSamp, long *sampP, short *sampS,
 static long GetHTKHeaderInfo(FILE *f, Wave w, InputAction *ia)
 {
    Boolean bSwap;
-   short kind,size;
+   /*short kind,size;*/
+   short kind;
+   /* cz277 - cbu */
+   unsigned short size;
    long sp;
    
    if (!ReadHTKHeader(f,&(w->nSamples),&sp, &size, &kind, &bSwap)){
@@ -1459,20 +1511,23 @@ static long GetHTKHeaderInfo(FILE *f, Wave w, InputAction *ia)
 }
 
 /* EXPORT->WriteHTKHeader: Write header info to HTK file f */
-void WriteHTKHeader(FILE *f, long nSamp, long sampP, short sampS, 
+void WriteHTKHeader(FILE *f, long nSamp, long sampP, unsigned short sampS, 	/* cz277 - cbu */
                     short kind, Boolean *bSwap)
 {
    HTKhdr hdr;
    int n = sizeof hdr;
+   short s;
    
    hdr.nSamples   = nSamp;
-   hdr.sampSize   = sampS;
+   hdr.sampSize   = (unsigned short)sampS;
    hdr.sampKind   = kind;
    hdr.sampPeriod = sampP;
    if (!natWriteOrder && vaxOrder){
       SwapInt32(&hdr.nSamples); 
       SwapInt32(&hdr.sampPeriod);
-      SwapShort(&hdr.sampSize);
+      s = (short)hdr.sampSize;
+      SwapShort(&s);
+      hdr.sampSize=s;
       SwapShort(&hdr.sampKind);
       if (bSwap!=NULL) *bSwap=TRUE;
    }

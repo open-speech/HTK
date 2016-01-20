@@ -7,24 +7,21 @@
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* author:                                                     */
+/*           Rod Johnson                                       */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-
-
-/*
- * Example programs for Esignal public external file format.
- * Utility; field specifications and lists; general I/O.
- *
- * Author:  Rod Johnson
- */
-
+/*             File: esignal.h  Esignal include file           */
+/* ----------------------------------------------------------- */
 
 #include "esignal.h"
 
@@ -1757,7 +1754,10 @@ GetLine(char    *buf,
 {
    int     i, j;
 
-   fgets(buf, len+1, file);
+   if(fgets(buf, len+1, file)==NULL){
+     printf("Error reading from file\n");
+     return FALSE;
+   }
    if (strlen(buf) != len || buf[len-1] != '\n')
       return FALSE;
    buf[len-1] = '\0';
@@ -1805,7 +1805,10 @@ GetLong(long    *val,
 
    /* Read line; check length. */
 
-   fgets(buf, len+1, file);
+   if(fgets(buf, len+1, file)==NULL){
+     printf("Error reading from file\n");
+     return FALSE;
+   }
 
    if (strlen(buf) != len || buf[len-1] != '\n')
       {
@@ -1926,3 +1929,6 @@ LongVal(void *src, int type, long *dest)
 
    return TRUE;
 }
+
+/* ------------------------ End of esignal.c ------------------------- */
+

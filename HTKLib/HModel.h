@@ -3,36 +3,36 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
-/*                                                             */
-/*      Entropic Cambridge Research Laboratory                 */
-/*      (now part of Microsoft)                                */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
-/*              2002  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HModel.h  HMM Model Definition Data Type      */
+/*         File: HModel.h  HMM model definition data type      */
 /* ----------------------------------------------------------- */
 
-/* !HVER!HModel:   3.4.1 [CUED 12/03/09] */
+/* !HVER!HModel:   3.5.0 [CUED 12/10/15] */
 
 #ifndef _HMODEL_H_
 #define _HMODEL_H_
@@ -41,20 +41,28 @@
 extern "C" {
 #endif
 
+/*#include "HANNet.h"*/         /* cz277 - ANN: ANN defs and types */
+/*#include "HMath.h"*/          /* cz277 - ANN */
+/*#include "HLabel.h"*/         /* cz277 - ANN */
+
 /* 
    The following types define the in-memory representation of a HMM.
    All HMM's belong to a HMMSet which includes a macro table for
    rapidly mapping macro/hmm names into structures.  
 */
 
-#define MACHASHSIZE 250007   /* Size of each HMM Set macro hash table */
-#define PTRHASHSIZE  513   /* Size of each HMM Set ptr map hash table */
-#define MINMIX  1.0E-5     /* Min usable mixture weight */
+#define MACHASHSIZE 250007  /* Size of each HMM Set macro hash table */
+#define PTRHASHSIZE  513    /* Size of each HMM Set ptr map hash table */
+#define MINMIX  1.0E-5      /* Min usable mixture weight */
 #define LMINMIX -11.5129254649702     /* log(MINMIX) */
+/* cz277 - ANN */
+#define MAXINPUSE 10            /* maximum times of the parmkind feature used */
 
-#define MINDLOGP 0.000001  /* prob = exp(shortform/DLOGSCALE) */
-#define DLOGSCALE -2371.8  /* = 32767/ln(MINDLOGP) */
+#define MINDLOGP 0.000001   /* prob = exp(shortform/DLOGSCALE) */
+#define DLOGSCALE -2371.8   /* = 32767/ln(MINDLOGP) */
 #define DLOGZERO 32767  
+
+#define MAXNTOKENARG 256    /* cz277 - ANN: max number of args could be appended to a token */
 
 #define MixFloor(hset)            ( MINMIX )
 
@@ -79,8 +87,12 @@ typedef struct _MMFInfo{
 enum _DurKind {NULLD, POISSOND, GAMMAD, RELD, GEND};
 typedef enum _DurKind DurKind;
 
-enum _HSetKind {PLAINHS, SHAREDHS, TIEDHS, DISCRETEHS};
+enum _HSetKind {PLAINHS, SHAREDHS, TIEDHS, DISCRETEHS, HYBRIDHS, ANNHS};  /* cz277 - ANN: TODO: MIXEDHS */
 typedef enum _HSetKind HSetKind;
+
+/* cz277 - ANN: identifier for the type of state density functions */
+enum _HSDensKind {GMMDK, ANNDK};
+typedef enum _HSDensKind HSDensKind;
 
 typedef struct {
    SVector mean;        /* mean vector */
@@ -121,9 +133,14 @@ typedef struct {        /* A Tied Mixture "Codebook" */
 } TMixRec;
 
 typedef struct {        /* 1 of these per stream */
-   int nMix;            /* num mixtures in this stream */
-   MixtureVector spdf;  /* Mixture Vector */
-   Ptr hook;            /* general hook */
+   HSDensKind densKind; /* cz277 - ANN: density kind */
+   LELink targetSrc;    /* cz277 - ANN: (ANNDK) the source of this state density */
+   int targetIdx;       /* cz277 - ANN: (ANNDK) the index of the target */
+   float targetPen;     /* cz277 - ANN: (ANNDK) the penalty to this state */
+   double occAcc;	/* cz277 - ANN: (ANNDK) the field used to accumulate the occupancies */
+   int nMix;            /* (GMMDK) num mixtures in this stream */
+   MixtureVector spdf;  /* (GMMDK) Mixture Vector */
+   Ptr hook;            /* (GMMDK) general hook */
 }StreamElem;
 
 typedef struct {
@@ -134,6 +151,7 @@ typedef struct {
    int nUse;            /* usage counter */
    Ptr hook;            /* general hook */
    int stateCounter;    /* # of state occurrences */
+   TargetMap *stateMap; /* cz277 - ANN the mapping of this state */
 } StateInfo;
 
 typedef struct {        /* 1 of these per state */
@@ -276,6 +294,12 @@ typedef struct {
    have 0 or more logHMM macros referencing it.
 */
 
+/*
+    cz277 - ANN
+    Extended Macro:
+        e feature           k ANNlayer          n ANNmodel 
+*/
+
 typedef struct _MacroDef *MLink;
 
 typedef struct _MacroDef{
@@ -337,6 +361,18 @@ typedef struct _HMMSet{
    /* Added to support delayed loading of the semi-tied transform */
    char *semiTiedMacro;  /* macroname of semi-tied transform */
 
+   /* cz277 - ANN */
+   FeaMix *feaMix[SMAX];                /* the feature mixture to the GMM-HMMs, could be NULL */
+   ANNSet *annSet;                      /* the pointer to ANNSet instance */
+   int nInp[SMAX];                      /* the usage count of the input feature (inpElem length) */
+   FELink inpElem[SMAX][MAXINPUSE];     /* the FeaElem pointer list for the input features */
+   int FTypeMacroNum;			/* number of F type macro */
+   int LTypeMacroNum;			/* number of L type macro */
+   int NTypeMacroNum;			/* number of N type macro */
+   int MTypeMacroNum;
+   int VTypeMacroNum;
+
+   StateInfo **stateInfoList[SMAX];     /* used to convert target index to stream element for each stream */
 } HMMSet;
 
 /* --------------------------- Initialisation ---------------------- */
@@ -457,6 +493,7 @@ ReturnStatus MakeOneHMM(HMMSet *hset, char *hname);
    to create a singleton HMM set
 */
 
+/*ReturnStatus LoadMacroFiles(HMMSet *hset);*/
 ReturnStatus LoadHMMSet(HMMSet *hset, char *hmmDir, char *hmmExt);
 /*
    Load any preloaded MMF files.  Scan the physical list of hset and
@@ -663,6 +700,68 @@ XFormKind Str2XFormKind(char *str);
 
 /* EXPORT-> Str2AdaptKind: parse the string into the correct xform kind */
 AdaptKind Str2AdaptKind(char *str);
+
+/* cz277 - ANN */
+LabId GetNextANNMacroName(char *invoker, HMMSet *hset, char type);
+Boolean CmpFeaElem(FELink lhFEL, FELink rhFEL);
+LELink GenBlankLayer(MemHeap *heap);
+LELink GenNewPerceptronLayer(HMMSet *hset, int nodeNum, int inputDim, char *wghtName, char *biasName);
+void InitANNSet(HMMSet *hset);
+void FreeANNSet(HMMSet *hset);
+void ShowANNSet(HMMSet *hset);
+/*ReturnStatus CheckTrainInfo(ANNSet *annSet);*/
+void InitTrainInfo(HMMSet *hset, Boolean initLabMats, Boolean initLRInfo, Boolean initAuxInfo, Boolean initStruct);
+void InitErrMix(HMMSet *hset);
+void CheckANNConsistency(HMMSet *hset);
+void InitXYBatch(HMMSet *hset);
+ReturnStatus SaveANNUpdate(HMMSet *hset, char *fname, Boolean binary);
+ReturnStatus SaveANNNegLR(HMMSet *hset, char *fname, Boolean binary);
+ReturnStatus SaveANNStore(HMMSet *hset, char *fname, Boolean binary);
+ReturnStatus SaveANNDefs(HMMSet *hset, char *fname, Boolean binary);
+
+ActFunKind Str2ActFunKind(char *str);
+
+void SetupStateInfoList(HMMSet *hset);
+ReturnStatus SetupTargetMapList(HMMSet *hset, char *mapFN, int mappedTargetNum);
+void UpdateTargetMapStats(ANNSet *annSet, int refPos, int hypPosSum);
+void InitMapVec(HMMSet *hset);
+IntVec GetMapVec(HMMSet *het, int streamIdx);
+void ClearMappedTargetCounters(ANNSet *annSet);
+void ShowMapConfusionMatrices(ANNSet *annSet, float minConf);
+/* cz277 - 1007 */
+FeaMix *GetDefaultANNFeaMix(HMMSet *hset, LELink srcLayer);
+/* cz277 - xform */
+void SetNVecBundleByNVecBundle(NVecBundle *sbundle, NVecBundle *tbundle);
+void SetNMatBundleByNMatBundle(NMatBundle *sbundle, NMatBundle *tbundle);
+void AugHostNVecBundleByNVecBundle(MemHeap *x, NVecBundle *sbundle, NVecBundle *tbundle);
+void AugHostNMatBundleByNMatBundle(MemHeap *x, NMatBundle *sbundle, NMatBundle *tbundle);
+NMatBundle *FetchNMatBundle(HMMSet *hset, char *macroname);
+NVecBundle *FetchNVecBundle(HMMSet *hset, char *macroname);
+NVecBundle *LoadOneNVecRPL(HMMSet *hset, char *path, char *fname, char *macroname);
+NMatBundle *LoadOneNMatRPL(HMMSet *hset, char *path, char *fname, char *macroname);
+void SaveOneNMatRPL(HMMSet *hset, NMatBundle *bundle, char *fname, Boolean binary);
+void SaveOneNVecRPL(HMMSet *hset, NVecBundle *bundle, char *fname, Boolean binary);
+
+/* cz277 - many */
+void ShowANNStructDetails(HMMSet *hset);
+/* cz277 - many */
+void ResetDrvContext(HMMSet *hset);
+void SetDrvContext(HMMSet *hset);
+void FindANNCycles(HMMSet *hset);
+
+/* cz277 - 150811 */
+Boolean CheckActFunParameters(LELink layerElem);
+IntVec ParseMacroSettings(char *setting);
+void SetANNUpdateFlags(HMMSet *hset);
+/*void SetLayerUpdateFlag(HMMSet *hset);
+void SetActFunUpdateFlag(HMMSet *hset);*/
+void SetNMatUpdateFlag(HMMSet *hset);	
+void SetNVecUpdateFlag(HMMSet *hset);
+void SetupNMatRPLInfo(HMMSet *hset);
+void SetupNVecRPLInfo(HMMSet *hset);
+LayerKind Str2LayerKind(char *str);
+void InitMapStruct(HMMSet *hset);
+void SetANNUpdateFlag(HMMSet *hset);
 
 #ifdef __cplusplus
 }

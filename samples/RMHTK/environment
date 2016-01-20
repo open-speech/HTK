@@ -1,0 +1,29 @@
+############################################################
+# Environment
+############################################################
+
+HTKSRC=$PWD
+
+# recipe directory
+RMHTK=$HTKSRC/samples/RMHTK
+
+# location of HTK binaries
+HTKBIN=$HTKSRC/bin
+BINDIR=$HTKBIN
+
+# locations of the Resource Management data
+export RMCD1=/data/ldc/LDC1993S3B/rm1_audio1
+export RMCD2=/data/ldc/LDC1993S3B/rm1_audio2/2_4_2
+
+# local work directories
+RMWORKBASE=$HTKSRC/RM/releaseA
+export RMDATA="$RMWORKBASE/data"
+export RMLIB="$RMWORKBASE/lib"
+export RMWORK="$RMWORKBASE/exp"
+
+# directory containing these scripts
+RMVALIDATEDIR=$RMWORKBASE/steps
+
+# add all necessary paths
+export PATH="$HTKBIN:$RMHTK/scripts:$RMHTK/python_scripts:$PATH"
+export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/local/cuda/lib64"

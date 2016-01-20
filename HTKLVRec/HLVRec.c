@@ -3,34 +3,34 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Machine Intelligence Laboratory                        */
-/*      Department of Engineering                              */
-/*      University of Cambridge                                */
-/*      http://mi.eng.cam.ac.uk/                               */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2002-2003  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLVRec.h Viterbi recognition engine for       */
-/*                        HTK LV Decoder                       */
+/*  File: HLVRec.h  Viterbi recognition engine for LV decoder  */
 /* ----------------------------------------------------------- */
 
 
-char *hlvrec_version = "!HVER!HLVRec:   3.4.1 [GE 12/03/09]";
-char *hlvrec_vc_id = "$Id: HLVRec.c,v 1.1.1.1 2006/10/11 09:54:56 jal58 Exp $";
+char *hlvrec_version = "!HVER!HLVRec:   3.5.0 [CUED 12/10/15]";
+char *hlvrec_vc_id = "$Id: HLVRec.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 
 #include "HShell.h"
@@ -41,12 +41,13 @@ char *hlvrec_vc_id = "$Id: HLVRec.c,v 1.1.1.1 2006/10/11 09:54:56 jal58 Exp $";
 #include "HAudio.h"
 #include "HParm.h"
 #include "HDict.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h"
 #include "HNet.h"       /* for Lattice -- move to HLattice? */
 #include "HAdapt.h"
 
-#include "config.h"
+#include "lvconfig.h"
 
 #include "HLVNet.h"
 #include "HLVRec.h"
@@ -117,7 +118,6 @@ void InitDecoderInst (DecoderInst *dec, LexNet *net, HTime sampRate, LogFloat be
                       LogFloat insPen, float acScale, float pronScale, float lmScale,
                       LogFloat fastlmlaBeam);
 void CleanDecoderInst (DecoderInst *dec);
-static TokenSet *NewTokSetArray(DecoderInst *dec, int N);
 static TokenSet *NewTokSetArrayVar(DecoderInst *dec, int N, Boolean isSil);
 static LexNodeInst *ActivateNode (DecoderInst *dec, LexNode *ln);
 static void DeactivateNode (DecoderInst *dec, LexNode *ln);
@@ -129,7 +129,6 @@ void ReFormatTranscription(Transcription *trans,HTime frameDur,
                            Boolean killWords,Boolean killModels);
 
 /* HLVRec-propagate.c */
-static int winTok_cmp (const void *v1,const void *v2);
 static void MergeTokSet (DecoderInst *dec, TokenSet *src, TokenSet *dest, 
                          LogFloat score, Boolean prune);
 static void PropagateInternal (DecoderInst *dec, LexNodeInst *inst);
@@ -143,15 +142,12 @@ static void HandleWordend (DecoderInst *dec, LexNode *ln);
 static void UpdateWordEndHyp (DecoderInst *dec, LexNodeInst *inst);
 static void AddPronProbs (DecoderInst *dec, TokenSet *ts, int var);
 void HandleSpSkipLayer (DecoderInst *dec, LexNodeInst *inst);
-void ProcessFrame (DecoderInst *dec, Observation **obsBlock, int nObs,
-                   AdaptXForm *xform);
+void ProcessFrame (DecoderInst *dec, Observation **obsBlock, int nObs, AdaptXForm *xform, int cacheVecIdx); /* cz277 - ANN */
 
 /* HLVRec-LM.c */
 static void UpdateLMlookahead(DecoderInst *dec, LexNode *ln);
 static LMCache *CreateLMCache (DecoderInst *dec, MemHeap *heap);
 static void FreeLMCache (LMCache *cache);
-static void ResetLMCache (LMCache *cache);
-static int LMCacheState_hash (LMState lmstate);
 LMNodeCache* AllocLMNodeCache (LMCache *cache, int lmlaIdx);
 static LMTokScore LMCacheTransProb (DecoderInst *dec, FSLM *lm, 
                                     LMState src, PronId pronid, LMState *dest);
@@ -160,7 +156,6 @@ static LMTokScore LMCacheLookaheadProb (DecoderInst *dec, LMState lmState,
                                         int lmlaIdx, Boolean fastlmla);
 /* HLVRec-traceback.c */
 static void PrintPath (DecoderInst *dec, WordendHyp *we);
-static void PrintTok(DecoderInst *dec, Token *tok);
 static void PrintRelTok(DecoderInst *dec, RelToken *tok);
 static void PrintTokSet (DecoderInst *dec, TokenSet *ts);
 TokenSet *BestTokSet (DecoderInst *dec);
@@ -203,14 +198,13 @@ static void ResetOutPCache (OutPCache *cache);
 static OutPCache *CreateOutPCache (MemHeap *heap, HMMSet *hset, int block);
 LogFloat SOutP_ID_mix_Block(HMMSet *hset, int s, Observation *x, StreamElem *se);
 static LogFloat cOutP (DecoderInst *dec, Observation *x, HLink hmm, int state);
+/* cz277 - ANN */
 void OutPBlock_HMod (StateInfo_lv *si, Observation **obsBlock, 
-                     int n, int sIdx, float acScale, LogFloat *outP, int id);
-
+                     int n, int sIdx, float acScale, LogFloat *outP, int id, DecoderInst *dec);
+void OutPBlock_Hybrid(StateInfo_lv *si, int n, int sIdx, float acScale, LogFloat *outP, DecoderInst *dec);
 
 /* HLVRec-misc.c */
 void CheckTokenSetOrder (DecoderInst *dec, TokenSet *ts);
-static void CheckTokenSetId (DecoderInst *dec, TokenSet *ts1, TokenSet *ts2);
-static WordendHyp *CombinePaths (DecoderInst *dec, RelToken *winner, RelToken *loser, LogFloat diff);
 void Debug_DumpNet (LexNet *net);
 void Debug_Check_Score (DecoderInst *dec);
 void InitPhonePost (DecoderInst *dec);
@@ -282,7 +276,7 @@ DecoderInst *CreateDecoderInst(HMMSet *hset, FSLM *lm, int nTok, Boolean latgen,
                                Boolean modAlign)
 {
    DecoderInst *dec;
-   int i, N;
+   int i, N, s;
    char buf[MAXSTRLEN];
 
    dec = (DecoderInst *) New (&recCHeap, sizeof (DecoderInst));
@@ -322,7 +316,7 @@ DecoderInst *CreateDecoderInst(HMMSet *hset, FSLM *lm, int nTok, Boolean latgen,
                   MHEAP, (i+1) * sizeof (TokenSet), 9, 10, 5000);
    }   
 
-   dec->tempTS = (TokenSet **) New (&dec->heap, N * sizeof (TokenSet *));
+   dec->tempTS = (TokenSet **) New (&dec->heap, (N+1) * sizeof (TokenSet *));
 
 
    /* alloc Heap for RelToken arrays */
@@ -348,7 +342,7 @@ DecoderInst *CreateDecoderInst(HMMSet *hset, FSLM *lm, int nTok, Boolean latgen,
    }
 #else
    if (modAlign)
-      HError (9999, "CreateDecoderInst: model alignment not supported; recompile with MODALIGN");
+      HError (7890, "CreateDecoderInst: model alignment not supported; recompile with MODALIGN");
 #endif
 
    /* output probability cache */
@@ -369,7 +363,6 @@ DecoderInst *CreateDecoderInst(HMMSet *hset, FSLM *lm, int nTok, Boolean latgen,
 
    /*      printf ("i %d  C_G %lu\n", i, CACHE_FLAG_GET(dec,i)); */
 #endif 
-
 
    /* tag left-to-right models */
    {
@@ -392,6 +385,36 @@ DecoderInst *CreateDecoderInst(HMMSet *hset, FSLM *lm, int nTok, Boolean latgen,
       InitPhonePost (dec);
    else
       dec->nPhone = 0;
+
+   /* cz277 - ANN */
+   /* set decodeKind */
+   if (hset->hsKind == HYBRIDHS) {
+      dec->decodeKind = HYBRIDDK;
+   }
+   else if (hset->feaMix[1] != NULL) {
+      dec->decodeKind = TANDEMDK;
+   }
+   else {
+      dec->decodeKind = NORMALDK;
+   }
+   /* set cacheVec[N][S] */
+   N = GetNBatchSamples();
+   dec->cacheVec = (Vector **) New(&dec->heap, sizeof(Vector *) * N);
+   for (i = 0; i < N; ++i) {
+      dec->cacheVec[i] = (Vector *) New(&dec->heap, sizeof(Vector) * (hset->swidth[0] + 1));
+      dec->cacheVec[i][0] = NULL;
+      for (s = 1; s <= hset->swidth[0]; ++s) {
+         if (dec->decodeKind == HYBRIDDK) { /* hybrid models, cache the outputs */
+            dec->cacheVec[i][s] = CreateVector(&dec->heap, hset->annSet->outLayers[s]->nodeNum);
+         }
+         else if (dec->decodeKind == TANDEMDK) {    /* tandem models, cache the features */
+            dec->cacheVec[i][s] = CreateVector(&dec->heap, hset->feaMix[s]->mixDim);
+         }
+         else { /* conventional GMM-HMM models */
+            dec->cacheVec[i][s] = NULL;
+         }
+      }
+   }
 
    return dec;
 }
@@ -558,26 +581,6 @@ void CleanDecoderInst (DecoderInst *dec)
    FreeLMCache (dec->lmCache);
 }
 
-
-/* NewTokSetArray
-
-*/
-static TokenSet *NewTokSetArray(DecoderInst *dec, int N)
-{
-   TokenSet *ts;
-   int i;
-
-   ts= (TokenSet *) New (&dec->tokSetHeap[N-1], N * sizeof (TokenSet));
-
-   /* clear token set */
-   for (i = 0; i < N; ++i) {
-      ts[i].score = 0.0;
-      ts[i].n = 0;
-      ts[i].id = 0;             /* id=0 means empty TokSet */
-      ts[i].relTok = (RelToken *) New (&dec->relTokHeap, dec->nTok * sizeof (RelToken));
-   }
-   return ts;
-}
 
 /* NewTokSetArrayVar:
 
@@ -888,11 +891,5 @@ void ReFormatTranscription(Transcription *trans,HTime frameDur,
 }
 
 
+/* ------------------------ End of HLVRec.c ----------------------- */
 
-
-
-/*  CC-mode style info for emacs
- Local Variables:
- c-file-style: "htk"
- End:
-*/

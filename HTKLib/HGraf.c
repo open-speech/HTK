@@ -3,23 +3,36 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HGraf.X.c:  HGraf for X-Windows               */
+/*             File: HGraf.X.c  HGraf for X-Windows            */
 /* ----------------------------------------------------------- */
 
-char *hgraf_version = "!HVER!HGraf(X):   3.4.1 [CUED 12/03/09]";
+char *hgraf_version = "!HVER!HGraf(X):   3.5.0 [CUED 12/10/15]";
 char *hgraf_vc_id = "$Id: HGraf.c,v 1.1.1.1 2006/10/11 09:54:57 jal58 Exp $";
 
 /*
@@ -176,11 +189,10 @@ static void InstallFonts(void)
 static void DecodeKeyPress(XKeyEvent *xkev, HEventRec *hev)
 {
    char buf[20];
-   int n;
    KeySym key;
    XComposeStatus compose;
    
-   n = XLookupString(xkev,buf,20,&key,&compose);
+   XLookupString(xkev,buf,20,&key,&compose);
    hev->c = buf[0];
    switch (key) {
    case XK_Shift_L:
@@ -218,7 +230,7 @@ HEventRec HGetEvent(Boolean anyEvent, void (*action)(void))
 {
    XEvent xev;
    HEventRec hev;
-   Boolean found,dummy;
+   Boolean found;
 
    XFlush(theDisp); found = FALSE;
    do {
@@ -269,7 +281,7 @@ HEventRec HGetEvent(Boolean anyEvent, void (*action)(void))
          XFlush(theDisp);
          /* execute a round-robin command to make sure that */
          /* client doesnt get too far ahead of the server */
-         dummy = HMousePos(&hev.x,&hev.y);
+         HMousePos(&hev.x,&hev.y);
       }
    } while (!found);
    return hev; 

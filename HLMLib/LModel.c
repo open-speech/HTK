@@ -3,34 +3,37 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/* main authors: Valtcho Valtchev, Steve Young,                */
-/*               Julian Odell, Gareth Moore                    */
+/* main authors:                                               */
+/*           Valtcho Valtchev, Steve Young,                    */
+/*           Julian Odell, Gareth Moore                        */
+/*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*                                                             */
-/*          1994-2002 Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            1994-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*      File: LModel:    ARPA style LM handling                */
+/*           File: LModel    ARPA style LM handling            */
 /* ----------------------------------------------------------- */
 
 
-char *lmodel_version = "!HVER!LModel:   3.4.1 [CUED 12/03/09]";
+char *lmodel_version = "!HVER!LModel:   3.5.0 [CUED 12/10/15]";
 char *lmodel_vc_id = "$Id: LModel.c,v 1.1.1.1 2006/10/11 09:54:43 jal58 Exp $";
 
 
@@ -796,7 +799,7 @@ static int LoadNGram(Source *src, int nSize, BackOffLM *lm, int *itran)
    LM_Id ndx=0;
    NGramInfo *gi;
    LMProbType ptype;
-   Byte fsize, flags;
+   Byte flags;
    SMEntry *se=NULL;
    FLEntry *feptr=NULL, *fe=NULL;
    float prob,bowt,scale;
@@ -828,7 +831,6 @@ static int LoadNGram(Source *src, int nSize, BackOffLM *lm, int *itran)
    for (i=0; i<lm->gInfo[nSize].nEntry; i++) {
       has_bowt = FALSE; hasOOV = FALSE;
       if (isBin) {  /* binary model */
-	 fsize = (Byte) GetCh(src);
 	 flags = (Byte) GetCh(src);
 	 READ_FLOAT(src,&prob,TRUE);
 	 for (j=0; j<nSize; j++) {
@@ -942,9 +944,9 @@ static int LoadNGram(Source *src, int nSize, BackOffLM *lm, int *itran)
       }
    */
    if (trace&T_LOAD) {
-      printf("  SMEntry: %8d x %2d bytes = %d bytes\n",
+      printf("  SMEntry: %8d x %2ld bytes = %ld bytes\n",
 	     num_se, sizeof(SMEntry), num_se*sizeof(SMEntry));
-      printf("  FLEntry: %8d x %2d bytes = %d bytes\n",
+      printf("  FLEntry: %8d x %2ld bytes = %ld bytes\n",
 	     num_fe, sizeof(FLEntry), num_fe*sizeof(FLEntry));
    }
    lm->gInfo[0].nEntry+=num_fe;
@@ -1186,7 +1188,7 @@ static void ReadClassCounts(Source *src, int nWords, BackOffLM *lm)
 
       nid2 = GetNameId(lm->htab, ptr, TRUE); /* Get name id of class */
       class_id = atoi(ptr+5) - 1; /* assume called CLASSn */ /* GLM */
-      nid2->ptr = (void*) class_id;
+      nid2->ptr = (void*) (unsigned long int)class_id;
 
       ptr = ptr2 + 1; /* Pass over NULL */
       ptr += strspn(ptr, " \t"); /* Skip over whitespace */
@@ -1242,7 +1244,7 @@ static void CountClassTotals(BackOffLM *lm)
       word_id = ((WordProb*)(lm->classBM[i+1]->ptr))->id;
       if (word_id!=i) HError(15490, "CountClassTotals: Inconsistent word ids found");
 
-      class_id = (int)(((WordProb*)(lm->classBM[i+1]->ptr))->class->ptr);
+      class_id = (int)(unsigned long int)(((WordProb*)(lm->classBM[i+1]->ptr))->class->ptr);
       lm->totals[class_id] += lm->word[i];
    }
 }
@@ -1257,7 +1259,7 @@ static void CalcWordClassProbs(BackOffLM *lm)
 
    /* For each word */
    for (i=0; i<lm->classW; i++) {
-      class_id = (int)(((WordProb*)(lm->classBM[i+1]->ptr))->class->ptr);
+      class_id = (int)(unsigned long int)(((WordProb*)(lm->classBM[i+1]->ptr))->class->ptr);
       prob = (((double)(lm->word[i]))) / ((double)(lm->totals[class_id]));
       ((WordProb*)(lm->classBM[i+1]->ptr))->prob = LOG_NATURAL(prob);
    }

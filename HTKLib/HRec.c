@@ -3,24 +3,40 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HRec.c  Viterbi Recognition Engine Library    */
+/*       File: HRec.c  Viterbi recognition engine library      */
 /* ----------------------------------------------------------- */
 
-char *hrec_version = "!HVER!HRec:   3.4.1 [CUED 12/03/09]";
-char *hrec_vc_id = "$Id: HRec.c,v 1.1.1.1 2006/10/11 09:54:58 jal58 Exp $";
+char *hrec_version = "!HVER!HRec:   3.5.0 [CUED 12/10/15]";
+char *hrec_vc_id = "$Id: HRec.c,v 1.2 2015/10/12 12:07:24 cx277 Exp $";
 
 #include "HShell.h"
 #include "HMem.h"
@@ -29,6 +45,7 @@ char *hrec_vc_id = "$Id: HRec.c,v 1.1.1.1 2006/10/11 09:54:58 jal58 Exp $";
 #include "HAudio.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HDict.h"
 #include "HNet.h"
@@ -446,7 +463,7 @@ static LogFloat cSOutP(HMMSet *hset, int s, Observation *x, StreamElem *se,
    TMixRec *tr;
    TMProb *tm;
    Vector v,tv;
-   
+
    switch (hset->hsKind){
    case PLAINHS:
    case SHAREDHS:
@@ -502,6 +519,12 @@ static LogFloat cSOutP(HMMSet *hset, int s, Observation *x, StreamElem *se,
       for (m=1; m<=tr->topM; m++,tm++)
          sum += tm->prob * tv[tm->index];
       return (sum>=MINLARG)?log(sum)+tr->maxP:LZERO;
+   /* cz277 - ANN */
+   case HYBRIDHS:
+      v = x->fv[s];
+      /*bx = v[se->targetIdx] + se->targetPen;*/
+      bx = v[se->targetIdx];
+      return bx;
    default: HError(7071,"SOutP: bad hsKind %d\n",hset->hsKind);
    }
    return LZERO; /* to keep compiler happy */   
@@ -1517,7 +1540,7 @@ static void LatFromPaths(Path *path,int *ln,Lattice *lat)
    NxtPath tmp,*pth;
    Align *align,*al,*pr;
    MLink ml;
-   LabId labid,splabid,labpr = NULL;
+   LabId labid = NULL,splabid,labpr = NULL;
    char buf[80];
    int i,frame;
    double prlk,dur,like,wp;
@@ -1597,7 +1620,9 @@ static void LatFromPaths(Path *path,int *ln,Lattice *lat)
             if (al->state<0) {
                if (pr==NULL) {
                   pr=al;
-                  labpr=ml->id;
+                  /* sxz20 */
+                  labpr = (al->node->labid == NULL)? ml->id: al->node->labid;
+                  /*labpr=ml->id;*/
                   continue;
                }
                if (labpr==NULL)
@@ -1606,13 +1631,16 @@ static void LatFromPaths(Path *path,int *ln,Lattice *lat)
                like=pr->like-al->like;
                pr=al;
                labid=labpr;
-               labpr=ml->id;
+               /* sxz20 */
+               labpr = (al->node->labid == NULL)? ml->id: al->node->labid;
+               /*labpr=ml->id;*/
             }
             else {
                if (pri->models)
                   sprintf(buf,"s%d",al->state);
                else
-                  sprintf(buf,"%s[%d]",ml->id->name,al->state);
+                  sprintf(buf, "%s[%d]", (al->node->labid == NULL)? ml->id->name: al->node->labid->name, al->state);	/* sxz20 */
+                  /*sprintf(buf,"%s[%d]",ml->id->name,al->state);*/
                labid=GetLabId(buf,TRUE);
                dur=(frame-al->frame)*lat->framedur,
                   like=like-al->like;

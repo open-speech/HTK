@@ -1,0 +1,17 @@
+                 RAWMITFORMAT  =              TRUE
+                 OUTCMAPRAW    =              TRUE
+                 INCMAPRAW     =              TRUE
+                 OUTWMAPRAW    =              TRUE
+                 INWMAPRAW     =              TRUE
+LPCALC:          TRACE         =                 3
+LCMAP:           UNKNOWNNAME   =             !!UNK
+LCMAP:           UNKNOWNID     =                 1
+                 LGRAMOFILTER  =  'gzip -c > $.gz'
+                 LGRAMFILTER   =  'gunzip -c $'
+                 HLANGMODOFILTER = 'gzip -c > $.gz'
+                 HLANGMODFILTER  = 'gunzip -c $.gz'
+                 LMTEXTFILTER  = 'gunzip -c $'
+                 LCMAPOFILTER  = 'gzip -c > $.gz'
+                 LCMAPFILTER   = 'gunzip -c $.gz'
+                 LWMAPFILTER   = 'gunzip -c $.gz'
+                 LWMAPOFILTER  = 'gzip -c > $.gz'

@@ -1,0 +1,135 @@
+#!/bin/tcsh
+#$ -S /bin/tcsh
+
+#set verbose
+
+# Layer-by-layer discriminative DNN pre-training
+set ALLARGS = ($*)
+set HNFORWARD = HNForward
+set HHED = HHEd
+set CHANGED
+while ($?CHANGED)
+    unset CHANGED
+    if ("$argv[1]" == "-HNFORWARD") then
+        set CHANGED
+        shift argv
+        set HNFORWARDCMD = $argv[1]
+        shift argv
+    endif
+    if ("$argv[1]" == "-HHED") then
+        set CHANGED
+        shift argv
+        set HHEDCMD = $argv[1]
+        shift argv
+    endif
+    if ("$argv[1]" == "-LIB") then
+        set CHANGED
+        shift argv
+        set LIBCMD = $argv[1]
+        shift argv
+    endif
+end
+
+if ($#argv != 2) then
+    echo "Usage: $0 [-HNFORWARD path] [-HHED path] [-LIB path] DNNenv TaskID"
+    echo "-HNFORWARD path: use a specified HNTrainSGD binary"
+    echo "-HHED path: use a specified HHEd binary"
+    echo "-LIB path: CUDA/MKL library path for GPU/MKL computing"
+    exit 1
+endif
+
+
+set DNNENV = $argv[1]
+set TASKID = $argv[2]
+if (! -f $DNNENV) then
+   echo "ERROR: cannot find environment file $DNNENV"
+   exit 1
+endif
+# Read the environment file
+source $DNNENV
+if ($?LIBCMD) then 
+    set LIB = $LIBCMD
+endif
+if ($?LIB) then
+    setenv LD_LIBRARY_PATH ${LIB}:${LD_LIBRARY_PATH}
+endif
+if ($?HNFORWARDCMD) then
+    set HNFORWARD = $HNFORWARDCMD
+endif
+if ($?HHEDCMD) then
+    set HHED = $HHEDCMD
+endif
+
+# parse DNNSTRUCTURE
+if (! $?DNNSTRUCTURE) then
+    echo "ERROR: environment variable DNNSTRUCTURE is missing"
+    exit 100
+endif
+# get layer sizes
+set lsizes = `echo $DNNSTRUCTURE | awk 'BEGIN{FS="X"}{for (i=1; i<=NF; i++) print $i}'`
+set lnum = $#lsizes
+if ($lnum < 3) then
+    echo "ERROR: at least need to be 3 layer MLP"
+endif
+
+# generate the model for forwarding
+if (! -f dnn.forward/NMF) then
+    if ( ! -d dnn.original) then
+        mkdir dnn.original
+    endif
+    if ( ! -f dnn.original/NMF) then
+        $HHED -A -D -V -T 1 -H dnn${lnum}.finetune/MODELS -n dnn.original/NMF /dev/null treeg.list > dnn.original/LOG
+    endif
+    if (! -d dnn.forward) then
+        mkdir dnn.forward
+    endif
+    if (! -f dnn.original/NMF) then
+        echo "ERROR: original model must be put at dnn.original/NMF"
+    endif
+    # find the bottleneck layer and remove the top layers
+    set hedfile = "dnn.forward/forward.hed"
+    @ var = $lnum - 1
+    while ($var > 2)
+        @ next = $var + 1
+        @ prev = $var - 1
+        if ($next == $lnum) then
+            echo 'DL ~L "layerout"' > $hedfile
+        else
+            echo 'DL ~L "layer'$next'"' >> $hedfile
+        endif
+        if ($lsizes[$var] < $lsizes[$prev] && $lsizes[$var] < $lsizes[$next]) then
+            echo 'CA ~L "layer'$var'" <ACTIVATION> LINEAR' >> $hedfile
+            break
+        endif
+        @ var = $var - 1
+    end
+    $HHED -A -D -V -T 1 -H dnn.original/NMF -M dnn.forward ${hedfile} /dev/null > dnn.forward/LOG
+endif
+
+# generate config.dnn.fwd
+echo 'HANNET: TRACE = 1' > config.dnn.fwd
+echo 'HNCACHE: TRACE = 1' >> config.dnn.fwd
+echo 'HNCACHE: DATAACCESSKIND = ORIGINAL' >> config.dnn.fwd
+echo 'HNCACHE: DATACACHESIZE = 200000000' >> config.dnn.fwd
+echo 'HANNET: MINIBATCHSIZE = 4000' >> config.dnn.fwd
+echo 'HNFORWARD: TRACE = 1' >> config.dnn.fwd
+
+if (! -f ${TASKID}.scp) then
+    echo "ERROR: ${TASKID}.scp does not exist"
+endif
+if (! -f ${TASKID}.mlp.scp) then
+    echo "ERROR: ${TASKID}.mlp.scp does not exist"
+endif
+
+# for -J
+set OPTJstr = ""
+if ($?OPTJXFORM) then
+    while ($#OPTJXFORM > 0)
+        set OPTJstr = "$OPTJstr -J $OPTJXFORM[1]"
+        shift OPTJXFORM
+    end
+endif
+
+$HNFORWARD -A -D -V -T 1 -C config.dnnbasic -C config.dnn.fwd -H dnn.forward/NMF -S ${TASKID}.scp -N ${TASKID}.mlp.scp /dev/null > dnn.forward/LOG.${TASKID}
+
+

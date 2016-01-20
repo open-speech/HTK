@@ -1,0 +1,35 @@
+#---------------------------------------------------------------#
+# HTK RM Environment File                05/09/15               #
+#                                                               #
+# This version is for:                                          #
+#                                                               #
+#   HTE.dnn.mpe - MPE DNN-HMMs training                         #
+#   for  hybrid systems                                         #
+#                                                               #
+#---------------------------------------------------------------#
+
+set MINIBATCHSIZE=1500					# mini-batch size, if the length of an utterance
+							# is bigger than this number, it is skipped 
+set DATACACHESIZE=200000000				# maximum num of cached samples (a virtual num)
+                                                        # better shuffling when more samples cached
+                                                        # saves reloading cost when all samples cached
+set SHUFFLEKIND=QUICKNET				# data shuffling method
+set LEARNRATEKIND=LIST					# use LIST learning rate scheduler for MPE
+set LEARNRATEVALS=0.002,0.002				# using fixed learning rate for 2 epochs
+set NORMLEARNRATE=FALSE					# set TRUE to normalise the learning rates 
+							# accirdubg to the utterance lengths
+
+set PROBSCALE=1.0					# scale the state output & LM probabilities
+set LATPROBSCALE=0.20000				# for HDecode.mod phone lattices, 
+							# LATPROBSCALE = 1.0/"-s", "-s" is the grammar 
+							# scaling factor in lattice generation
+set INSCORRECTNESS=-1.0					# to penalise the ins errors, -1.0 by default
+set MOMENTUM=0.0					# momentum for MPE, to use with NORMLEARNRATE
+set NORMMOMENTUM=FALSE					# set TRUE to norm momentum by utterance length
+set WEIGHTDECAY=0.0					# MPE l2 regulariser, to use with NORMWEIGHTDECAY
+set NORMWEIGHTDECAY=FALSE				# set TRUE to norm l2 factor by utterance length
+
+
+#---------------------------------------------------------------#
+#                 End of Environment definition                 #
+#---------------------------------------------------------------#

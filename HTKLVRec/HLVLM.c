@@ -3,31 +3,32 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Machine Intelligence Laboratory                        */
-/*      Department of Engineering                              */
-/*      University of Cambridge                                */
-/*      http://mi.eng.cam.ac.uk/                               */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2002-2003  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLVLM.c Language model for HTK LV Decoder     */
+/*       File: HLVLM.c  Language model for HTK LV decoder      */
 /* ----------------------------------------------------------- */
 
-char *hlvlm_version = "!HVER!HLVLM:   3.4.1 [GE 12/03/09]";
+char *hlvlm_version = "!HVER!HLVLM:   3.5.0 [GE 12/10/15]";
 char *hlvlm_vc_id = "$Id: HLVLM.c,v 1.1.1.1 2006/10/11 09:54:55 jal58 Exp $";
 
 #include "HShell.h"
@@ -38,10 +39,11 @@ char *hlvlm_vc_id = "$Id: HLVLM.c,v 1.1.1.1 2006/10/11 09:54:55 jal58 Exp $";
 #include "HDict.h"
 #include "HAudio.h"
 #include "HParm.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HNet.h"
 
-#include "config.h"
+#include "lvconfig.h"
 
 /* #include "HLM.h" */
 #include "HLVLM.h"
@@ -97,7 +99,7 @@ void InitLVLM (void)
 
 #ifdef LM_NGRAM_INT
    if (sizeof (SEntry) != 4)
-      HError (9999, "strange size of SEntry structures (%d)", sizeof (SEntry));
+      HError (7690, "strange size of SEntry structures (%d)", sizeof (SEntry));
 #endif
 }
 
@@ -118,7 +120,7 @@ static LogFloat GetProb(Source *src, Boolean bin)
 
    if (!ReadFloat (src, &prob, 1, bin)) {
       char buf[MAXSTRLEN];
-      HError (8113, "ReadARPAngram: failed reading lm prob at %s", 
+      HError (7613, "ReadARPAngram: failed reading lm prob at %s", 
               SrcPosition (*src, buf));
    }
 #if 0   /* find global minimum prob/bowt for quantization */
@@ -142,12 +144,12 @@ static void GetLMWord (Source *src, char *buf, Boolean raw)
 {
    if (raw) {
       if (!ReadRawString (src, buf))
-         HError (8113, "ReadARPAngram: failed reading lm word at %s",
+         HError (7613, "ReadARPAngram: failed reading lm word at %s",
                  SrcPosition (*src, buf));
    }
    else
       if (!ReadString (src, buf))
-         HError (8113, "ReadARPAngram: failed reading lm word at %s",
+         HError (7613, "ReadARPAngram: failed reading lm word at %s",
                  SrcPosition (*src, buf));
 }
 
@@ -160,7 +162,7 @@ static void GetLMWord (Source *src, char *buf, Boolean raw)
 static LMId UnigramLMIdMapper(FSLM_ngram *nglm, char *w)
 {
    LMId id;
-   static int idCounter = 0;
+   static unsigned long int idCounter = 0;
    LabId labId;
    Word word;
 
@@ -169,17 +171,17 @@ static LMId UnigramLMIdMapper(FSLM_ngram *nglm, char *w)
    ++idCounter;
    if (labId) {
       if (labId->aux)
-         HError ( 8150, "ReadARPAunigram: Duplicate word (%s) in 1-gram list",
+         HError ( 7620, "ReadARPAunigram: Duplicate word (%s) in 1-gram list",
                   labId->name);
 
       word = GetWord (nglm->vocab, labId, FALSE);
       if (!word) {
-         HError (-9999, "ReadARPAunigram: unknown Word '%s' found in LM -- ignored\n", w);
+         HError (-7621, "ReadARPAunigram: unknown Word '%s' found in LM -- ignored\n", w);
          id = 0;
          labId = NULL;
       }
       else {
-         labId->aux = (Ptr) (int) idCounter;
+         labId->aux = (Ptr)idCounter;
          id = idCounter;
       }
    }
@@ -208,12 +210,12 @@ static LMId LMIdMapper(FSLM_ngram *nglm, char *w)
    if (!wdId) {
       /* warning only for non OOV symbols */
       if (strcmp(w, "!!UNK")!=0 && strcmp(w,"<unk>")!=0) {
-      HError (-8100, "ReadARPAngram: unseen word '%s' in ngram", w);
+      HError (-7621, "ReadARPAngram: unseen word '%s' in ngram", w);
       }
       return 0;
    }
    
-   return ((int) wdId->aux);
+   return ((int)(unsigned long int)wdId->aux);
 }
 
 /* se_cmp
@@ -237,14 +239,14 @@ static void GetLMEntry (FSLM_ngram *nglm, Source *src, Boolean bin, int n, LMId 
                         LMId word2lmid(FSLM_ngram *, char*), 
                         LogFloat *prob, Boolean *hasBO, LogFloat *bo, Boolean *hasUNK)
 {
-   unsigned char size, flags;
+   unsigned char flags;
    char buf[MAXSTRLEN];
    int i;
    unsigned short us;
    unsigned int ui;
    
    if (bin) {
-      size = GetCh (src);
+      GetCh (src);
       flags = GetCh (src);
    }
    
@@ -256,13 +258,13 @@ static void GetLMEntry (FSLM_ngram *nglm, Source *src, Boolean bin, int n, LMId 
       if (bin) {
          if (flags & BIN_ARPA_INT_LMID) {
             if (!ReadInt (src, (int *) &ui, 1, bin))
-               HError (8113, "ReadARPAngram: failed reading int lm word id at %s",
+               HError (7613, "ReadARPAngram: failed reading int lm word id at %s",
                        SrcPosition (*src, buf));
             ndx[n-i-1] = (LMId) ui;
          }
          else {
             if (!ReadShort (src, (short *) &us, 1, bin))
-               HError (8113, "ReadARPAngram: failed reading short lm word id at %s",
+               HError (7613, "ReadARPAngram: failed reading short lm word id at %s",
                        SrcPosition (*src, buf));
             ndx[n-i-1] = (LMId) us;
          }
@@ -316,7 +318,7 @@ static void ReadARPAngram (FSLM_ngram *nglm, Source *lmSrc, int n, int count, Bo
    int i;
    LMId ndx[NSIZE+1];
    NEntry *ne, *le = NULL;
-   SEntry *tmpSE, *curtmpSE;
+   SEntry *tmpSE, *curtmpSE=NULL;
    int ntmpSE = 0;
    LMId (*word2lmid)(FSLM_ngram *, char *);
    Word word;
@@ -352,7 +354,7 @@ static void ReadARPAngram (FSLM_ngram *nglm, Source *lmSrc, int n, int count, Bo
          word = nglm->wordlist[ndx[0]];
          if (word) {
             for (pron = word->pron; pron; pron = pron->next) {
-               pronid = (PronId) (int) pron->aux;
+	      pronid = (PronId) (unsigned long int)pron->aux;
                nglm->unigrams[pronid] = FLOAT_TO_NGLM_PROB(prob);
                /* #### add pron prob here */
                
@@ -361,7 +363,7 @@ static void ReadARPAngram (FSLM_ngram *nglm, Source *lmSrc, int n, int count, Bo
             }
          }
          else {         /* skip unigram if word not in vocab */
-            HError (9999, "ReadARPAngram: unigram: unknown word '%s' found in LM\n", 
+            HError (7621, "ReadARPAngram: unigram: unknown word '%s' found in LM\n", 
                     nglm->lablist[ndx[0]]->name);
             continue;
          }
@@ -369,10 +371,10 @@ static void ReadARPAngram (FSLM_ngram *nglm, Source *lmSrc, int n, int count, Bo
 
       ne = GetNEntry (nglm,  ndx+1, FALSE);
       if (ne == NULL)
-         HError(8150,"ReadNGrams: Backoff weight not seen for %dth %dGram", i, n);
+         HError(7622,"ReadNGrams: Backoff weight not seen for %dth %dGram", i, n);
       if (ne!=le) {
          if (le != NULL && ne->se != NULL)
-            HError(8150,"ReadNGrams: %dth %dGrams out of order", i, n);
+            HError(7623,"ReadNGrams: %dth %dGrams out of order", i, n);
          if (le) {
             if (ntmpSE == 0) {
                abort ();
@@ -399,10 +401,10 @@ static void ReadARPAngram (FSLM_ngram *nglm, Source *lmSrc, int n, int count, Bo
       /* #### map to PronIds */
       word = nglm->wordlist[ndx[0]];
       if (!word)
-         HError (9999, "ReadARPAngram: unknown word LMid %d\n", ndx[0]);
+         HError (7622, "ReadARPAngram: unknown word LMid %d\n", ndx[0]);
             
       for (pron = word->pron; pron; pron = pron->next) {
-         pronid = (PronId) (int) pron->aux;
+         pronid = (PronId) (unsigned long int) pron->aux;
 
          if (pronid > 0) {
             assert (ntmpSE <= vocab->nprons);
@@ -468,7 +470,7 @@ FSLM *ReadARPALM(MemHeap *heap, char *lmfn, Vocab *vocab)
    int nng[NSIZE+1];  /* number of ngrams */
 
    if (InitSource (lmfn, &lmSrc, LangModFilter) < SUCCESS)
-      HError (8113, "ReadARPALM: Cannot open lm file '%s'", lmfn);
+      HError (7613, "ReadARPALM: Cannot open lm file '%s'", lmfn);
 
    ReadUntilLine (&lmSrc, "\\data\\");
    
@@ -480,7 +482,7 @@ FSLM *ReadARPALM(MemHeap *heap, char *lmfn, Vocab *vocab)
       ++n;
       sprintf (fmt, "ngram %d%%c%%d", n);
       if (sscanf (buf, fmt, &ngFmtCh, &nng[n]) != 2)
-         HError (8113, "ReadARPALM: error parsing LM");
+         HError (7613, "ReadARPALM: error parsing LM");
 
       switch (ngFmtCh) {
       case '=':
@@ -490,12 +492,12 @@ FSLM *ReadARPALM(MemHeap *heap, char *lmfn, Vocab *vocab)
          ngBin[n] = TRUE;
          break;
       default:
-         HError (8113, "ReadARPALM: unknown ngram format type '%c'", ngFmtCh);
+         HError (7613, "ReadARPALM: unknown ngram format type '%c'", ngFmtCh);
       }
    }
 
    if (ngBin[1])
-      HError (8113, "ReadARPALM: unigram must be stored as text");
+      HError (7613, "ReadARPALM: unigram must be stored as text");
 
    /* alloc LM structure 
       # stolen from HLM -- fix! */
@@ -535,21 +537,21 @@ void SetStartEnd (FSLM *lm, char *startWord, char *endWord, Vocab *vocab)
    /* find start and end Ids in LM */
    startLabId = GetLabId (startWord, FALSE);
    if (!startLabId)
-      HError (9999, "HLVLM: cannot find STARTWORD '%s'\n", startWord);
+      HError (7624, "HLVLM: cannot find STARTWORD '%s'\n", startWord);
    word = GetWord (vocab, startLabId, FALSE);
    if (!word)
-      HError (9999, "HLVLM: cannot find STARTWORD '%s' in dict\n", startWord);
+      HError (7624, "HLVLM: cannot find STARTWORD '%s' in dict\n", startWord);
 
-   lm->startPronId = (PronId) (int) word->pron->aux;
+   lm->startPronId = (PronId) (unsigned long int) word->pron->aux;
 
    endLabId = GetLabId (endWord, FALSE);
    if (!endLabId)
-      HError (9999, "HLVLM: cannot find ENDWORD '%s'\n", endWord);
+      HError (7624, "HLVLM: cannot find ENDWORD '%s'\n", endWord);
    word = GetWord (vocab, endLabId, FALSE);
    if (!word)
-      HError (9999, "HLVLM: cannot find ENDWORD '%s' in dict\n", endWord);
+      HError (7624, "HLVLM: cannot find ENDWORD '%s' in dict\n", endWord);
 
-   lm->endPronId = (LMId) (int) word->pron->aux;
+   lm->endPronId = (LMId) (unsigned long int) word->pron->aux;
 }
 
 /* CreateLM
@@ -654,7 +656,7 @@ FSLM *CreateLMfromLat (MemHeap *heap, char *latfn, Lattice *lat, Vocab *vocab)
          for (la = ln->foll; la; la = la->farc) {
             for (pron = la->end->word->pron; pron; pron = pron->next) {
                if (pron->aux > 0) {
-                  fslmla[p].word = (PronId) (int) pron->aux;
+                  fslmla[p].word = (PronId) (unsigned long int) pron->aux;
                   fslmla[p].prob = la->lmlike;  /* #### add pron prob here? */
                   /*      fslmla[p].dest = &latlm->fslmln[(la->end - lat->lnodes)]; */
                   if (!la->end->foll ||  (la->end->foll->end->word == vocab->nullWord &&
@@ -683,7 +685,7 @@ FSLM *CreateLMfromLat (MemHeap *heap, char *latfn, Lattice *lat, Vocab *vocab)
             for (j = 1; j < fslmln->nfoll; ++j) {
                if (fslmln->foll[j-1].word == fslmln->foll[j].word
                    && fslmln->foll[j-1].prob != fslmln->foll[j].prob )
-                  HError (9999, "CreateLMfromLat: lattice is not deterministic: [%s -> %s : %f] and [%s -> %s : %f]", 
+                  HError (7625, "CreateLMfromLat: lattice is not deterministic: [%s -> %s : %f] and [%s -> %s : %f]", 
                           fslmln->word->wordName->name, fslmln->foll[j-1].dest->word->wordName->name, 
                           fslmln->foll[j-1].prob,
                           fslmln->word->wordName->name, fslmln->foll[j].dest->word->wordName->name, 
@@ -693,18 +695,18 @@ FSLM *CreateLMfromLat (MemHeap *heap, char *latfn, Lattice *lat, Vocab *vocab)
 #endif
          if (!ln->pred) {
             if (lmstart)
-               HError (9999, "CreateLMfromLat: lattice has multiple start nodes");
+               HError (7625, "CreateLMfromLat: lattice has multiple start nodes");
             lmstart = fslmln;
          }
          if (!ln->foll) {
             if (lnend)
-               HError (9999, "CreateLMfromLat: lattice has multiple end nodes");
+               HError (7625, "CreateLMfromLat: lattice has multiple end nodes");
             lnend = ln;
          }
       }
 
       if (!lmstart)
-         HError (9999, "CreateLMfromLat: lattice has no start node");
+         HError (7625, "CreateLMfromLat: lattice has no start node");
 
       lm->initial = (LMState) lmstart;
 
@@ -790,7 +792,7 @@ LogFloat LMTransProb_ngram (FSLM *lm, LMState src, PronId pronid, LMState *dest)
    nglm = lm->data.nglm;
 
    if (pronid == 0 || pronid > nglm->vocSize) {
-      HError (9999, "pron %d not in LM wordlist", pronid);
+      HError (7626, "pron %d not in LM wordlist", pronid);
       *dest = NULL;
       return (LZERO);
    }
@@ -934,7 +936,7 @@ SEntry *FindMinSEntry (SEntry *se, int nse, PronId minPron)
 */
 static SEntry *FindMinSEntryP (SEntry *low, SEntry *hi, PronId minPron)
 {
-  SEntry *mid;
+  SEntry *mid=NULL;
 
   if (minPron > hi->word)
     return NULL;
@@ -949,6 +951,7 @@ static SEntry *FindMinSEntryP (SEntry *low, SEntry *hi, PronId minPron)
       hi = mid - 1;
   }
 
+  if(mid==NULL) HError(7626,"failed to find entry");
   if (mid->word >= minPron)
     return mid;
   else 
@@ -1044,7 +1047,7 @@ LogFloat LMLookAhead_2gram (FSLM *lm, LMState src, PronId minPron, PronId maxPro
 LogFloat LMLookAhead_3gram (FSLM *lm, LMState src, PronId minPron, PronId maxPron)
 {
    NEntry *ne_tg, *ne_bg;
-   SEntry *se_tg, *seLast_tg, *se_bg, *seLast_bg;
+   SEntry *se_tg, *seLast_tg, *se_bg, *seLast_bg=NULL;
    PronId p, pend;
    NGLM_Prob *unigrams;
    NGLM_Prob maxScore = NGLM_PROB_LZERO;
@@ -1511,7 +1514,7 @@ FSLM_ngram *CreateBoNGram (MemHeap *heap, int vocSize, int counts[NSIZE])
 
 FSLM_LatArc *FindMinLatArc (FSLM_LatArc *low, FSLM_LatArc *hi, PronId minPron)
 {
-   FSLM_LatArc *mid;
+   FSLM_LatArc *mid=NULL;
 
    if (minPron > hi->word)
       return NULL;
@@ -1525,7 +1528,8 @@ FSLM_LatArc *FindMinLatArc (FSLM_LatArc *low, FSLM_LatArc *hi, PronId minPron)
       else
          hi = mid - 1;
    }
-   
+
+   if(mid==NULL) HError(7626,"failed to find entry");
    if (mid->word >= minPron)
       return mid;
    else 
@@ -1557,11 +1561,8 @@ FSLM_LatArc *FindLatArc (FSLM_LatArc *low, FSLM_LatArc *hi, PronId pronId)
 LogFloat LMTransProb_latlm (FSLM *lm, LMState src,
                             PronId pronid, LMState *dest)
 {
-   FSLM_latlm *latlm;
    FSLM_LatNode *ln;
    FSLM_LatArc *la;
-
-   latlm = lm->data.latlm;
 
    ln = (FSLM_LatNode *) src;
 
@@ -1588,12 +1589,10 @@ LogFloat LMTransProb_latlm (FSLM *lm, LMState src,
 LogFloat LMLookAhead_latlm (FSLM *lm, LMState src, 
                             PronId minPron, PronId maxPron)
 {
-   FSLM_latlm *latlm;
    FSLM_LatNode *ln;
    FSLM_LatArc *la, *laLast;
    LogFloat maxScore;
 
-   latlm = lm->data.latlm;
    ln = (FSLM_LatNode *) src;
    maxScore = LZERO;
    
@@ -1637,9 +1636,5 @@ void Debug_Check_LMhashtab(FSLM_ngram *nglm)
    }
 }
 
+/* ------------------------ End of HLVLM.c ----------------------- */
 
-/*  CC-mode style info for emacs
- Local Variables:
- c-file-style: "htk"
- End:
-*/

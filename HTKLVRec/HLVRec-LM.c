@@ -3,30 +3,34 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Machine Intelligence Laboratory                        */
-/*      Department of Engineering                              */
-/*      University of Cambridge                                */
-/*      http://mi.eng.cam.ac.uk/                               */
+/*           Machine Intelligence Laboratory                   */
+/*           Department of Engineering                         */
+/*           University of Cambridge                           */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2002-2003  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2002-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HLVRec-LM.c Update LM lookahead for           */
-/*                           HTK LV Decoder                    */
+/*  File: HLVRec-LM.c  Update LM lookahead for HTK LV decoder  */
 /* ----------------------------------------------------------- */
+
+char *hlvrec_lm_version = "!HVER!HLVRec-LM:   3.5.0 [CUED 12/10/15]";
+char *hlvrec_lm_vc_id = "$Id: HLVRec-LM.c,v 1.1.1.1 2006/10/11 09:54:55 jal58 Exp $";
+
 
 /* UpdateLMlookahead
 
@@ -134,18 +138,6 @@ static void FreeLMCache (LMCache *cache)
    DeleteHeap (&cache->nodeHeap);
 }
 
-static void ResetLMCache (LMCache *cache)
-{
-   int i;
-   
-   ResetHeap (&cache->nodeHeap);
-   for (i = 0; i < cache->nNode; ++i)
-      cache->node[i] = NULL;
-
-   cache->transHit = cache->transMiss = 0;
-   cache->laHit = cache->laMiss = 0;
-}
-
 #if 0
 static void CacheLMLAprob (DecoderInst *dec, LMState lmState, int lmlaIdx, 
                            int hash, LMTokScore lmscore)
@@ -163,10 +155,6 @@ static void CacheLMLAprob (DecoderInst *dec, LMState lmState, int lmlaIdx,
 }
 #endif
 
-static int LMCacheState_hash (LMState lmstate)
-{
-   return ((unsigned int) lmstate % LMCACHE_NLA);
-}
 
 #if 0
 static int LMCacheTrans_hash (PronId pron)
@@ -366,4 +354,6 @@ static LMTokScore LMCacheLookaheadProb (DecoderInst *dec, LMState lmState,
    /*    printf ("lmla %f\n", lmscore); */
    return lmscore;
 }
+
+/* ------------------------ End of HLVRec-LM.c ----------------------- */
 

@@ -32,7 +32,7 @@
 
 char *hmmirest_version = "!HVER!HMMIRest:   3.4.1 [CUED 12/03/09]";
 char *hmmirest_vc_id = "$Id: HMMIRest.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $";
-
+char *toolname = "HMMIRest";/*ar527: for error reporting*/
 
 #include "HShell.h"     /* HMM ToolKit Modules */
 #include "HMem.h"
@@ -43,6 +43,7 @@ char *hmmirest_vc_id = "$Id: HMMIRest.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp 
 #include "HVQ.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HTrain.h"
 #include "HUtil.h"
@@ -307,14 +308,14 @@ void SetConfParms(void)
          if (!strcmp (buf, "DUMP")) updateMode = UPMODE_DUMP;
          else if (!strcmp (buf, "UPDATE")) updateMode = UPMODE_UPDATE;
          else if (!strcmp (buf, "BOTH")) updateMode = UPMODE_BOTH;
-         else HError(2319, "Unknown UPDATEMODE specified (must be DUMP, UPDATE or BOTH)");
+         else HError(2719, "%s: Unknown UPDATEMODE specified (must be DUMP, UPDATE or BOTH)",toolname);
       }
 
    }
 
-   if (MPE && uFlagsMLE) HError(1, "Can't combine MPE with ML update of some parameters (code could be simply added).");
-   if (MMIPrior && !THREEACCS) HError(999, "MMI Prior must be used in MPE update (THREEACCS).");
-   if ((STATICPRIOR && PriorK==0.0) || (!STATICPRIOR && PriorK==1.0)) HError(999, "Specify either PRIORK or STATICPRIOR (PRIORK overwrites value given by STATICPRIOR).");
+   if (MPE && uFlagsMLE) HError(2740, "%s: Can't combine MPE with ML update of some parameters (code could be simply added).",toolname);
+   if (MMIPrior && !THREEACCS) HError(2719, "%s: MMI Prior must be used in MPE update (THREEACCS).",toolname);
+   if ((STATICPRIOR && PriorK==0.0) || (!STATICPRIOR && PriorK==1.0)) HError(2719, "%s: Specify either PRIORK or STATICPRIOR (PRIORK overwrites value given by STATICPRIOR).",toolname);
    /*   if(ISmoothTau && !ISmoothTauTransSet){ ISmoothTauTrans = 10; printf("Smoothing transitions with tau=%f since ISMOOTHTAUT not set\n",ISmoothTauTrans); }
         if(ISmoothTau && !ISmoothTauWeightsSet){ ISmoothTauTrans = 10; printf("Smoothing weights with tau=%f since ISMOOTHTAUW not set\n",ISmoothTauWeights); } */
 }
@@ -381,6 +382,9 @@ int main(int argc, char *argv[])
    char datafn1[MAXSTRLEN], *datafn, *datafn2, *s,  latfn[MAXSTRLEN], datafn_lat[MAXFNAMELEN];
    Lattice *denLats[MAXLATS], *numLats[MAXLATS]; int latn;
    int maxSnt=0;
+   Boolean ldBinary=TRUE;/*replaces global in <= V3.4.1 HEREST variable; default value is the same as in HTRAIN*/
+   /* from mjfg, cz277 - 141022 */
+   Boolean sentFail=FALSE;
 
    void Initialise(char *hmmListFn);
    void UpdateModels(void);
@@ -400,9 +404,9 @@ int main(int argc, char *argv[])
    InitWave();
    InitVQ();
    InitModel();
-   if(InitParm()<SUCCESS)    HError(1/*was 2300*/,"HMMIRest: InitParm failed");
+   if(InitParm()<SUCCESS) HError(2700,"%s: InitParm failed",toolname);
    InitLabel();
-   InitTrain();
+   InitTrain(); ldBinary=LoadDumpAccBinary();
    InitUtil();
    InitFBLat();
    InitExactMPE();
@@ -410,7 +414,10 @@ int main(int argc, char *argv[])
    InitDict();
    InitLat();
    InitNet();
-   InitAdapt(&xfInfo); 
+   /* cz277 - xform */
+   /*InitAdapt(&xfInfo);*/
+   InitAdapt();
+   InitXFInfo(&xfInfo);
 
    if (!InfoPrinted() && NumArgs() == 0)
       ReportUsage();
@@ -425,7 +432,7 @@ int main(int argc, char *argv[])
       case 'd':
         if(!strcmp(s, "d")){
           if (NextArg()!=STRINGARG)
-            HError(2319,"HMMIRest: HMM definition directory expected"); 
+            HError(2719,"%s: HMM definition directory expected",toolname);
           hmmDir = GetStrArg(); 
         } else if(!strcmp(s, "dprior")){ 
           if(!hset_prior_initialised){
@@ -433,7 +440,7 @@ int main(int argc, char *argv[])
             CreateHMMSet(&hset_prior,&hmmStack,TRUE);
           }
           hset_prior_dir = GetStrArg();
-        } else HError(1, "Unknown option %s",s);
+        } else HError(2719, "%s: Unknown option %s",s,toolname);
         break;   
 
       case 'g': ML_MODE=TRUE; THREEACCS=FALSE;/*This is the option used during re-estimation when we are only using one set of accs.*/
@@ -443,7 +450,7 @@ int main(int argc, char *argv[])
          maxSnt = GetChkedInt(0,1000,s); break;
       case 'o':
          if (NextArg()!=STRINGARG)
-            HError(2319,"HMMIRest: HMM file extension expected");
+	   HError(2719,"%s: HMM file extension expected",toolname);
          newExt = GetStrArg(); break;
       case 'p':
          parMode = GetChkedInt(0,500,s);    break; 
@@ -453,9 +460,9 @@ int main(int argc, char *argv[])
          else if (!strcmp(s, "qp")){
             strcpy(numLatSubDirPat, GetStrArg());
             if (strchr(numLatSubDirPat,'%')==NULL)
-               HError(2319,"HMMIRest: Numerator path mask invalid");
+	      HError(2719,"%s: Numerator path mask invalid",toolname);
          }
-         else HError(1, "Unknown option %s",s);
+         else HError(2719, "%s: Unknown option %s",toolname,s);
          break;
       case 'r':
          if (!strcmp(s, "r"))
@@ -463,21 +470,21 @@ int main(int argc, char *argv[])
          else if (!strcmp(s, "rp")){
             strcpy(denLatSubDirPat,GetStrArg());
             if (strchr(denLatSubDirPat,'%')==NULL)
-               HError(2319,"HMMIRest: Denominator path mask invalid");
+	      HError(2719,"%s: Denominator path mask invalid",toolname);
          }
-         else HError(1, "Unknown option %s",s);
+         else HError(2719, "%s: Unknown option %s",toolname,s);
          break; 
       case 's':
          stats = TRUE;
          if (NextArg()!=STRINGARG)
-            HError(2319,"HMMIRest: Stats file name expected");
+	   HError(2719,"%s: Stats file name expected",toolname);
          statFN = GetStrArg(); break;
       case 't':
          if (!strcmp(s, "three"))
             THREEACCS=TRUE;
          else if (!strcmp(s, "twodatafiles"))
             twoDataFiles = TRUE;
-         else HError(1, "Unknown option %s",s);
+         else HError(2719,"%s: Unknown option %s",toolname,s);
          break;
       case 'u':
          if(!strcmp(s, "u"))
@@ -485,32 +492,32 @@ int main(int argc, char *argv[])
          else if(!strcmp(s, "umle")){
             SetuFlags(&uFlagsMLE);
             if(uFlagsMLE&UPMEANS && !(uFlagsMLE&UPVARS)){
-               HError(-1, "Updating means with MLE but note that the formula used to get the value of the smoothing.. ");
-               HError(-1, "constant D still uses discriminative mean estimate.  This is a minor issue in practice since most");
-               HError(-1, "of the constants D are set to the denominator occupancy times E.  But be aware..." );
+	      HError(-2740, "%s: Updating means with MLE but note that the formula used to get the value of the smoothing.. ",toolname);
+	      HError(-2740, "%s: constant D still uses discriminative mean estimate.  This is a minor issue in practice since most",toolname);
+	      HError(-2740, "%s: of the constants D are set to the denominator occupancy times E.  But be aware...",toolname);
             }
          }
-         else HError(1, "Unrecognised -u option %s", s);
+         else HError(2719, "%s: Unrecognised -u option %s", toolname, s);
          break;
       case 'v':
          minVar = GetChkedFlt(0.0,10.0,s); break;
       case 'w':
          if(!strcmp(s, "w"))
             mixWeightFloor = MINMIX * GetChkedFlt(0.0,10000.0,s); 
-         else HError(1, "Unrecognised -w option %s", s);
+         else HError(2719, "%s: Unrecognised -w option %s", toolname, s);
          break;
       case 'x':
          if (NextArg()!=STRINGARG)
-            HError(2319,"HMMIRest: HMM file extension expected");
+	   HError(2719,"%s: HMM file extension expected",toolname);
          hmmExt = GetStrArg(); break;
       case 'y':  /*This is never used-- back-compat. */
          if (NextArg() != STRINGARG)
-            HError(1, "HMMIRest: -y expects filename.");
+	   HError(2719, "%s: -y expects filename.",toolname);
          dictFN = GetStrArg(); 
          break;
       case 'z':
          if (NextArg() != STRINGARG)
-            HError(2319,"HMMIRest: output TMF file expected");
+	   HError(2719,"%s: output TMF file expected",toolname);
          xfInfo.xformTMF = GetStrArg(); 
          break;
       case 'B':
@@ -518,13 +525,13 @@ int main(int argc, char *argv[])
          break;
       case 'F':
          if (NextArg() != STRINGARG)
-            HError(2319,"HMMIRest: Data File format expected");
+	   HError(2719,"%s: Data File format expected",toolname);
          if((dff = Str2Format(GetStrArg())) == ALIEN)
-            HError(-2389,"HMMIRest: Warning ALIEN Data file format set");
+	   HError(-2789,"%s: Warning ALIEN Data file format set",toolname);
          break;
       case 'H':
          if (NextArg() != STRINGARG)
-            HError(2319,"HMMIRest: HMM macro file name expected");
+	   HError(2719,"%s: HMM macro file name expected",toolname);
          if(!strcmp(s,"H")){
            char *x = GetStrArg();
             AddMMF(&hset,x);
@@ -534,21 +541,21 @@ int main(int argc, char *argv[])
              CreateHMMSet(&hset_prior,&hmmStack,TRUE);
            }
            AddMMF(&hset_prior, GetStrArg());
-         } else HError(1, "Unknown option %s", s);
+         } else HError(2719, "%s: Unknown option %s", toolname, s);
          break;            
       case 'I':
          if (NextArg() != STRINGARG)
-            HError(2319,"HMMIRest: MLF file name expected");
+	   HError(2719,"%s: MLF file name expected",toolname);
          LoadMasterFile(GetStrArg());
          break;
       case 'M':
          if (NextArg()!=STRINGARG)
-            HError(2319,"HMMIRest: Output macro file directory expected");
+	   HError(2719,"%s: Output macro file directory expected",toolname);
          newDir = GetStrArg();
          break;            
       case 'Q':
          if (NextArg()!=STRINGARG)
-            HError(2319,"HMMIRest: -Q: Lattice extension expected");
+	   HError(2719,"%s: -Q: Lattice extension expected",toolname);
          latExt = GetStrArg();
          break;
       case 'T':
@@ -559,51 +566,50 @@ int main(int argc, char *argv[])
         xfInfo.useInXForm = TRUE; break;
       case 'h':
         if (NextArg()!=STRINGARG)
-          HError(1,"Speaker name pattern expected");
+          HError(2719,"%s: Speaker name pattern expected",toolname);
         xfInfo.outSpkrPat = GetStrArg();
         if (NextArg() != SWITCHARG)
-          HError(2319,"HERest: cannot have -h as the last option");
+          HError(2719,"%s: cannot have -h as the last option",toolname);
         break;
       case 'E':
          if (NextArg()!=STRINGARG)
-            HError(2319,"HMMIRest: parent transform directory expected");
+	   HError(2719,"%s: parent transform directory expected",toolname);
          xfInfo.usePaXForm = TRUE;
          xfInfo.paXFormDir = GetStrArg();
          if (NextArg()==STRINGARG)
            xfInfo.paXFormExt = GetStrArg();
          if (NextArg() != SWITCHARG)
-           HError(2319,"HMMIRest: cannot have -E as the last option");
+           HError(2719,"%s: cannot have -E as the last option",toolname);
          break;
       case 'J':
          if (NextArg()!=STRINGARG)
-            HError(2319,"HMMIRest: input transform directory expected");
+	   HError(2719,"%s: input transform directory expected",toolname);
          AddInXFormDir(&hset,GetStrArg());
          if (NextArg()==STRINGARG)
            xfInfo.inXFormExt = GetStrArg();
          if (NextArg() != SWITCHARG)
-           HError(2319,"HMMIRest: cannot have -J as the last option");
+           HError(2719,"%s: cannot have -J as the last option",toolname);
          break;
       case 'K':
          if (NextArg()!=STRINGARG)
-            HError(2319,"HMMIRest: output transform directory expected");
+	   HError(2719,"%s: output transform directory expected",toolname);
          xfInfo.outXFormDir = GetStrArg();
          if (NextArg()==STRINGARG)
            xfInfo.outXFormExt = GetStrArg();
          if (NextArg() != SWITCHARG)
-           HError(2319,"HMMIRest: cannot have -K as the last option");
+           HError(2719,"%s: cannot have -K as the last option",toolname);
          break;
       default:
-         HError(2319,"HMMIRest: Unknown switch %s",s);
+         HError(2719,"%s: Unknown switch %s",toolname);
       }
    } /*matches while(NextArg() == SWITCHARG)*/
-
 
    InitVocab(&vocab); /* The actual dict is not needed, only the structure; this relates to HNet and reading lattices. */
 
    if (NextArg() != STRINGARG)
-      HError(2319,"HMMIRest: file name of hmm list expected");
+     HError(2719,"%s: file name of hmm list expected",toolname);
    Initialise(GetStrArg()); /*GetStrArg() will return the hmmList.*/
-   
+
    do { 
       char *accfn;
       if(parMode == 0){  /*The default is -1.  0 means gather together the parallel files.*/
@@ -611,22 +617,22 @@ int main(int argc, char *argv[])
          /*check no of files:*/
          if(THREEACCS && MMIPrior){   
             if((NumArgs() % 4) != 0)
-               HError(1, "HMMIRest: nAccs should divide into 4 for MPE with MMI Prior");
+	      HError(2719, "%s: nAccs should divide into 4 for MPE with MMI Prior",toolname);
          } else if(THREEACCS){
             if((NumArgs() % 3) != 0)
-               HError(1, "HMMIRest: nAccs should divide into 3 for MEE&&MPEStoreML");
+	      HError(2719, "%s: nAccs should divide into 3 for MEE&&MPEStoreML",toolname);
          } else if (!ML_MODE && (NumArgs() % 2) != 0)/*need an even number because .1 and .2 files.*/
-            HError(2319,"HMMIRest: Odd num of training files for single pass training");
+	   HError(2719,"%s: Odd num of training files for single pass training",toolname);
        
          accfn = GetStrArg(); 
 
          /* Load first accumulator file (.1) */
 
          /* Warn if it is not a .acc.1 file */
-         if(!strstr(accfn,".acc.1")) HError(-1, "Expecting a *.acc.1 file, got %s", accfn);
+         if(!strstr(accfn,".acc.1")) HError(-2719, "%s: Expecting a *.acc.1 file, got %s", toolname,accfn);
          src=LoadAccsParallel(&hset, accfn,  uFlagsAccs, 0);   /*src is the still-open file.*/
-         ReadFloat(&src,&x,1,TRUE);    /*x is the average log prob (MPE->avg correctness) */
-         ReadInt(&src,&i,1,TRUE);      /* i the number of timeperiods (MPE->num correct words).*/
+         ReadFloat(&src,&x,1,ldBinary);    /*x is the average log prob (MPE->avg correctness) */
+         ReadInt(&src,&i,1,ldBinary);      /* i the number of timeperiods (MPE->num correct words).*/
          CloseSource( &src );
        
          if(!MPE){ totalPr1 += x*i;  totalT += i; }
@@ -636,11 +642,11 @@ int main(int argc, char *argv[])
        
          if(!ML_MODE){                   /* ..Then load MMI acc. */
             accfn = GetStrArg();
-            if(!strstr(accfn,".acc.2")) HError(-1, "Expecting a *.acc.2 file, got %s", accfn);
+            if(!strstr(accfn,".acc.2")) HError(-2719, "%s: Expecting a *.acc.2 file, got %s", toolname, accfn);
             src=LoadAccsParallel(&hset, accfn,  uFlagsAccs, 1); 
 	 
-            ReadFloat(&src,&x,1,TRUE); /*!x must be the average log prob*/
-            ReadInt(&src,&i,1,TRUE); /*!and i the number of timeperiods.*/
+            ReadFloat(&src,&x,1,ldBinary); /*!x must be the average log prob*/
+            ReadInt(&src,&i,1,ldBinary); /*!and i the number of timeperiods.*/
             CloseSource( &src );
 	 
             /*pr2 contains the MMI stats.*/
@@ -651,11 +657,11 @@ int main(int argc, char *argv[])
        
          if(THREEACCS){             /* (MPE case). */
             accfn = GetStrArg();
-            if(!strstr(accfn, ".3")) HError(1, "Error, expecting a HDR?.acc.3 file, got %s", accfn);
+            if(!strstr(accfn, ".3")) HError(2719, "%s: Error, expecting a HDR?.acc.3 file, got %s", toolname,accfn);
             src=LoadAccsParallel(&hset, accfn, uFlagsAccs, 2/*third position(1st==0) of hset*/); /*src is the still-open file.*/
 	 
-            ReadFloat(&src,&x,1,TRUE); /*!x must be the average log prob*/
-            ReadInt(&src,&i,1,TRUE); /*!and i the number of timeperiods.*/
+            ReadFloat(&src,&x,1,ldBinary); /*!x must be the average log prob*/
+            ReadInt(&src,&i,1,ldBinary); /*!and i the number of timeperiods.*/
             CloseSource( &src );
 	 
             totalPr1 += x*i;  totalT += i; 
@@ -665,11 +671,11 @@ int main(int argc, char *argv[])
          
          if(MMIPrior){             /* (MPE case). */
             accfn = GetStrArg();
-            if(!strstr(accfn, ".4")) HError(1, "Error, expecting a HDR?.acc.4 file, got %s", accfn);
+            if(!strstr(accfn, ".4")) HError(2719, "%s: Error, expecting a HDR?.acc.4 file, got %s", toolname,accfn);
             src=LoadAccsParallel(&hset, accfn, uFlagsAccs, 3/*fourth position(1st==0) of hset*/); /*src is the still-open file.*/
             
-            ReadFloat(&src,&x,1,TRUE); /*!x must be the average log prob*/
-            ReadInt(&src,&i,1,TRUE); /*!and i the number of timeperiods.*/
+            ReadFloat(&src,&x,1,ldBinary); /*!x must be the average log prob*/
+            ReadInt(&src,&i,1,ldBinary); /*!and i the number of timeperiods.*/
             CloseSource( &src );
             
             /*pr3 contains the MMI stats.*/
@@ -680,14 +686,14 @@ int main(int argc, char *argv[])
          Boolean isPipe;
        
          if(NextArg() != STRINGARG)
-            HError(2319,"HERest: data file name expected");
+	   HError(2719,"%s: data file name expected",toolname);
        
          if ( maxSnt != 0  && nSnt>maxSnt ) GetStrArg(); /*Pass over file. */
          else {   /* apply F-B.  */
 
             if (twoDataFiles){
                if ((NumArgs() % 2) != 0)
-                  HError(2319,"HERest: Odd num of training files for single pass training");
+		 HError(2719,"%s: Odd num of training files for single pass training",toolname);
                strcpy(datafn1,GetStrArg());
                datafn = datafn1;   datafn2 = GetStrArg();
             } else {
@@ -703,7 +709,7 @@ int main(int argc, char *argv[])
                this can be used to discard extra info (various cluster IDs, etc) */
             if (latFileMask) {
                if (!MaskMatch (latFileMask, datafn_lat, datafn))
-                  HError(2319,"HERest: LATFILEMASK %s has no match with segemnt %s", latFileMask, datafn);
+		 HError(2719,"%s: LATFILEMASK %s has no match with segemnt %s", toolname, latFileMask, datafn);
             }
             else
                strcpy (datafn_lat, datafn);
@@ -713,14 +719,14 @@ int main(int argc, char *argv[])
                for(latn = 0; latn<nDenLats;latn++){
                   if ( denLatSubDirPat[0] ){
                      if ( !MaskMatch( denLatSubDirPat , buf1 , datafn_lat ) )
-                        HError(2319,"HERest: mask %s has no match with segemnt %s" , denLatSubDirPat , datafn_lat );
+		       HError(2719,"%s: mask %s has no match with segemnt %s" , toolname, denLatSubDirPat , datafn_lat );
                      MakeFN(buf1,denLatDir[latn],NULL,buf2);
                   }
                   else
                      strcpy(buf2,denLatDir[latn]);
                   if ( LatMask_Denominator != NULL ){
                      if ( !MaskMatch( LatMask_Denominator , buf1 , datafn_lat ) )
-                        HError(2319,"HERest: mask %s has no match with segemnt %s" , LatMask_Denominator , datafn_lat );
+		       HError(2719,"%s: mask %s has no match with segemnt %s" , toolname, LatMask_Denominator , datafn_lat );
                      MakeFN(buf1,buf2,NULL,buf3);
                      strcpy (buf2, buf3);
                   }
@@ -732,7 +738,7 @@ int main(int argc, char *argv[])
                   else {
                      MakeFN(datafn_lat,buf2,latExt,latfn);
                      f = FOpen(latfn, NetFilter, &isPipe);
-                     if(!f) HError(1, "Couldn't open file %s\n", latfn);
+                     if(!f) HError(2710, "%s: Couldn't open file %s\n", toolname, latfn);
                      printf("Reading lattice from file: %s\n", latfn); fflush(stdout);
                      denLats[latn] = ReadLattice(f, &latStack, &vocab, FALSE/*shortArc*/, TRUE/*add2Dict*/);
                      FClose(f, isPipe);
@@ -745,14 +751,14 @@ int main(int argc, char *argv[])
                for(latn=0;latn<nNumLats;latn++){
                   if ( numLatSubDirPat[0] ){
                      if ( !MaskMatch( numLatSubDirPat , buf1 , datafn_lat ) )
-                        HError(2319,"HERest: mask %s has no match with segemnt %s" , numLatSubDirPat , datafn_lat );
+		       HError(2719,"%s: mask %s has no match with segemnt %s" , toolname, numLatSubDirPat , datafn_lat );
                      MakeFN(buf1,numLatDir[latn],NULL,buf2);
                   }
                   else
                      strcpy(buf2,numLatDir[latn]);
                   if ( LatMask_Numerator != NULL ){
                      if ( !MaskMatch( LatMask_Numerator , buf1 , datafn_lat ) )
-                        HError(2319,"HERest: mask %s has no match with segemnt %s" , LatMask_Numerator , datafn_lat );
+		       HError(2719,"%s: mask %s has no match with segemnt %s" , toolname, LatMask_Numerator , datafn_lat );
                      MakeFN(buf1,buf2,NULL,buf3);
                      strcpy (buf2, buf3);
                   }
@@ -764,7 +770,7 @@ int main(int argc, char *argv[])
                   else {
                      MakeFN(datafn_lat,buf2,latExt,latfn);
                      f = FOpen(latfn, NetFilter, &isPipe);
-                     if(!f)  HError(1, "Couldn't open file %s\n", latfn);
+                     if(!f)  HError(2710, "%s: Couldn't open file %s\n", toolname, latfn);
                      numLats[latn] = ReadLattice(f, &latStack, &vocab, FALSE/*shortArc*/, TRUE/*add2Dict*/);
                      FClose(f, isPipe);
                   }
@@ -783,20 +789,25 @@ int main(int argc, char *argv[])
                RecogIndex2 = MPE ? 1 : 999;  /* If MPE then the second of the indices when aligning the recognition lat is the "den" acc,
                                                 where arcs with negative differentials go.  If not MPE then it's a don't-care, and never read. */
 
-               if(DoCorrectSentence && !nNumLats)  HError(-1, "No correct-transcription lattices specified so , use -q option.");
-               if(DoRecogLattice && !nDenLats) HError(1, "No recognition lattices specified, use -r option.");
+               if(DoCorrectSentence && !nNumLats)  HError(-2719, "%s: No correct-transcription lattices specified so , use -q option.",toolname);
+               if(DoRecogLattice && !nDenLats) HError(2719, "%s: No recognition lattices specified, use -r option.",toolname);
            
-
+	       /* from mjfg, cz277 - 141022 */
                if(DoCorrectSentence){
                   int i; 
                   for(i=0;i<nNumLats;i++) FBLatAddLattice(&fbInfo, numLats[i]);
-                  FBLatFirstPass(&fbInfo, dff, datafn, datafn2, NULL/*MPE-related*/);
-                  FBLatSecondPass(&fbInfo, CorrIndex, 999/*dont-care*/);
-                  totalT += fbInfo.T;
-                  totalPr1 += fbInfo.pr;
+                  if (FBLatFirstPass(&fbInfo, dff, datafn, datafn2, NULL/*MPE-related*/)) {
+                      FBLatSecondPass(&fbInfo, CorrIndex, 999/*dont-care*/);
+                      totalT += fbInfo.T;
+                      totalPr1 += fbInfo.pr;
+                      sentFail = FALSE;
+                  }
+                  else {
+                      sentFail = TRUE;
+                  }
                }
-
-               if(DoRecogLattice){
+               /* from mjfg, cz277 - 141022 */
+               if((DoRecogLattice) && (!sentFail)){
                   int i,j; 
                   for(i=0;i<nDenLats;i++) FBLatAddLattice(&fbInfo, denLats[i]);
                   for(i=0;i<nNumLats;i++){
@@ -805,17 +816,19 @@ int main(int argc, char *argv[])
                      if(UseLat){ if(trace&T_TOP) printf("[+num]");  FBLatAddLattice(&fbInfo, numLats[i]); }
                   }
                   if(MMIPrior) SetDoingFourthAcc(TRUE,3);
-                  FBLatFirstPass(&fbInfo, dff, datafn, datafn2, MPE ? numLats[0] : NULL); 
-                  /* MPE only uses one of the num lats, if there are multiple ones (unlikely anyway) */
-                  FBLatSecondPass(&fbInfo, RecogIndex1, RecogIndex2);
-                  if(MMIPrior){   
-                     SetDoingFourthAcc(FALSE,999);
-                     totalPr3 += fbInfo.pr;
-                  }
+                  /* from mjfg, cz277 - 141022 */
+                  if (FBLatFirstPass(&fbInfo, dff, datafn, datafn2, MPE ? numLats[0] : NULL)) { 
+                      /* MPE only uses one of the num lats, if there are multiple ones (unlikely anyway) */
+                      FBLatSecondPass(&fbInfo, RecogIndex1, RecogIndex2);
+                      if(MMIPrior){   
+                          SetDoingFourthAcc(FALSE,999);
+                          totalPr3 += fbInfo.pr;
+                      }
              
-                  if(!DoCorrectSentence) totalT += fbInfo.T;
-                  totalPr2 += fbInfo.pr;
-                  if(MPE){  TotalNWords += fbInfo.MPEFileLength; TotalCorr += fbInfo.AvgCorr; }
+                      if(!DoCorrectSentence) totalT += fbInfo.T;
+                      totalPr2 += fbInfo.pr;
+                      if(MPE){  TotalNWords += fbInfo.MPEFileLength; TotalCorr += fbInfo.AvgCorr; }
+                   }
                }
 
                nSnt++;
@@ -826,18 +839,17 @@ int main(int argc, char *argv[])
       } /*[parMode]*/
    } while (NumArgs()>0);
    
-   
    if (parMode>0 || (parMode==0 && (updateMode&UPMODE_DUMP))){
       MakeFN("HDR$.acc.1",newDir,NULL,newFn);
       f=DumpAccsParallel(&hset,newFn,parMode, uFlagsAccs, 0);
       if(MPE){ /* .1 acc contains the MPE crit at the end. */
          x = TotalCorr/TotalNWords;
-         WriteFloat(f, &x, 1, TRUE);
-         WriteInt(f, &TotalNWords, 1, TRUE);
+         WriteFloat(f, &x, 1, ldBinary);
+         WriteInt(f, &TotalNWords, 1, ldBinary);
       }  else {
          x = totalPr1/totalT;
-         WriteFloat(f,&x,1,TRUE); 
-         WriteInt(f,&totalT,1,TRUE);
+         WriteFloat(f,&x,1,ldBinary); 
+         WriteInt(f,&totalT,1,ldBinary);
       }
       fclose( f );
 
@@ -845,8 +857,8 @@ int main(int argc, char *argv[])
          MakeFN("HDR$.acc.2",newDir,NULL,newFn);
          f=DumpAccsParallel(&hset,newFn,parMode, uFlagsAccs, 1);
          x = totalPr2/totalT; /*MMI den prob in either MMI or MPE case.*/
-         WriteFloat(f,&x,1,TRUE);
-         WriteInt(f,&totalT,1,TRUE);
+         WriteFloat(f,&x,1,ldBinary);
+         WriteInt(f,&totalT,1,ldBinary);
          fclose( f );
       }
 
@@ -855,8 +867,8 @@ int main(int argc, char *argv[])
          f=DumpAccsParallel(&hset,newFn,parMode, uFlagsAccs,2/*3rd position (numbered 2) on hset1(during alignment);*/);
 	   
          x = totalPr1/totalT; /* This is where the MLE prob is stored. */
-         WriteFloat(f, &x, 1, TRUE);
-         WriteInt(f, &totalT, 1, TRUE);
+         WriteFloat(f, &x, 1, ldBinary);
+         WriteInt(f, &totalT, 1, ldBinary);
          fclose( f );
       }
 
@@ -865,8 +877,8 @@ int main(int argc, char *argv[])
          f=DumpAccsParallel(&hset,newFn,parMode, uFlagsAccs, 3/*4th position (numbered 3) on hset1(during alignment);*/);
 
          x = totalPr3/totalT; /* This is where the MMI den prob is stored. */
-         WriteFloat(f, &x, 1, TRUE);
-         WriteInt(f, &totalT, 1, TRUE);
+         WriteFloat(f, &x, 1, ldBinary);
+         WriteInt(f, &totalT, 1, ldBinary);
          fclose( f );
       }
      
@@ -884,6 +896,7 @@ int main(int argc, char *argv[])
       if (updateMode&UPMODE_UPDATE)
         UpdateModels(); 
    }
+
    Exit(EXITSTATUS);
    return (0);          /* keep compiler happy */
 }
@@ -897,7 +910,6 @@ void Initialise(char *hmmListFn)
    CreateHeap(&transStack,   "transStore",    MSTAK, 1, 0.5, 1000,  10000);
    CreateHeap(&accStack,   "accStore",    MSTAK, 1, 1.0, 50000,  500000);
    CreateHeap(&latStack,"latStore", MSTAK, 1, 1.0, 50000, 500000);
-
 
    /* Load HMMs and init HMMSet related global variables */
    MakeHMMSet( &hset, hmmListFn );
@@ -920,7 +932,6 @@ void Initialise(char *hmmListFn)
       ZeroAccsParallel(&hset, uFlagsAccs, NumAccs); 
    }
    
-
    P = hset.numPhyHMM;
    L = hset.numLogHMM;
    vSize = hset.vecSize;
@@ -929,12 +940,12 @@ void Initialise(char *hmmListFn)
    hsKind = hset.hsKind;
 
    if(S > 1)
-      HError(-1, "HMMIRest: Code is intended to support multiple streams but code has not been debugged.  Be warned!");
+     HError(-2740, "%s: Code is intended to support multiple streams but code has not been debugged.  Be warned!",toolname);
    /*Check that hset is the right kind.*/
    if(!(hsKind == PLAINHS || hsKind == SHAREDHS || hsKind == TIEDHS))
-      HError(1, "HMMIRest: hset kind not PLAIN or SHARED or TIED.");
+     HError(2730, "%s: hset kind not PLAIN or SHARED or TIED.",toolname);
    if((!(hset.ckind == NULLC)) && (!(hset.ckind == DIAGC)))
-      HError(1, "HMMIRest: cov kind not DIAGC.");
+     HError(2724, "%s: cov kind not DIAGC.",toolname);
    
    /* Additional code for the adaptation updates */
    /*!Deleted*/
@@ -943,7 +954,6 @@ void Initialise(char *hmmListFn)
    InitialiseFBInfo(&fbInfo, &hset,   uFlags|(uFlags&UPMEANS||uFlags&UPVARS ? UPMEANS|UPVARS : 0), twoDataFiles);
    /*That modification to uFlags means: if either mean or var is updated, accumulate both.*/
  
-
    /* Set the variance floor */
    SetVFloor( &hset, vFloor, minVar); /*This sets the array minVar up... but it only works if
                                         minimum variances have been set within the hmmset (e.g,
@@ -959,7 +969,7 @@ void Initialise(char *hmmListFn)
         if (xfInfo.inSpkrPat == NULL) xfInfo.inSpkrPat = xfInfo.outSpkrPat;
         if (xfInfo.paSpkrPat == NULL) xfInfo.paSpkrPat = xfInfo.outSpkrPat;
         if (uFlags != UPXFORM)
-          HError(999,"Can only update linear transforms OR model parameters!");
+          HError(2719,"%s: Can only update linear transforms OR model parameters!",toolname);
         xfInfo.useOutXForm = TRUE;
         /* This initialises things - temporary hack - THINK!! */
         CreateAdaptXForm(&hset, "tmp"); 
@@ -1019,14 +1029,14 @@ void StatReport(void) /*This is used by other programs so I have had to change i
    int px;
 
    if ((f = fopen(statFN,"w")) == NULL){
-      HError(2311,"StatReport: Unable to open stats file %s",statFN);
+     HError(2711,"%s:StatReport: Unable to open stats file %s",toolname,statFN);
       return;
    }
    NewHMMScan(&hset,&hss);
    px=1;
    do {
       hmm = hss.hmm;
-      PrintStats(f,px,hmm,(int)hmm->hook);
+      PrintStats(f,px,hmm,(int)(unsigned long int)hmm->hook);
       px++;
    } while (GoNextHMM(&hss));
    EndHMMScan(&hss);
@@ -1060,9 +1070,9 @@ void FloorMixes(MixtureElem *mixes, int M, float floor)
       }
       nWeight++;
    }
-   if (fsum>1.0) HError(2327,"FloorMixes: Floor sum too large");
+   if (fsum>1.0) HError(2727,"%s:FloorMixes: Floor sum too large",toolname);
    if (fsum == 0.0) return; /*all >= floor*/
-   if (sum == 0.0) HError(2328,"FloorMixes: No mixture weights above floor");
+   if (sum == 0.0) HError(2728,"%s:FloorMixes: No mixture weights above floor", toolname);
    /*all <= floor*/
 
    scale = (1.0-fsum)/sum; /*fsum is the sum of floor * (no of vals <= floor), sum is sum of >= floor.*/
@@ -1089,9 +1099,9 @@ void FloorTMMixes(Vector mixes, int M, float floor)
       }
       nWeight++;
    }
-   if (fsum>1.0) HError(2327,"FloorTMMixes: Floor sum too large");
+   if (fsum>1.0) HError(2727,"%s:FloorTMMixes: Floor sum too large",toolname);
    if (fsum == 0.0) return;
-   if (sum == 0.0) HError(2328,"FloorTMMixes: No mixture weights above floor");
+   if (sum == 0.0) HError(2728,"%s:FloorTMMixes: No mixture weights above floor",toolname);
    scale = (1.0-fsum)/sum;
 
    for (m=1; m<=M; m++){
@@ -1117,9 +1127,9 @@ void FloorDProbs(ShortVec mixes, int M, float floor)
          mixes[m] = DProb2Short(floor);
       }
    }
-   if (fsum>1.0) HError(2327,"FloorDProbs: Floor sum too large");
+   if (fsum>1.0) HError(2727,"%s:FloorDProbs: Floor sum too large",toolname);
    if (fsum == 0.0) return;
-   if (sum == 0.0) HError(2328,"FloorDProbs: No probabilities above floor");
+   if (sum == 0.0) HError(2728,"%s:FloorDProbs: No probabilities above floor",toolname);
    scale = (1.0-fsum)/sum;
    for (m=1; m<=M; m++){
       fltWt = Short2DProb(mixes[m]);
@@ -1167,7 +1177,6 @@ void UpdateTrans(int px, HLink hmm)
    Vector NewWghts = CreateVector(&gstack, N);
    Vector OldWghts = CreateVector(&gstack, N);
 
-   
    ta1 = GetHook(hmm->transP);
    ta2 = (ML_MODE?NULL:ta1+1);
    ta3 = (THREEACCS?ta1+2:NULL); /*non-NULL in MPE case, where it is the ML accs. */
@@ -1183,7 +1192,7 @@ void UpdateTrans(int px, HLink hmm)
          UpdateWeightsOrTrans(N, ta1->tran[i], ta2?ta2->tran[i]:NULL, NewWghts, OldWghts, CTrans);
          for(j=1;j<=N;j++) 
            if(NewWghts[i] == 0 && OldWghts[i] != 0)
-             HError(-1, "Transitions going to zero: advise setting e.g. ISMOOTHTAUT = 10 ");
+             HError(-2790, "%s: Transitions going to zero: advise setting e.g. ISMOOTHTAUT = 10 ",toolname);
          for(j=1;j<=N;j++)
             hmm->transP[i][j]=(NewWghts[j]>0.0?log(NewWghts[j]):LZERO);
       }
@@ -1217,7 +1226,7 @@ float GiveDimMixD(MixPDF *mp, int k, int priortype){
       va1=GetHook(mp->cov.var);
       va2=va1+1;
    } else
-      HError(999,"GiveMixD: Wrong prior type!");
+     HError(2719,"%s:GiveMixD: Wrong prior type!",toolname);
                          
    occ1=ma1->occ; occ2=ma2->occ;
    if(occ2==0 || (uFlagsMLE&UPVARS)) return 0;
@@ -1256,7 +1265,7 @@ float GiveDimMixD(MixPDF *mp, int k, int priortype){
    D=MAX(D,occ2*E);
 
    if(! FINITE(D))
-      HError(1, "NaN in GiveMixD");
+     HError(2791, "%s: NaN in GiveMixD",toolname);
   
    return D;
 }
@@ -1281,7 +1290,7 @@ Boolean UpdateGauss(int stream, MixPDF *mp){
    float D;
    int k;
    /* 3rd set of occs only required in MPE case where ML update has been specified for certain parms.. */
-   float occ1,occ2,occ3,sqAcc1,sqAcc2,sqAcc3,Acc1,Acc2,Acc3, oldVar,newVar,newMean; 
+   float occ1,occ2,occ3,sqAcc1,sqAcc2,sqAcc3,Acc1,Acc2,Acc3,newVar,newMean; 
    int vSize = hset.swidth[stream];
    Vector mean;
    Covariance cov;
@@ -1306,18 +1315,18 @@ Boolean UpdateGauss(int stream, MixPDF *mp){
    /* already checked that there is enough occupancy. */    
 
 
-   if(fabs(va1->occ - ma1->occ) > 0.1) HError(1, "Mean and variance occupation counts differ.  Means and variances must not be separately tied.");
+   if(fabs(va1->occ - ma1->occ) > 0.1) HError(2792, "%s: Mean and variance occupation counts differ.  Means and variances must not be separately tied.",toolname);
 
    if((va3 ? va3->occ : va1->occ) < MinOcc) return FALSE; /* if ML occ < MinOcc dont update. */
 
    if(mp->ckind != DIAGC)
-      HError(999,"UpdateGauss: unknown ckind %d",mp->ckind);
+      HError(2724,"%s:UpdateGauss: covariance kind is not DIAGC",toolname);
 
 
    D= GiveMixD(mp,stream,0); /*Use constants on a mix level.*/
 
    for (k=1; k<=vSize-hset.projSize; k++){ /*For each vector component.*/
-      sqAcc1 = va1->cov.var[k]; sqAcc2 = va2?va2->cov.var[k]:0.0; sqAcc3 = va3?va3->cov.var[k]:0.0; oldVar = cov.var[k];
+      sqAcc1 = va1->cov.var[k]; sqAcc2 = va2?va2->cov.var[k]:0.0; sqAcc3 = va3?va3->cov.var[k]:0.0; 
       Acc1 = ma1->mu[k], Acc2 = ma2?ma2->mu[k]:0.0; Acc3 = ma3 ? ma3->mu[k]:0.0;
     
       newMean =
@@ -1351,7 +1360,7 @@ Boolean UpdateGauss(int stream, MixPDF *mp){
 void UpdateWeightsAndTrans(void){
    HMMScanState hss;
    HLink hmm;
-   int px,n;
+   int px;
    void UpdateWeight(int s, StreamElem *ste);
 
    NewHMMScan(&hset,&hss);
@@ -1368,10 +1377,6 @@ void UpdateWeightsAndTrans(void){
    do{
       void UpdateTrans(int px, HLink hmm);
       hmm=hss.hmm;
-      n = (int)hmm->hook; /*The number of training egs seen*/
-
-      /* n is NO LONGER USED. */
-
       if (uFlags & UPTRANS)
          UpdateTrans(px,hmm); 
       px++;
@@ -1391,7 +1396,7 @@ static void FixWeightsForICrit(float Tau, Boolean THREEACCS){
       M = hss.M; wa_dst = (WtAcc*)hss.ste->hook; wa_src = (THREEACCS ? wa_dst+2 : wa_dst); /* THREEACCS should be true for the forseeable use of this. */
 
       for(m=1;m<=M;m++) wa_dst->c[m] += Tau * (wa_src->occ ? wa_src->c[m]/wa_src->occ : 1/M);
-      if(!wa_src->occ) HError(-1, "wa_src->occ zero, in FixWeightsForICrit.");
+      if(!wa_src->occ) HError(-2793, "%s: Source mixture component weight is zero, in FixWeightsForICrit.",toolname);
       wa_dst->occ += Tau;
    }
    EndHMMScan(&hss); 
@@ -1532,7 +1537,7 @@ void AddPriorsFromPriorHMM(int dst_index, float Tau, float K, Boolean IsMMI, flo
       va_dst = ((VaAcc*)GetHook(mp->cov.var)) + dst_index; 
       {
         
-        if(hss_prior.mp->ckind!=DIAGC) HError(1, "Wrong ckind in prior HMMSet.");
+        if(hss_prior.mp->ckind!=DIAGC) HError(2724, "%s: Wrong ckind in prior HMMSet.",toolname);
         for(i=1;i<=VectorSize(mp->mean);i++){
           float srcmu = hss_prior.mp->mean[i], 
             srcvar = srcmu*srcmu + hss_prior.mp->cov.var[i];         
@@ -1598,13 +1603,13 @@ static void FixHMMForICrit(){
    Boolean ISmoothingDone=FALSE;
 
    if(PriorTau>0||PriorK>0||PriorK>0||PriorTauTrans>0) {
-     if(!hset_prior_initialised)  HError(-1, "Config indicates that you intend to use a prior model (-Hprior), but none supplied.");
+     if(!hset_prior_initialised)  HError(-2719, "%s: Config indicates that you intend to use a prior model (-Hprior), but none supplied.",toolname);
    } else {
-     if(hset_prior_initialised)  HError(1, "Config indicates that you are not making use of the prior model (-Hprior), which has been supplied.");
+     if(hset_prior_initialised)  HError(2719, "%s: Config indicates that you are not making use of the prior model (-Hprior), which has been supplied.",toolname);
    }
 
    if(hset_prior_initialised){  /* Using a prior HMM set */
-     if(hset.ckind == FULLC) HError(1, "Prior HMM set not supported with FULLC.");
+     if(hset.ckind == FULLC) HError(2731, "%s: Prior HMM set not supported with FULLC.",toolname);
      if(PriorTauWeights) SmoothWeightsFromPriorHMM(THREEACCS ? 2 : 0, PriorTauWeights); 
      if(PriorTauTrans) SmoothTransFromPriorHMM(THREEACCS ? 2 : 0, PriorTauTrans); 
      if (THREEACCS){ /* if MPE... */
@@ -1656,7 +1661,7 @@ void UpdateWeightsOrTrans(int M, float *acc1, float *acc2, float *mixes, float *
       /*if(fabs(objective-last_objective) < 1.0e-8*(fabs(objective)+fabs(last_objective)) || iter > 100) break; */
       if(objective < last_objective && objective < last_last_objective && !(last_last_objective==0) 
          && fabs(objective-last_objective) > fabs(objective)*0.0001 )
-         HError(-1, "Objective not increasing: %f<%f,<%f", objective, last_objective, last_last_objective);
+	HError(-2794, "%s: Objective not increasing: %f<%f,<%f", toolname, objective, last_objective, last_last_objective);
       if(iter>100) break; /*this seems to work fine.*/
     
       /*find max f_m*/
@@ -1699,7 +1704,7 @@ void UpdateWeight(int s, StreamElem *ste){
       break;
    case TIEDHS:
       M = hset.tmRecs[s].nMix;
-   default: HError(1, "Unhandled hsKind.");
+   default: HError(2730, "%s: Unhandled hsKind.",toolname);
    }
 
    if( (wa3?wa3->occ:wa1->occ) > MinOccWeights ){ /* more than MinOccWeights ML stats */
@@ -1713,14 +1718,14 @@ void UpdateWeight(int s, StreamElem *ste){
       case TIEDHS:
          for(n=1;n<=M;n++)	NewWghts[n] = OldWghts[n] = ste->spdf.tpdf[n];
          break;
-      default: HError(1, "Unhandled hsKind.");
+      default: HError(2730, "%s: Unhandled hsKind.",toolname);
       }
       if(uFlagsMLE & UPMIXES && wa2) for(n=1;n<=M;n++) wa2->c[n] = 0.0;
 
       UpdateWeightsOrTrans(M, wa1->c, wa2?wa2->c:NULL, NewWghts, OldWghts, CWeights);
       for(i=1;i<=M;i++)
         if(NewWghts[i] == 0 && OldWghts[i] != 0)
-          HError(-1, "Weights going to zero: advise setting e.g. ISMOOTHTAUW = 10 ");
+          HError(-2795, "%s: Weights going to zero: advise setting e.g. ISMOOTHTAUW = 10 ",toolname);
 
       switch (hsKind){
       case PLAINHS:
@@ -1734,7 +1739,7 @@ void UpdateWeight(int s, StreamElem *ste){
             ste->spdf.tpdf[n]=(NewWghts[n] > MINMIX ? NewWghts[n] : 0.0);
          }
          break;
-      default: HError(1, "Unhandled hsKind.");
+      default: HError(2730, "%s: Unhandled hsKind.",toolname);
       }
       Dispose(&gstack, NewWghts); /*disposes of both.*/
     
@@ -1747,7 +1752,7 @@ void UpdateWeight(int s, StreamElem *ste){
          case TIEDHS:
             FloorTMMixes(ste->spdf.tpdf,M,mixWeightFloor);
             break;
-         default: HError(1, "Unhandled hsKind.");
+         default: HError(2730, "%s: Unhandled hsKind.",toolname);
          }
       }
    }
@@ -1773,7 +1778,7 @@ void FloorVars(HMMSet *hset1, int s){
   int vsize;
   int i;
   if(!(hset1->hsKind==PLAINHS || hset1->hsKind==SHAREDHS)){
-     HError(1, "Percentile var flooring not supported for this kind of hmm set. (e.g. tied.) should be easy.");
+    HError(2732, "%s: Percentile var flooring not supported for this kind of hmm set. (e.g. tied.) should be easy.",toolname);
   } else { 
      float **varray;
      int M=0,m=0,floored=0,equal=0;
@@ -1791,7 +1796,7 @@ void FloorVars(HMMSet *hset1, int s){
      NewHMMScan(hset1,&hss1); 
      while(GoNextMix(&hss1,FALSE)){
        int k;
-       if(hss1.mp->ckind != DIAGC ) HError(1, "FloorVars expects DIAGC covariances. ");
+       if(hss1.mp->ckind != DIAGC ) HError(2733, "%s: FloorVars expects DIAGC covariances. ",toolname);
        
        for(k=1;k<=vsize;k++){
           varray[k][m] = hss1.mp->cov.var[k];
@@ -1804,7 +1809,7 @@ void FloorVars(HMMSet *hset1, int s){
         qsort((char *) varray[i], M, sizeof(float), fltcompare);
      }
      m=0;
-     if(varFloorPercent <=0 || varFloorPercent >= 100) HError(1, "varFloorPercent should be <100 and >0..");
+     if(varFloorPercent <=0 || varFloorPercent >= 100) HError(2719, "%s: varFloorPercent should be <100 and >0..",toolname);
      
 
      NewHMMScan(hset1,&hss1); 
@@ -1854,8 +1859,7 @@ void UpdateModels(void)
 
    {     /*Measure total occupancy and update Gaussians. */
       double mlocc=0,numocc=0,denocc=0; int nMix=0,nLeft=0;
-      MuAcc *ma1,*ma2, *ma3;       VaAcc *va1,*va2,*va3; 
-
+      MuAcc *ma1,*ma2, *ma3; 
 
       if(hset.hsKind==PLAINHS || hset.hsKind==SHAREDHS){    
          NewHMMScan(&hset, &hss);
@@ -1864,10 +1868,6 @@ void UpdateModels(void)
             ma2 = (ML_MODE?NULL:ma1+1);
             ma3 = (THREEACCS?ma1+2:NULL);
 
-            va1 = (VaAcc*)GetHook(hss.mp->cov.var); 
-            va2 = (ML_MODE?NULL:va1+1);
-            va3 = (THREEACCS?va1+2:NULL);
-      
             numocc+=ma1->occ;
             if(ma2) denocc+=ma2->occ;
             if(ma3) mlocc+=ma3->occ;
@@ -1884,10 +1884,6 @@ void UpdateModels(void)
                ma2 = (ML_MODE?NULL:ma1+1);
                ma3 = (THREEACCS?ma1+2:NULL);
           
-               va1 = (VaAcc*)GetHook(hss.mp->cov.var); 
-               va2 = (ML_MODE?NULL:va1+1);
-               va3 = (THREEACCS?va1+2:NULL);
-          
                numocc+=ma1->occ;
                if(ma2) denocc+=ma2->occ;
                if(ma3) mlocc+=ma3->occ;
@@ -1895,7 +1891,7 @@ void UpdateModels(void)
                if(UpdateGauss(s, hss.mp)) nMix++; else nLeft++;
             }
          }
-      } else HError(1, "Unknown hsetkind.");
+      } else HError(2730, "%s: Unknown hsetkind.",toolname);
       printf("Numocc=%f,Denocc=%f\n",numocc,denocc);
    }
 

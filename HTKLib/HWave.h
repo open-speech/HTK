@@ -3,22 +3,40 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         File: HWave.h: Speech Waveform File Input           */
+/*           File: HWave.h  Speech waveform file input         */
 /* ----------------------------------------------------------- */
-/* !HVER!HWave:   3.4.1 [CUED 12/03/09] */
+
+/* !HVER!HWave:   3.5.0 [CUED 12/10/15] */
+
 
 /*  Configuration Parameters:
    NSAMPLES       - num samples in alien file input via a pipe
@@ -147,7 +165,7 @@ FileFormat Str2Format(char *fmt);
 
 /* --------------------- HTK Header Routines --------------------- */
 
-Boolean ReadHTKHeader(FILE *f,long *nSamp,long *sampP,short *sampS,
+Boolean ReadHTKHeader(FILE *f,long *nSamp,long *sampP,unsigned short *sampS,	/* cz277 - cbu */
                       short *kind, Boolean *bSwap);
 /* 
    Get header info from HTK file f, return false if apparently not
@@ -156,7 +174,7 @@ Boolean ReadHTKHeader(FILE *f,long *nSamp,long *sampP,short *sampS,
    since it is not defined for HTK files)
 */
 
-void WriteHTKHeader(FILE *f, long nSamp, long sampP, short sampS, 
+void WriteHTKHeader(FILE *f, long nSamp, long sampP, unsigned short sampS, 	/* cz277 - cbu */
 		    short kind, Boolean *bSwap);
 /* 
    Write header info to HTK file f.  
@@ -172,7 +190,7 @@ void RetrieveESIGFieldList(HFieldList *fList);
    Retrieve the field list of an ESIG input file 
 */
 
-Boolean ReadEsignalHeader(FILE *f, long *nSamp, long *sampP, short *sampS,
+Boolean ReadEsignalHeader(FILE *f, long *nSamp, long *sampP, unsigned short *sampS,
  			  short *kind, Boolean *bSwap, long *hdrS,
  			  Boolean isPipe);
 /*

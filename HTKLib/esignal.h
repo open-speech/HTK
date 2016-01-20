@@ -7,25 +7,23 @@
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* author:                                                     */
+/*           Rod Johnson                                       */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
+/*             File: esignal.h  Esignal include file           */
+/* ----------------------------------------------------------- */
 
-/* !HVER!esignal:   3.4.1 [CUED 12/03/09] */
-/*
- *
- * Example programs for Esignal public external file format.
- * Include file.
- *
- * Author:  Rod Johnson
- */
-
+/* !HVER!esignal:   3.5.0 [CUED 12/10/15] */
 
 #ifndef _ESIGNAL_H_
 #define _ESIGNAL_H_
@@ -308,3 +306,6 @@ extern void	(*DebugMsgFunc)(char *msg);
 #endif
 
 #endif /* _ESIGNAL_H */
+
+/* ------------------------ End of esignal.h ----------------------- */
+

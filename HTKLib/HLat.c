@@ -3,38 +3,42 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
 /* developed at:                                               */
 /*                                                             */
-/*      Speech Vision and Robotics group                       */
-/*      Cambridge University Engineering Department            */
-/*      http://svr-www.eng.cam.ac.uk/                          */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
 /*                                                             */
-/* author: Gunnar Evermann <ge204@eng.cam.ac.uk>               */
+/* author:                                                     */
+/*           Gunnar Evermann <ge204@eng.cam.ac.uk>             */
+/*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright:                                          */
-/*         2001-2004  Cambridge University                     */
-/*                    Engineering Department                   */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*       File: HLat.c:  Lattice Manipulation                   */
+/*             File: HLat.c:  Lattice manipulation             */
 /* ----------------------------------------------------------- */
 
-/*#### todo:
+/* TODO:
 
      - implement lattice oracle WER calculation
      - allow batch processing?
 */
 
 
-char *hlat_version = "!HVER!HLat:   3.4.1 [CUED 12/03/09]";
+char *hlat_version = "!HVER!HLat:   3.5.0 [CUED 12/10/15]";
 char *hlat_vc_id = "$Id: HLat.c,v 1.2 2006/12/07 11:09:08 mjfg Exp $";
 
 
@@ -45,6 +49,7 @@ char *hlat_vc_id = "$Id: HLat.c,v 1.2 2006/12/07 11:09:08 mjfg Exp $";
 #include "HAudio.h"
 #include "HParm.h"
 #include "HLabel.h"
+#include "HANNet.h"
 #include "HModel.h"
 #include "HUtil.h"
 #include "HDict.h"
@@ -79,8 +84,9 @@ static Boolean compressMerge = TRUE; /* compressing lattice scores when merging 
 
 static char *llfExt = "LLF";    /* extension for LLF lattice files */
 
+#ifndef NO_LAT_LM
 static MemHeap slaHeap, slnHeap;/* MHEAPs for use in LatExpand() */
-
+#endif
 /* --------------------------- Prototypes ---------------------------- */
 
 
@@ -196,7 +202,6 @@ Boolean ScanLLF (LLFInfo *llf, char *fn, char *ext)
    HError (-1, "ScanLLF: lattice '%s' not found in LLF '%s'\n", latfn, llf->name);
    return FALSE;
 }
-
 
 Lattice *GetLattice (char *fn, char *path, char *ext,
                      /* arguments of ReadLattice() below */
@@ -565,6 +570,60 @@ LogDouble LatForwBackw (Lattice *lat, LatFBType type)
    return score;
 }
 
+/* sxz20 */
+/* LatMakeLogical: replaces physical HMM names by the corresponding logical names
+   taking context into account */
+void LatMakeLogical (Lattice *lat, MemHeap *heap)
+{
+   int i,j,J;
+   LNode *ln;
+   LArc *la;
+   LNode **topOrder;
+   LAlign *align;
+   LabId labid;
+
+   /* find topological order of nodes */
+   topOrder = (LNode **) New (&gcheap, lat->nn * sizeof(LNode *));
+   if (!LatTopSort (lat, topOrder))
+      HError (527, "LatMakeLogical: lattice has cycles");
+   if(topOrder[0]->pred!=NULL)
+     HError (527, "LatMakeLogical: initial node has incoming arcs");
+   for (i = 0, ln = lat->lnodes; i < lat->nn; ++i, ++ln) {
+      ln->hook=NULL;
+   }
+
+   /* forward direction */
+   for (i = 0; i < lat->nn; ++i) {
+      ln = topOrder[i];
+      for (la = ln->foll; la; la = la->farc) {
+         assert (la->start == ln);
+         J=la->nAlign;
+         printf("Examine arc %s with %d records\n",la->end->word->wordName->name,J);
+         for(j=0; j<J; j++){
+           align=&(la->lAlign[j]);
+           assert(align);
+           labid=align->label;
+           if(strcmp(labid->name,"sil")!=0&&strcmp(labid->name,"sp")!=0){
+             if(j==0){/*first*/
+               if(la->start->hook==NULL)
+                 HError(527,"Nothing is attached to the node");
+             }else if(j==J){/*terminal*/
+             }else{/*something inside*/
+               /*if(strcmp(la->lAlign[j].labid->name,"sp")==0)*/
+             }
+             printf("converting %s ",labid->name);
+             exit(0);
+           }else{
+             la->end->hook = labid;
+           }
+           printf("%s ",labid->name);
+         }
+         printf("\n");
+      }
+   }
+   Dispose (&gcheap, topOrder);
+}
+
 /* EXPORT->LatFindBest
 
      find the N-best paths (i.e. lowest sum of LArcTotLike()s) and generate
@@ -687,13 +746,12 @@ Transcription *LatFindBest (MemHeap *heap, Lattice *lat, int N)
 */
 void LatSetScores (Lattice *lat)
 {
-   LogDouble best;
    LNode *ln;
    int i;
 
    LatAttachInfo (&gcheap, sizeof (FBinfo), lat);
 
-   best = LatForwBackw (lat, LATFB_MAX);
+   LatForwBackw (lat, LATFB_MAX);
 
    for (i = 0, ln = lat->lnodes; i < lat->nn; ++i, ++ln) {
       ln->score = LNodeFw (ln) + LNodeBw (ln);
@@ -904,7 +962,7 @@ void CalcStats (Lattice *lat)
       ln = topOrder[i];
 
       /* count words */
-      ln->word->aux = (Ptr) (((int)ln->word->aux) + 1);
+      ln->word->aux = (Ptr) (((unsigned long int)ln->word->aux) + 1);
 
       /* count incoming and outgoing arcs */
       d = 0;
@@ -1789,7 +1847,7 @@ void ApplyNGram2LabLat(Lattice *lat, LModel *lm)
       fprintf(stdout, "\n");
       fprintf(stdout, "\n Vocab entries: ");
       for (j = 0; j < lat->nn - 2; j++) {
-         fprintf(stdout, "%s ", lm->data.ngram->wdlist[(int) revlab[j]->aux]->name);
+         fprintf(stdout, "%s ", lm->data.ngram->wdlist[(unsigned long int) revlab[j]->aux]->name);
       }
       fprintf(stdout, "\n\n");
       fflush(stdout);

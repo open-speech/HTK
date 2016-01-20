@@ -1,0 +1,169 @@
+#!/bin/bash
+############################################################
+# Step 1: Creating a Base-Line Monophone Set
+############################################################
+
+source environment
+if [ ! -d $RMWORK/R1/ml ]
+then
+	echo creating $RMWORK/R1/ml
+	mkdir -p $RMWORK/R1/ml
+	cp -r $RMHTK/work/R1/* $RMWORK/R1/ml
+fi
+
+# 1.1 Basic dictionary and phone list creation
+
+# Copy the SRI dictionary from the CD-ROM. You should read the header
+# of this file to determine the conditions of use.  Dictionaries are
+# stored in $RMLIB/dicts. Model lists are stored in $RMLIB/mlists.
+
+if [ ! -d  $RMLIB/dicts ]
+then
+	mkdir $RMLIB/dicts
+fi
+
+cp $RMCD2/score/src/rdev/pcdsril.txt $RMLIB/dicts
+
+# Use the tool HDMan to transform the dictionary.  The supplied HDMan
+# script mono.ded should be in $RMLIB/dicts.
+if [ ! -d  $RMLIB/mlists ]
+then
+	mkdir $RMLIB/mlists
+fi
+
+cd $RMLIB/dicts
+/bin/rm -f sil.txt
+cat<<EOF > sil.txt
+!SENT_END   [] sil
+!SENT_START [] sil
+EOF
+HDMan -A -D -V -T 1 -a '*;' -n $RMLIB/mlists/mono.list \
+	-g $RMHTK/lib/dicts/mono.ded mono.dct pcdsril.txt sil.txt
+
+
+# 1.2  Training set phone label file creation
+
+# Create the training set phone label files including optional
+# inter-word silence (sp) models (the sp models are tee models) and
+# forced silence (sil) at the ends of each utterance.
+if [ ! -d  $RMLIB/labs ]
+then
+	mkdir $RMLIB/labs
+fi
+cd $RMLIB
+HLEd -A -D -V -l '*' -i labs/mono.mlf -d dicts/mono.dct \
+    $RMHTK/lib/labs/mono.hled wlabs/ind_trn109.mlf
+
+
+# 1.3  Initial phone models
+
+# The supplied initial models should be in the directory
+# $RMWORK/R1/ml/hmm0. Note that the MODELS file also contains a varFloor
+# vector which was calculated by using HCompV
+cd $RMWORK/R1/ml
+chmod +w varProto
+HCompV -A -D -V -C $RMLIB/configs/config.basic -S $RMLIB/flists/ind_trn109.scp \
+    -f 0.01 -m varProto
+
+# The supplied HTK Environment file HTE should also be in
+# $RMWORK/R1/ml. This contains a number of shell variables that are used
+# by the various training and testing scripts.  Edit the HTE file so
+# that it reflects your particular directory setup.
+
+
+# 1.4  Model training
+
+# Re-estimate the models in hmm0 for four iterations of HERest.
+
+cd $RMWORK/R1/ml
+hbuild 1 4
+
+# This should create the directories $RMWORK/R1/ml/hmm[1-4]. Each of
+# these directories should contain a LOG file and also $RMWORK/R1/ml will
+# contain a file called blog which records the build process. After
+# running hbuild the various LOG files should be checked for error
+# messages.
+
+for i in 1 2 3 4
+do
+  echo hmm$i/LOG
+  grep -i error hmm$i/LOG
+done
+
+
+# 1.5  Building the recognition networks
+
+# Copy the word-pair grammar from the CD-ROM to $RMLIB.
+if [ ! -d $RMLIB/nets ]
+then
+    cd $RMLIB; mkdir nets
+    cp $RMCD2/rm1/doc/wp_gram.txt $RMLIB/nets
+
+# Use the supplied gawk scripts to generate word level networks for
+# both the word-pair and no-grammar test conditions.  Note that the
+# language model likelihoods are based solely on the number of
+# successors for each word.
+
+    cd $RMLIB/nets
+    cat wp_gram.txt wp_gram.txt | fgrep -v '*' | \
+	gawk -f $RMLIB/awks/wp.net.awk nn=993 nl=57704 > net.wp
+    gawk -f $RMLIB/awks/ng.net.awk nn=994 nl=1985 $RMLIB/wordlist > net.ng
+    gzip -f net.wp net.ng
+fi
+
+# 1.6  Testing the Monophone Models
+
+# Check that all the recognition variables in HTE are set up
+# correctly.  In particular if you wish to use the NIST scoring
+# package distributed on the CD-ROMs, make sure that NISTSCORE is
+# set. The recognition tests use the script htestrm. The recognition
+# parameters are set in the HTE file as for hbuild.  htestrm allows
+# the specification of the test set, the recognition mode (ng or wp)
+# and automatically creates test directories for a number of runs
+# (typically with different recognition parameters and perhaps run
+# simultaneously on different machines). Test directories are created
+# as sub-directories of the model directories.  The first run on a
+# particular hmm set with ng on the feb89 test set would be called
+# test_ng_feb89.1, the second run test_ng_feb89.2, and tests with wp
+# and other test-sets named according to the above convention.
+
+# A number of parameters can be tuned including the grammar scale
+# factor HVGSCALE variable (HVite -s) and inter-word probability
+# HVIMPROB (HVite -p).  These flags both control the ratio of
+# insertion and deletion errors.  HVite pruning is controlled by
+# variables HVPRUNE (HVite -t) and HVMAXACTIVE (HVite -u). All of
+# these values are supplied in an indexed list that correspond to the
+# different test types listed in the HTE variable TYPELIST (here
+# either ng or wp). The HVPRUNE values should be set at a higher value
+# for wp testing than ng testing.
+
+# After htestrm runs HVite, HResults is executed. The equivalent sets
+# (homophone lists) for the different test conditions are listed in
+# files specified by the HREQSETS variable. These sets are defined by
+# DARPA/NIST and suitable files (eq.wp and eq.ng) are supplied with
+# the distribution. If the variable HRNIST is set HResults operates in
+# a manner that is compatible with the NIST scoring software and
+# results identical to those from the NIST software should be
+# obtained.
+
+# If the NIST scoring software has been compiled, then after HResults
+# has been run the output of HVite can be converted to a NIST
+# compatible "hypothesis" file using the RM tool HLab2Hyp and then
+# running the appropriate NIST scoring script. These steps will be
+# performed by htestrm if the HTE variable NISTSCORE is set. Note that
+# the NIST scoring tools should be in your path if you set NISTSCORE.
+# Although the raw results obtained from the NIST software should be
+# identical to the HResults output, the NIST output files can give
+# additional information that can be useful for understanding
+# recognizer performance.
+
+# To test the models in $RMWORK/R1/ml/hmm4 with the feb89 test set and
+# with a word-pair grammar and the current recognition settings in
+# HTE, execute the following
+cd $RMWORK/R1/ml
+htestrm HTE wp feb89 hmm4
+
+# Run other tests under a number of ng/wp conditions on different test
+# sets as desired.
+
+echo step 1 completed

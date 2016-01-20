@@ -1,0 +1,200 @@
+#!/bin/bash
+############################################################
+# Step 8: State-Clustered Triphones
+############################################################
+source environment
+# 8.1  State clustering
+
+# In this section the triphones created in Step 5 will be state
+# clustered, so that all states within the same cluster share a common
+# output distribution. Corresponding states of different triphones of
+# the same phone are candidates to be put in the same cluster.  The
+# clustering process groups states with similar distributions and also
+# ensures (via the HHEd RO command) that any states with too few
+# occupations to allow reliable estimates of a multiple mixture
+# distribution are discarded.
+
+# 8.2  Initial models
+
+# The clustering process is performed by HHEd. To simplify preparing
+# the HHEd script, mkclscript does most of the work.  Given the
+# monophone model list it generates for each model commands to tie all
+# the transition matrices of each triphone together and also to
+# cluster the states. It is assumed that each model in the list has
+# three states.
+
+# However, the clustering commands should not be applied to the sil
+# and sp models. First make a lost copy of mono.list and delete the
+# entries for sp and sil, copy the HTE file from R5 and change the
+# HMMLIST to use the clustered triphone list trig.list rather than the
+# compete list tri.list
+
+mkdir -p $RMWORK/R8/ml
+cd $RMWORK/R8/ml
+cat <<__EOF__ > $RMWORK/R8/ml/HTE
+#---------------------------------------------------------------#
+# HTK RM Environment File                08/09/95               #
+#                                                               #
+# This version is for:                                          #
+#                                                               #
+#         Baseline - Monophones                                 #
+#         39th Order MFCC_E_D_A Data (data in MFCC_E format)    #
+#         1 Mixture/Diagonal/3 State no Skip + sp model         #
+#                                                               #
+#---------------------------------------------------------------#
+
+# Set priority at which processes are run
+set NICE = 5
+
+# Define the rmwork and rmdata areas
+set rmwork=\$RMWORK
+set rmdata=\$RMDATA
+set rmlib=\$RMLIB
+
+# define input filters
+setenv HNETFILTER 'gzip -d -c \$.gz'          # Networks compress well
+
+# Define input configuration files
+setenv HECONFIG \$rmlib/configs/config.basic  # Basic configuration
+setenv HVCONFIG \$rmlib/configs/config.basic  # Basic configuration
+
+# Define HMMs - should reflect current models set
+set HMMLIST=\$rmlib/mlists/trig.list # ****** #
+
+# Define Training Data and Label files for current models
+set TRAINDATALIST=\$rmlib/flists/ind_trn109.scp
+set TRAINMLF=\$rmlib/labs/tri.mlf   # ****** #
+
+# Define Test Data
+# Note that TESTSET is defined by htestrm before sourcing HTE
+set SETLIST=(feb89 oct89 feb91 sep92)
+if (\$?TESTSET) then
+   set TESTDATALIST=\$rmlib/flists/ind_\${TESTSET}.scp
+   set TESTMLF=\$rmlib/wlabs/ind_tst.mlf
+endif
+
+# HERest Program Options
+set HETRACE=1
+set HEMINWEIGHT=2.0
+set HETMTHRESH=20.0    # Only needs to be same order as numerical accuracy
+set HEPRUNE=600.0      # 250==VERY TIGHT, 500==TIGHT, 1000==LOOSE #
+set HESTATS=stats      # stats files aren't always needed but are interesting #
+set HEMINEG=0          # Potentially bad choice for unclustered models
+#set HEUPD=
+
+# Define possible test conditions
+set TYPELIST=(ng wp)
+
+# HVite Network Defn & Program Options
+set HVTRACE=1
+set HVNET=(\$rmlib/nets/net.ng \$rmlib/nets/net.wp)
+set HVVOC=(\$rmlib/dicts/tri.dct \$rmlib/dicts/tri.dct)
+set HVPRUNE=(150.0 200.0)
+set HVMAXACTIVE=(0 0)
+set HVGSCALE=(7.0 7.0)
+set HVIMPROB=(0.0 0.0)
+
+# HResults Results Analysis
+set WORDLIST=\$rmlib/wordlist
+set HREQSETS=(\$rmlib/eq.ng \$rmlib/eq.wp)
+set HRNIST
+
+#---------------------------------------------------------------#
+#                END OF ENVIRONMENT DEFINITION                  #
+#---------------------------------------------------------------#
+__EOF__
+
+egrep -v 'sil|sp' $RMLIB/mlists/mono.list > mono.list
+
+# Use the mkclscript to create the HHEd script
+
+echo 'RO 1000.0 stats' > cluster.hed
+mkclscript TC 0.5 mono.list >> cluster.hed
+echo 'CO "trig.list"' >> cluster.hed
+
+# These lines tell HHEd to allow a minimum number of state occupations
+# of 100 and to compact the model set so that identical logical models
+# share the same physical model list.  Also make the final stats stats
+# generated in R5 present in the current directory by executing
+
+ln -s ../../R5/ml/hmm2/stats stats
+
+# Make a directory for the new state-clustered models and run HHEd
+
+
+cd $RMWORK/R8/ml
+mkdir hmm0
+HHEd -A -D -V -T 1 -H $RMWORK/R5/ml/hmm2/MODELS -w hmm0/MODELS cluster.hed \
+	     $RMLIB/mlists/tri.list > clog
+
+# and copy the HMM list created to $RMLIB/mlists.
+
+cp trig.list $RMLIB/mlists
+
+
+# 8.3  Building state-clustered models
+
+# Copy $RMWORK/R5/ml/HTE to the R8 directory, edit the title, and change
+# the HMMLIST variable to $RMLIB/mlists/trig.list.
+
+# Now build a set of single mixture-state clustered triphones
+
+hbuild 1 4
+
+# and test them as before.
+
+htestrm HTE wp feb89 hmm4
+
+
+# 8.4  Multiple mixture state-clustered triphones
+
+# Multiple mixture models for the state-clustered triphones are built
+# exactly as for the monophone multiple mixture models. However in
+# this case since there are more output distributions models with a
+# smaller number of mixtures/distribution are built.  It is suggested
+# that 2 mixture, 3 mixture, 4 mixture and then 5 mixture models be
+# built, and at each stage 4 iterations of HERest be performed.
+
+# To obtain the initial 2 mixture state-clustered triphones create the
+# file $RMWORK/R8/ml/edfile4.10 containing the line
+
+cat<<EOF > $RMWORK/R8/ml/edfile4.10
+MU 2 {*.state[2-4].mix}
+EOF
+
+cat<<EOF > $RMWORK/R8/ml/edfile14.20
+MU 3 {*.state[2-4].mix}
+EOF
+
+cat<<EOF > $RMWORK/R8/ml/edfile24.30
+MU 4 {*.state[2-4].mix}
+EOF
+
+cat<<EOF > $RMWORK/R8/ml/edfile34.40
+MU 5 {*.state[2-4].mix}
+EOF
+
+cat<<EOF > $RMWORK/R8/ml/edfile44.50
+MU 6 {*.state[2-4].mix}
+EOF
+
+# run hedit to build a new set of models in hmm10 and then hbuild
+
+hedit 4 10
+hbuild 11 14
+hedit 14 20
+hbuild 21 24
+hedit 24 30
+hbuild 31 34
+hedit 34 40
+hbuild 41 44
+hedit 44 50
+hbuild 51 54
+htestrm HTE wp feb89 hmm54
+
+# etc., until the 5 mixture models are built.
+
+# After each set of models have been build they can be tested using
+# htestrm as usual.
+
+echo step 8 completed

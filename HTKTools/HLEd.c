@@ -3,24 +3,40 @@
 /*                          ___                                */
 /*                       |_| | |_/   SPEECH                    */
 /*                       | | | | \   RECOGNITION               */
-/*                       =========   SOFTWARE                  */ 
+/*                       =========   SOFTWARE                  */
 /*                                                             */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*         Copyright: Microsoft Corporation                    */
-/*          1995-2000 Redmond, Washington USA                  */
-/*                    http://www.microsoft.com                 */
+/* developed at:                                               */
+/*                                                             */
+/*           Speech Vision and Robotics group                  */
+/*           (now Machine Intelligence Laboratory)             */
+/*           Cambridge University Engineering Department       */
+/*           http://mi.eng.cam.ac.uk/                          */
+/*                                                             */
+/*           Entropic Cambridge Research Laboratory            */
+/*           (now part of Microsoft)                           */
+/*                                                             */
+/* ----------------------------------------------------------- */
+/*           Copyright: Microsoft Corporation                  */
+/*            1995-2000 Redmond, Washington USA                */
+/*                      http://www.microsoft.com               */
+/*                                                             */
+/*           Copyright: Cambridge University                   */
+/*                      Engineering Department                 */
+/*            2001-2015 Cambridge, Cambridgeshire UK           */
+/*                      http://www.eng.cam.ac.uk               */
 /*                                                             */
 /*   Use of this software is governed by a License Agreement   */
 /*    ** See the file License for the Conditions of Use  **    */
 /*    **     This banner notice must not be removed      **    */
 /*                                                             */
 /* ----------------------------------------------------------- */
-/*      File: HLEd.c: Edit label file(s)                       */
+/*               File: HLEd.c  Edit label file(s)              */
 /* ----------------------------------------------------------- */
 
-char *hled_version = "!HVER!HLEd:   3.4.1 [CUED 12/03/09]";
-char *hled_vc_id = "$Id: HLEd.c,v 1.1.1.1 2006/10/11 09:55:01 jal58 Exp $";
+char *hled_version = "!HVER!HLEd:   3.5.0 [CUED 12/10/15]";
+char *hled_vc_id = "$Id: HLEd.c,v 1.2 2015/10/12 12:07:24 cz277 Exp $";
 
 #include "HShell.h"
 #include "HMem.h"
@@ -110,6 +126,9 @@ static Vocab vocab;                 /* And the associated vocab */
 
 static MemHeap tempHeap;            /* Storage for current file */
 static MemHeap permHeap;            /* Permanent storage */
+
+static char * labFileMask = NULL; /* mask for reading lablels (lattices) */
+static char * labOFileMask = NULL; /* mask for reading lablels (lattices) */
 
 /* ------------------ Process Command Line ------------------------- */
 
@@ -285,24 +304,31 @@ int main(int argc, char *argv[])
 void SetConfParms(void)
 {
    int i;
+   char buf[MAXSTRLEN];
    
    nParm = GetConfig("HLED", TRUE, cParm, MAXGLOBS);
    if (nParm>0) {
       if (GetConfInt(cParm,nParm,"TRACE",&i)) trace = i;
+   }
+   if (GetConfStr(cParm,nParm,"LABFILEMASK",buf)) {
+      labFileMask = CopyString(&gstack, buf);
+   }
+   if (GetConfStr(cParm,nParm,"LABOFILEMASK",buf)) {
+      labOFileMask = CopyString(&gstack, buf);
    }
 }
 
 /* Initialise: confparms, str->int map and memory */
 void Initialise(void)
 {
-   int i;
+   long int i;
    char buf[MAXSTRLEN];
    LabId labid;
    
    SetConfParms();
    asterix = GetLabId("*",TRUE);
    for (i=1;i<=99;i++) {
-      sprintf(buf,"%d",i);
+      sprintf(buf,"%ld",i);
       labid=GetLabId(buf,TRUE);
       labid->aux=(void*) i;
    }
@@ -553,11 +579,11 @@ void PrintScript(char *scriptFN)
          printf(" ]\n");
          break;
       case SETLEV:
-         printf("Set Level to %d\n",(int)i->cmd.args[0]->aux);
+         printf("Set Level to %ld\n",(long int)i->cmd.args[0]->aux);
          break;
       case DELLEV:
          if (i->cmd.nArgs==1)
-            printf("Delete Level %d\n",(int)i->cmd.args[0]->aux);
+            printf("Delete Level %ld\n",(long int)i->cmd.args[0]->aux);
          else
             printf("Delete Current Level\n");
          break;
@@ -641,7 +667,8 @@ void ReadScript(char *scriptFn)
    ScriptItem *i, *tail=NULL;
    EdOp op;
    LabId id,args[MAXARGS];
-   int n,nArgs;
+   int nArgs;
+   long int n;
 
    if(InitSource(scriptFn, &src, NoFilter)<SUCCESS)
       HError(1210,"ReadScript: Can't open file %s", scriptFn);
@@ -729,7 +756,7 @@ void ReadScript(char *scriptFn)
       case SETLEV:
          i->cmd.nArgs = ReadIdList(&src,i->cmd.args);
          if (i->cmd.nArgs!=1 || 
-             (n=(int)i->cmd.args[0]->aux)<1 || n>99 )
+             (n=(long int)i->cmd.args[0]->aux)<1 || n>99 )
             HError(1230,"ReadScript: ML must have 1 arg between 1 and 99");          
          break;   
       case DELLEV:
@@ -737,7 +764,7 @@ void ReadScript(char *scriptFn)
          if (i->cmd.nArgs>1)
             HError(1230,"ReadScript: DL can have at most 1 arg");
          if (i->cmd.nArgs==1 && 
-             ((n=(int)i->cmd.args[0]->aux)<1 || n>99) )
+             ((n=(long int)i->cmd.args[0]->aux)<1 || n>99) )
             HError(1230,"ReadScript: DL arg must be between 1 and 99");           
          break;   
       case SORT:
@@ -1137,7 +1164,7 @@ LabId MakeTriId(LabId l, LabId c, LabId r)
 {
    char buf[MAXSTRLEN];
    LabId item;
-   
+
    if ( l!= NULL){
       strcpy(buf,l->name); strcat(buf,"-");
       strcat(buf,c->name);
@@ -1373,7 +1400,9 @@ void EditFile(char *labfn)
 {
    ScriptItem *i;
    char outfn[255];
-   int m,d,r,c,a,clev,nlev,list;
+   char lfn[MAXSTRLEN],buf[MAXSTRLEN],buf2[MAXSTRLEN],buf3[MAXSTRLEN];
+   int m,d,r,c,a,nlev,list;
+   long int clev;
    Transcription *ct,*levs,*at;
    LabList *ll,*rl;
    LLink l;
@@ -1381,7 +1410,14 @@ void EditFile(char *labfn)
    if (trace&T_TOP) {
       printf("Editing file: %s\n",labfn); fflush(stdout);
    }
-   ct = LOpen(&tempHeap,labfn,ifmt);
+   if (labFileMask != NULL ) { /* support for rescoring label masks */
+      if (!MaskMatch(labFileMask,buf,labfn))
+         HError(2319,"DoAlignment: mask %s has no match with segemnt %s",labFileMask,labfn);
+      MakeFN(buf,PathOf(labfn,buf2),ExtnOf(labfn,buf3),lfn);      
+   } else {
+      strcpy (lfn, labfn);
+   }
+   ct = LOpen(&tempHeap,lfn,ifmt);
    at = CreateTranscription(&tempHeap);
    triStrip = FALSE; /* reset to default value */
    
@@ -1426,7 +1462,7 @@ void EditFile(char *labfn)
                d += DeleteOp(ll,i->cmd.args); break;
             case DELLEV:
                if (i->cmd.nArgs==1)
-                  DeleteLevel(levs,(int)i->cmd.args[0]->aux);
+                  DeleteLevel(levs,(long int)i->cmd.args[0]->aux);
                else
                   DeleteLevel(levs,clev);
                break;
@@ -1437,7 +1473,7 @@ void EditFile(char *labfn)
             case ISIL:
                a += ISilOp(ll,i->cmd.args); break;
             case SETLEV:
-               clev=(int)i->cmd.args[0]->aux;
+               clev=(long int)i->cmd.args[0]->aux;
                if (clev>nlev) {
                   ll = NULL;
                   HError(-1231,"EditLevel: Level %d does not exist",clev);
@@ -1462,7 +1498,14 @@ void EditFile(char *labfn)
          AddLabelList(ll, at);
       }
    }
-   MakeFN(labfn,newDir,newExt,outfn);
+   if (labFileMask != NULL ) { /* support for rescoring label masks */
+      char buf[MAXSTRLEN];
+      if (!MaskMatch(labOFileMask,buf,labfn))
+         HError(2319,"DoAlignment: mask %s has no match with segemnt %s",labOFileMask,labfn);
+      MakeFN(buf,newDir,newExt,outfn);      
+   } else {
+      MakeFN(labfn,newDir,newExt,outfn);
+   }
    if (newLabs != NULL)
       for (clev=1;clev<=at->numLists;clev++) {
          ll=GetLabelList(at, clev);

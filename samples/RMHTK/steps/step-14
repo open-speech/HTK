@@ -1,0 +1,47 @@
+#!/bin/bash
+source environment
+
+# dependencies
+if [ ! -d $RMWORK/R9/ml/hmm54 ]
+then
+                echo ERROR: step 14 depends on completion of step 9
+                exit 1
+fi
+
+
+# This section describes how to adjust the number of mixture model 
+# components to reduce model size. 
+
+mkdir -p $RMWORK/R14/ml
+cd $RMWORK/R14/ml
+cp $RMWORK/R9/ml/HTE .
+
+# Prepare edit file
+
+echo -e "LS $RMWORK/R9/ml/hmm54/stats\nPS 6 0.2 3" > edfile.ps.4.1
+
+# Prepare configuration file
+
+echo "MINMIXUPOCC = 100" > hhed.cfg
+
+mkdir hmm0
+HHEd -A -B -C hhed.cfg -D -T 1 -H $RMWORK/R9/ml/hmm54/MODELS -M hmm0 edfile.ps.4.1 $RMLIB/mlists/treeg.list > hmm0/LOG
+
+hbuild 1 4
+htestrm HTE wp feb89 hmm4
+
+echo -e 'LS hmm4/stats\nPS 6 0.2 2' > edfile.ps.4.2
+mkdir hmm10
+HHEd -A -B -C hhed.cfg -D -T 1 -H hmm4/MODELS -M hmm10 edfile.ps.4.2 $RMLIB/mlists/treeg.list > hmm10/LOG
+
+hbuild 11 14
+htestrm HTE wp feb89 hmm14
+
+echo -e 'LS hmm14/stats\nPS 6 0.2 1' > edfile.ps.4.3
+mkdir hmm20
+HHEd -A -B -C hhed.cfg -D -T 1 -H hmm14/MODELS -M hmm20 edfile.ps.4.3 $RMLIB/mlists/treeg.list > hmm20/LOG
+
+hbuild 21 24
+htestrm HTE wp feb89 hmm24
+
+echo step 14 completed
