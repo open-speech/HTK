@@ -108,7 +108,7 @@ esac
 
 case "$host" in
 		*x86_64*linux*)
-				CFLAGS="-m32 -ansi -D_SVID_SOURCE -DOSS_AUDIO -D'ARCH=\"$host_cpu\"' $CFLAGS"
+				CFLAGS="-m64 -ansi -D_SVID_SOURCE -DOSS_AUDIO -D'ARCH=\"$host_cpu\"' $CFLAGS"
 				LDFLAGS="-L/usr/X11R6/lib $LDFLAGS"
 				ARCH=linux
 				trad_bin_dir=linux
