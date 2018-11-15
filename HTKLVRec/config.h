@@ -31,7 +31,7 @@
 #define COLLECT_STATS
 #undef COLLECT_STATS_ACTIVATION
 
-#if 1
+#if 0
 typedef unsigned short PronId;             /* uniquely identifies (word,pron) pair, i.e. 
                                    homophones have different Ids */
 typedef unsigned short LMId;
