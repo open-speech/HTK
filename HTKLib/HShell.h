@@ -72,7 +72,7 @@ extern "C" {
 #endif
 
 
-#define MAXSTRLEN 256    /* max length of a string */
+#define MAXSTRLEN 1024    /* max length of a string */
 #define MAXFNAMELEN 1034 /* max length of a file name */
 #define SMAX      5      /* max num data streams + 1 */
 #define MAXGLOBS  256    /* max num global config parms */
