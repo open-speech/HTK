@@ -3433,7 +3433,7 @@ Tree *LoadTree(char *name,Source *src)
 void LoadTreesCommand(void)
 {
    Source src;
-   char qname[256],buf[1024],info[256];
+   char qname[256],buf[4096],info[256];
    char fn[256];
   
    ChkedAlpha("LT trees files name",fn);        /* get name of trees file */
