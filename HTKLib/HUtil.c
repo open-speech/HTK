@@ -616,7 +616,7 @@ void SetSet(IntSet s)
 
 /* -------------------- Item List Parser -------------------- */
 
-#define PAT_LEN 1024
+#define PAT_LEN 4096
 
 static Source *source;         /* Current source for item list */
 static int ch;                 /* Current character from source */
