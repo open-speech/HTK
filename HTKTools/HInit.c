@@ -398,7 +398,7 @@ void CheckData(char *fn, BufferInfo info)
 void LoadFile(char *fn)
 {
    BufferInfo info;
-   char labfn[80];
+   char labfn[256];
    Transcription *trans;
    long segStIdx,segEnIdx;
    static int segIdx=1;  /* Between call handle on latest seg in segStore */  
